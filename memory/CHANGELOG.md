@@ -1944,3 +1944,101 @@ posterior, all in one engine pass.
 - `elle-probability/`: 308 KB (now includes Bridge.cpp +
   bridge_smoke_demo.cpp + test_bridge.cpp), build/ + Testing/
   gitignored
+
+## 2026-02-07 (continued) — Knowledge graph ETL + canonical schema
+
+### Direction
+User confirmed the probability engine is a next-gen language processor
+meant to replace LLMs. Plan: build the integer-indexed knowledge graph
+that backs it. Schema unification + WordNet ingest is the alpha-test
+foundation.
+
+### Schema audit (the "no dead tables" rule)
+Grep'd every table in `elle-language/sql/01_schema.sql` against the C++
+codebase. Findings:
+- 22 tables in schema, 21 with live C++ readers.
+- `dbo.Pronunciation`: 0 references anywhere in `src/`, `include/`,
+  `apps/`, `tests/`. Dead table from an older design. **Dropped.**
+- All other tables retained. Examples:
+  - `Sense`, `SenseUsageExample`, `SenseContextExample`, `SenseEmotion`
+    — read by `SqlServerAccessLayer::loadSenses`.
+  - `Phrase`, `PhraseWord`, `PhraseSense` — read by `PhraseScanner`.
+  - `WordRelation`, `SenseRelation` — read by `SemanticGraphWalker`.
+  - `Concept`, `ConceptMember`, `SemanticNode`, `SemanticRelation` — read
+    by concept graph walks.
+  - `ContextFrame`, `ContextFrameKeyword` — read by `ContextFrameMatcher`.
+  - `AnalysisTrace` — written by `persistAnalysisTrace`.
+  - Lookups (`PartOfSpeech`, `RelationType`, `Emotion`) all consumed.
+
+### Added: validation view + bulk-loader stored procs
+New file `sql/09_validation_and_loaders.sql`:
+1. `vw_EngineReadySenses` — one row per sense, joins examples /
+   emotions / synonyms / antonyms / concepts. `IsReady BIT` flags senses
+   that have both usage slots + both context slots + ≥1 emotion weight.
+2. `usp_LoadStagingWords` — MERGE on `NormalizedLemma`, idempotent.
+3. `usp_LoadStagingSenses` — INSERT joined to `Word`, outputs
+   `#StagingSenseOut(SourceTag, SenseID)` for downstream loaders.
+4. `usp_LoadStagingPhrases` — MERGE on `NormalizedForm`, manages
+   `PhraseWord` rows transactionally.
+
+### Added: ETL pipeline `/app/ElleAnn/Tools/etl/`
+- `sources/wordnet_to_elle.py` — NLTK WordNet → 12 CSVs aligned to the
+  canonical schema. Generates:
+  - words.csv (83 k unique lemmas, palindrome-flagged)
+  - phrases.csv + phrase_words.csv (64 k phrases, dedup by normalized form)
+  - senses.csv + phrase_senses.csv (88 k + 29 k)
+  - sense_usage_examples.csv + sense_context_examples.csv (235 k each;
+    Slot ∈ {1,2}; placeholder text for synsets that lack WN examples)
+  - sense_emotions.csv (3 k from a curated 40-word emotion lexicon
+    keyed off definition tokens; will explode with NRC-EmoLex)
+  - sense_relations.csv (198 k: HYPERNYM, HYPONYM, MERONYM, HOLONYM, CAUSE)
+  - word_relations.csv (170 k: SYNONYM, ANTONYM)
+  - concepts.csv + concept_members.csv (137 k concepts, 206 k members)
+  - Cheap valence heuristic: PositiveDraw / NegativeDraw / Valence ∈ [-1, 1]
+- `validate_csvs.py` — container-side schema + FK validator.
+  Checks: required fields, FK resolution, decimal range, WordCount vs
+  phrase_words row count, known PosCode / EmotionCode / RelationCode,
+  Slot in {1,2}, example coverage. Final run: 0 errors, 1 warning.
+- `load_to_sqlserver.py` — Windows-side pyodbc loader. Streams CSVs into
+  staging temp tables in 5 k batches via `fast_executemany`, then
+  executes the procs. Idempotent on every stage; safe to re-run.
+- `README.md` — full operator manual incl. quick-start + per-file column
+  contracts + idempotency guarantees + how to add new sources.
+
+### Bugs found by the validator + fixed in same run
+1. **Duplicate phrase SourceTags** — same phrase ("post office",
+   "supreme court", etc.) appeared in multiple synsets so the original
+   set-based dedup wrote them once per surface variant. Fixed by
+   switching `multi_word_phrases` from `set[(surface, norm)]` to
+   `dict[norm -> first_surface]`.
+2. **Trailing whitespace in normalised forms** — `o k`, `p m` etc. came
+   out as `"o k "` because punctuation translate left a trailing space.
+   Added `.strip()` at the end of `normalize()`.
+3. **Apostrophe-lead lemmas** (`'hood`) — filtered from words.csv but
+   sneaking into senses.csv. Added the same `_SKIP_LEMMA_PREFIXES`
+   check to the sense loop.
+
+### Verification
+- `python3 sources/wordnet_to_elle.py` → 12 CSVs, ~100 MB, ~4s.
+- `python3 validate_csvs.py` → **0 errors, 1 trivial warning** (2
+  unresolved antonym lemmas filtered by skip-prefix rule, expected).
+- `elle-language` rebuild after schema edit → 0 errors, all targets green.
+- `elle-probability` ctest after rebuild → **52/52 PASS**.
+
+### Visual Studio compatibility
+Audited both CMakeLists for MSVC support:
+- `if(MSVC) add_compile_options(/W4 /permissive- /Zc:__cplusplus /utf-8)`
+- `_WIN32` ifdefs in `OdbcConnection.hpp`
+- `odbc32.lib` link guarded behind `WIN32`
+User runs:
+```
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+```
+in both engines, opens the .sln, builds Release. Same workflow on the
+Tools/etl side is pure Python — no compile.
+
+### Push-ready files
+- `/app/ElleAnn/Engines/elle-language/sql/01_schema.sql` (Pronunciation removed)
+- `/app/ElleAnn/Engines/elle-language/sql/02_seed_lexicon.sql` (Pronunciation seed removed)
+- `/app/ElleAnn/Engines/elle-language/sql/09_validation_and_loaders.sql` (NEW)
+- `/app/ElleAnn/Tools/etl/` (NEW: 5 files, 100 MB output/ gitignored)

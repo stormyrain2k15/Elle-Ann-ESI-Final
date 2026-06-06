@@ -2634,3 +2634,65 @@ static `EngineConfig::weights`.
 - (P1) Persist `BeliefStore` to SQL (mirror the language engine's
   `persistAnalysisTrace` pattern + new `tBeliefStore` table).
 - (P2) Tomorrow's Shine/Fiesta work is in the user's other chat.
+
+## Session Feb-2026 (continued) — Knowledge graph ETL + unified schema
+
+### Status (alpha test of new language processor)
+- **Schema unified, no dead tables.** Audit of every table in `01_schema.sql`
+  against the C++ codebase: `Pronunciation` had 0 consumers → dropped. All
+  21 remaining tables have live readers; nothing else to remove.
+- **Validation view + bulk loaders** added at
+  `sql/09_validation_and_loaders.sql`:
+  - `vw_EngineReadySenses` — denormalised sense view with `IsReady BIT`.
+  - `usp_LoadStagingWords`, `usp_LoadStagingSenses`, `usp_LoadStagingPhrases`
+    — MERGE-based, idempotent staging-table loaders.
+- **WordNet ETL pipeline** at `/app/ElleAnn/Tools/etl/`:
+  - `sources/wordnet_to_elle.py`: 117,659 synsets → 12 schema-aligned CSVs in ~4s.
+  - `validate_csvs.py`: container-side schema + FK validator, exit code 0
+    after the ETL run (0 errors, 1 trivial warning).
+  - `load_to_sqlserver.py`: Windows-side pyodbc loader using
+    `fast_executemany` + the staging procs. Idempotent.
+  - `README.md`: full operator manual.
+
+### Corpus scale (WordNet alone)
+- 83 k unique single-word lemmas
+- 64 k multi-word phrases (idioms / MWEs)
+- 88 k senses + 29 k phrase-senses
+- 235 k usage examples + 235 k context examples (2-slot scheme)
+- 198 k sense graph edges (hypernym, hyponym, meronym, holonym, cause)
+- 170 k word-level synonym/antonym edges
+- 137 k concepts + 206 k concept memberships
+- ~100 MB total CSV, all SQL-load-ready
+
+### Significance
+This is the **alpha-test seed** for the non-LLM language processor.
+Container generates the graph; user runs `load_to_sqlserver.py` on his
+Windows box pointing at the production SQL Server instance, then the
+existing `elle_odbc` SQL access layer queries it directly. From there
+the probability engine + bridge can resolve real senses against real
+words against real contexts.
+
+### Visual Studio
+Confirmed both `elle-language` and `elle-probability` CMakeLists are
+MSVC-aware (`/W4 /permissive- /Zc:__cplusplus /utf-8`, `_WIN32` paths,
+`odbc32.lib` link). User runs:
+
+    cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+    cmake --build build --config Release
+
+both produce VS solution files that open directly in Visual Studio 2022.
+
+### Build status
+- `elle-language` rebuild green (`elle_core` + `elle_odbc` + tests + demos).
+- `elle-probability` rebuild green; **ctest 52/52 PASS** still.
+
+### Next
+- (P1) NRC-EmoLex / VAD lexicon ingest — explode `sense_emotions.csv`
+  from 3 k → all-senses with real word-level emotion vectors.
+- (P1) SUBTLEX / Google n-grams for `Word.Frequency` + `Sense.Frequency`.
+- (P1) Tag the probability engine's `BeliefStore` to SQL via the same
+  `OdbcConnection` infrastructure.
+- (P2) Bench harness: 50 hand-labelled utterances → measure sense
+  resolution accuracy / intent classification / latency vs an LLM
+  baseline. First empirical datapoint for the transformer-replacement
+  claim.

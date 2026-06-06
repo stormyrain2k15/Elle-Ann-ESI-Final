@@ -15,7 +15,7 @@
        use stable small integer IDs so the C++ engine can hard-reference them.
 
    Run order:
-     01_schema.sql       (this file)
+     01_schema.sql                 (this file)
      02_seed_lexicon.sql
      03_seed_phrases.sql
      04_seed_senses.sql
@@ -23,6 +23,7 @@
      06_seed_context_frames.sql
      07_seed_concepts.sql
      08_indexes.sql
+     09_validation_and_loaders.sql (validation view + bulk loaders)
    ========================================================================= */
 
 IF DB_ID('EllesLanguage') IS NULL
@@ -50,12 +51,15 @@ IF OBJECT_ID('dbo.PhraseWord','U')            IS NOT NULL DROP TABLE dbo.PhraseW
 IF OBJECT_ID('dbo.Phrase','U')                IS NOT NULL DROP TABLE dbo.Phrase;
 IF OBJECT_ID('dbo.Sense','U')                 IS NOT NULL DROP TABLE dbo.Sense;
 IF OBJECT_ID('dbo.WordForm','U')              IS NOT NULL DROP TABLE dbo.WordForm;
+/* Pronunciation table removed 2026-02 -- 0 C++ consumers (dead).        */
 IF OBJECT_ID('dbo.Pronunciation','U')         IS NOT NULL DROP TABLE dbo.Pronunciation;
 IF OBJECT_ID('dbo.Word','U')                  IS NOT NULL DROP TABLE dbo.Word;
 IF OBJECT_ID('dbo.AnalysisTrace','U')         IS NOT NULL DROP TABLE dbo.AnalysisTrace;
 IF OBJECT_ID('dbo.Emotion','U')               IS NOT NULL DROP TABLE dbo.Emotion;
 IF OBJECT_ID('dbo.RelationType','U')          IS NOT NULL DROP TABLE dbo.RelationType;
 IF OBJECT_ID('dbo.PartOfSpeech','U')          IS NOT NULL DROP TABLE dbo.PartOfSpeech;
+/* Drop the validation view if it exists (rebuilt at end of this script). */
+IF OBJECT_ID('dbo.vw_EngineReadySenses','V') IS NOT NULL DROP VIEW dbo.vw_EngineReadySenses;
 GO
 
 /* =========================================================================
@@ -93,13 +97,9 @@ CREATE TABLE dbo.Word (
     CONSTRAINT UQ_Word_NormalizedLemma UNIQUE (NormalizedLemma)
 );
 
-CREATE TABLE dbo.Pronunciation (
-    PronunciationID BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
-    WordID          BIGINT       NOT NULL,
-    Ipa             NVARCHAR(128) NOT NULL,
-    Dialect         NVARCHAR(32)  NULL,
-    CONSTRAINT FK_Pron_Word FOREIGN KEY (WordID) REFERENCES dbo.Word(WordID) ON DELETE CASCADE
-);
+/* Pronunciation table intentionally REMOVED 2026-02 -- the engine never
+   consumed IPA; carrying it just produces dead joins and ETL friction.
+   If the engine ever grows a phonetic layer, reintroduce it then.       */
 
 CREATE TABLE dbo.WordForm (
     WordFormID      BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,

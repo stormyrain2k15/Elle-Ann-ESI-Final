@@ -1,5 +1,5 @@
 /* =========================================================================
-   Elle Semantic Dictionary -- Seed: lexicon (Words, Forms, Pronunciations)
+   Elle Semantic Dictionary -- Seed: lexicon (Words, Forms)
    File: 02_seed_lexicon.sql
 
    This is starter data sufficient to make the heartbeat demo and the 13
@@ -143,13 +143,5 @@ INSERT INTO dbo.WordForm (WordFormID, WordID, Form, NormalizedForm, PartOfSpeech
     (30, 1,  N'I''m',    N'i''m',    5,  N'CONTRACTION');
 SET IDENTITY_INSERT dbo.WordForm OFF;
 
-/* --------- Pronunciations (illustrative; not exhaustive) ---------------- */
-SET IDENTITY_INSERT dbo.Pronunciation ON;
-INSERT INTO dbo.Pronunciation (PronunciationID, WordID, Ipa, Dialect) VALUES
-    (1, 3,  N'/faɪn/',  N'en-US'),
-    (2, 4,  N'/bæt/',   N'en-US'),
-    (3, 5,  N'/ðɛr/',   N'en-US'),
-    (4, 6,  N'/ðɛr/',   N'en-US'),  -- homophone of 'there'
-    (5, 7,  N'/ðeɪ/',   N'en-US');
-SET IDENTITY_INSERT dbo.Pronunciation OFF;
+/* Pronunciation seed block removed 2026-02 along with the dead table. */
 GO
