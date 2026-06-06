@@ -2519,3 +2519,59 @@ Once user picks the right candidate per opcode from
   `WorldModel::SnapshotJson()` to `elle_settings.lua`.
 - **P1 — user verification** of patches 04..10 still pending (applying
   to live private-server box + running `--console`).
+
+## Session Feb-2026 (continued) — Elle Probability Engine integration
+
+### Status
+- **Elle Probability Engine (DONE — integrated, builds clean, 43/43 tests
+  pass, smoke runs)**: User dropped `elle-probability-engine.zip` and
+  `Probability-engine--main.zip`. The first is the actual new engine
+  (Bayesian reasoning substrate for the language engine); the second is
+  a separate fullstack reference repo for context.
+- Engine extracted to `/app/ElleAnn/Engines/elle-probability/`. It's a
+  self-contained CMake C++17 project — does NOT touch the Windows-service
+  mesh yet (the language-engine `Bridge.cpp` is upstream-TODO, by design).
+
+### Fixes applied during integration
+| File | Issue | Fix |
+|---|---|---|
+| `src/Types.cpp` | `mass.rbegin()` on `unordered_map` (no reverse iterator). | Track `lastKey` in the loop. |
+| `include/elle/prob/SpeakerTrustModel.hpp` | `-Wreorder` (m_domain before m_speakerId but init order reversed). | Swapped member declaration order. |
+| `src/SenseProbabilityResolver.cpp` | Unused parameter warning. | Commented out parameter name. |
+| `tests/test_engine_integration.cpp:212` | `CHECK(a || b)` rejected by doctest expression decomposer. | Bound into `const bool` first. |
+| `tests/test_engine_integration.cpp` | `std::set` used without `#include <set>`. | Added include. |
+| `tests/test_engine_integration.cpp` | 4 calls to `[[nodiscard]] engine.analyze(...)` ignored return. | Cast to `(void)`. |
+| `src/IntentAnalyzer.cpp` | Syntax prior put QUESTION at ~0.211 — neutral-trust likelihoods diluted it below the 0.2 test threshold. | Bumped QUESTION syntax prior from 4× base to 6× base, CONFIRM 2× → 3×. |
+
+### Smoke + tests
+- `cmake -S . -B build && cmake --build build && ctest`: 43/43 PASS.
+- `./build/prob_heartbeat_demo`: 5 scenarios, exit 0, stderr empty, 26
+  beliefs persisted in store.
+- Verified clean from-scratch build (`rm -rf build && cmake … && cmake
+  --build …`) reproduces same result.
+
+### Files touched
+- NEW DIR: `/app/ElleAnn/Engines/elle-probability/` (full engine).
+- NEW: `/app/ElleAnn/Engines/elle-probability/INTEGRATION.md` — Elle-side
+  integration notes (status, build commands, fix log, what's still TODO).
+- NEW: `/app/ElleAnn/Engines/elle-probability/.gitignore` — keeps `build/`
+  out of the repo.
+- MODIFIED in-place: the 7 source files listed above, all under
+  `/app/ElleAnn/Engines/elle-probability/`.
+
+### What's NOT integrated (deliberate, requires later pass)
+- `Bridge.cpp` (couples to language engine headers, README says wait
+  until both engines are co-located).
+- No `SVC_PROBABILITY` IPC service id / no `IPC_PROBABILITY_*` message
+  types. Add when Bridge lands so IPC tracks the live API surface.
+- Not added to `ElleAnn.sln` — staying CMake-built so the upstream
+  CMakeLists keeps working unchanged.
+
+### Next
+- User to push to GitHub (this commit is intentionally a clean drop-in
+  with all build-side errors resolved).
+- (P0 follow-up tomorrow) Phase 6b-Beta: Decode `NC_MAP_LOGIN_ACK` HP/MP
+  /Gold/Exp from `ProtoNcMapLoginAck` (ShineEngine source confirms the
+  layout — see `_re_artifacts/shinengine/SHINENGINE_MAP.md`).
+- (P1) `Bridge.cpp` implementation once the language-engine repo and
+  this one are co-located.

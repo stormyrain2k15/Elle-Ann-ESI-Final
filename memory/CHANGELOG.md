@@ -1775,3 +1775,91 @@ whole Phase 6b-Beta roadmap — no more guessing, just decoding.
 - `/app/10-phase6b-worldmodel.patch` — 30 KB, +549/-1 lines across
   4 modified + 3 new files. Applies on top of `PHASE6A-COMPLETE.patch`
   + `09-phase6-console-trace.patch`.
+
+## 2026-02-07 (continued) — Elle Probability Engine integration
+
+### Context
+User uploaded two zips immediately after Phase 6b-Alpha shipped:
+- `elle-probability-engine.zip` (~60 KB, 39 files) — a Bayesian
+  probability engine, designed as the **live-weights substrate** for the
+  language engine's `ScoringWeights`. Self-contained CMake C++17 project.
+- `Probability-engine--main.zip` (~158 KB, 164 files) — separate
+  full-stack reference repo (backend Python + frontend React + a
+  predecessor `elle-engine` C++ subdir). Pure context, no integration
+  needed.
+
+User direction: "Fix any errors and integrate into Elle then smoke test
+I'll push to github" — pivoted from Phase 6b-Beta to this.
+
+### Landing zone
+`/app/ElleAnn/Engines/elle-probability/`
+
+Engine is a peer to the existing Windows-service mesh; does NOT depend
+on any current Elle code, so it slots in clean without touching the
+service tree.
+
+### Build verification (Linux, container)
+```
+cd /app/ElleAnn/Engines/elle-probability
+rm -rf build
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release   # → configures OK
+cmake --build build -j$(nproc)                   # → 0 errors, 0 warnings
+cd build && ctest --output-on-failure            # → 43/43 PASS (0.14s)
+./prob_heartbeat_demo                            # → exit 0, 5 scenarios,
+                                                 #   26 beliefs in store
+```
+
+### Issues found and fixed (all in the dropped engine, not in Elle)
+1. **`src/Types.cpp:67`**: `mass.rbegin()` on `std::unordered_map<int64,
+   double>`. Unordered maps have no reverse iterator; was a compile error.
+   Fix: track `lastKey` inside the cumulative-sum loop and return it on
+   the floating-point edge case. Behaviour-preserving.
+2. **`include/elle/prob/SpeakerTrustModel.hpp`**: `-Wreorder`. Header
+   declared `m_domain` before `m_speakerId`, but initialiser list runs
+   `m_speakerId` first because `m_domain("trust:" + m_speakerId)`
+   depends on it. Fix: swap member declaration order to match the
+   actual init sequence.
+3. **`src/SenseProbabilityResolver.cpp:132`**: Unused `candidateId`
+   parameter in `emotionalAlignmentScore`. Fix: comment out the name.
+4. **`tests/test_engine_integration.cpp:212`**: `CHECK(a || b)` rejected
+   by doctest's expression decomposer (static_assert: "Expression Too
+   Complex Please Rewrite As Binary Comparison"). Fix: bind the `||` into
+   `const bool comfortMatched = …` then `CHECK(comfortMatched)`.
+5. **`tests/test_engine_integration.cpp`**: `std::set<int64_t>` used
+   without `#include <set>`. Fix: add the include.
+6. **`tests/test_engine_integration.cpp`**: 4 calls to `[[nodiscard]]
+   engine.analyze(...)` discarded the result. Fix: `(void)engine.analyze(…)`.
+7. **`src/IntentAnalyzer.cpp`**: The QUESTION syntax prior was 4× base
+   ≈ 0.211. The trust likelihood likelihoods (LR > 1 for ASSERT, PROMISE,
+   CONFIRM, CHALLENGE, DENY but not for QUESTION) diluted QUESTION below
+   0.2 after Bayesian update, failing
+   `test_intent_analyzer "question syntax boosts QUESTION act"`. Fix:
+   strengthen syntax prior to 6× base for QUESTION (and 3× for CONFIRM)
+   so the question signal survives downstream dilution. Math: with 6/21
+   prior, after trust update → 6/(21*~1.14) ≈ 0.250, comfortably > 0.2.
+
+### Files added by Elle
+- `INTEGRATION.md` — full status doc with build commands, scoreboard,
+  fix log, and what's deliberately left out (Bridge.cpp / IPC wiring /
+  sln registration — all upstream-pending).
+- `.gitignore` — excludes `build/`.
+
+### What's NOT done (and why)
+- **No `Bridge.cpp`**: The shipped `Bridge.hpp` declares
+  `Bridge::fromMeaningObject(const elle::MeaningObject&, …)` and
+  `toScoringWeights(const elle::ScoringWeights&)`. These reference
+  language-engine headers that aren't in this repo. README explicitly
+  punts this: "excluded here to avoid circular dependency until both
+  engines are co-located." Honour that intent.
+- **No IPC wiring** (`SVC_PROBABILITY`, `IPC_PROBABILITY_*`): waste of
+  surface area until the Bridge lands and we know the actual call
+  contract. Add at the same time.
+- **Not in `ElleAnn.sln`**: keeps CMake's FetchContent build path
+  authoritative; doesn't break the existing MSBuild flow.
+
+### Outcome
+- 43/43 tests PASS.
+- Smoke test (`prob_heartbeat_demo`) runs all 5 scenarios cleanly.
+- Tree is push-ready: `git status` shows only the new
+  `ElleAnn/Engines/elle-probability/` tree + the 7 in-place fixes under
+  it + memory file updates.

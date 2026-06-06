@@ -1,0 +1,7 @@
+# elle-probability build artefacts — never commit
+build/
+*.o
+*.obj
+
+# CTest artefacts (ctest run from project root creates this)
+Testing/
