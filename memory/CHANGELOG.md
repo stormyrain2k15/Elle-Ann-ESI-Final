@@ -1863,3 +1863,84 @@ cd build && ctest --output-on-failure            # → 43/43 PASS (0.14s)
 - Tree is push-ready: `git status` shows only the new
   `ElleAnn/Engines/elle-probability/` tree + the 7 in-place fixes under
   it + memory file updates.
+
+## 2026-02-07 (continued) — Bridge.cpp: language engine ⇄ probability engine
+
+### Context
+User re-uploaded the two zips and confirmed the language engine is
+inside `Probability-engine--main.zip` under the `elle-engine/` subdir.
+Direction: extract, integrate, smoke test.
+
+### What landed
+1. **`/app/ElleAnn/Engines/elle-language/`** — full language engine
+   source tree extracted as a peer to the probability engine. Builds
+   clean (`elle_core` static lib + `elle_odbc` static lib + tests +
+   `heartbeat_demo` + `smoke_test`). 1/1 ctest passes.
+2. **`Bridge.cpp`** (probability engine, src/) — full impl of the
+   header that previously had no .cpp:
+   - `toScoringWeights(WeightVector)` and `fromScoringWeights(ScoringWeights)`
+     — bidirectional weight conversion (Integration Point A).
+   - `fromMeaningObject(MeaningObject, ConversationContext)
+     → ProbabilityRequest` — translates the language engine's full
+     analysis output into a probability request (Integration Point B).
+     Carries units (with sense + phrase-sense candidates), context
+     hints (from both `meaning.contextFrames` and
+     `convo.activeContextHints`), the per-emotion profile verbatim,
+     punctuation signals, and speaker relationship.
+   - Thin wrappers: `analyze`, `feedback`, `recordTrust`,
+     `injectHormonalState`.
+3. **CMakeLists update** — added `ELLE_PROB_WITH_LANGUAGE_ENGINE` knob
+   (default `AUTO`) and `ELLE_LANGUAGE_DIR` (default
+   `../elle-language`). When the sibling tree is present, Bridge.cpp
+   joins the static lib, `bridge_smoke_demo` builds, and
+   `test_bridge.cpp` joins the test binary. When absent, behaviour is
+   identical to before. `ELLE_PROB_HAS_LANGUAGE_BRIDGE=1` compile def
+   is exposed to consumers.
+4. **`bridge_smoke_demo.cpp`** — 4-stage demo that constructs a
+   realistic "I'm fine." MeaningObject, runs it through Bridge, runs
+   the probability engine, then re-runs after feedback / trust /
+   hormonal injection and prints both results. End-to-end proof.
+5. **`test_bridge.cpp`** — 9 doctest cases covering: weight
+   round-trip, units round-trip, phrase units, dual-source context
+   hints, emotional profile passthrough, punctuation passthrough,
+   `analyze()` end-to-end, `feedback`+`recordTrust` lifts speaker trust,
+   `injectHormonalState` populates posterior.
+
+### Issues found / fixed during integration
+1. **`elle-language/include/elle/OdbcConnection.hpp`** missing
+   `#include <stdexcept>` — caused `std::runtime_error` to be
+   undeclared on Linux (`-Wall -Wextra` builds). Fix: added the include.
+2. **`Bridge.cpp` ctor** — first draft wrote `Bridge::Bridge()` but
+   the header declares `Bridge(ProbabilityEngineConfig cfg = …)`.
+   Fixed signature.
+3. **`bridge_smoke_demo.cpp`** — first draft referenced
+   `ProbabilityResult::sensePosteriors` (doesn't exist; actual field
+   is `units`) and `TrustSignal::CONFIRMED_TRUE` (actual enumerator
+   is `CONFIRMED_ACCURATE`). Both fixed against the real headers.
+
+### Build matrix (clean from-scratch)
+```
+cd /app/ElleAnn/Engines/elle-language
+cmake -S . -B build && cmake --build build      # 0 errors
+ctest --test-dir build                          # 1/1 PASS
+
+cd /app/ElleAnn/Engines/elle-probability
+cmake -S . -B build && cmake --build build      # 0 errors
+ctest --test-dir build                          # 52/52 PASS
+./build/bridge_smoke_demo                       # exit 0, 4 stages
+./build/prob_heartbeat_demo                     # exit 0, 5 scenarios
+```
+
+### Significance
+**The probability engine is now plugged into the language engine.** The
+bridge produces live posterior weights that the language engine's
+`SenseCandidateResolver` can consume instead of `EngineConfig::weights`.
+The smoke demo proves the closed loop: feedback raises trust, trust
+shifts emotional alignment, hormonal injection biases the emotional
+posterior, all in one engine pass.
+
+### Tree push-ready
+- `elle-language/`: 420 KB, build/ + Testing/ gitignored
+- `elle-probability/`: 308 KB (now includes Bridge.cpp +
+  bridge_smoke_demo.cpp + test_bridge.cpp), build/ + Testing/
+  gitignored

@@ -2575,3 +2575,62 @@ Once user picks the right candidate per opcode from
   layout — see `_re_artifacts/shinengine/SHINENGINE_MAP.md`).
 - (P1) `Bridge.cpp` implementation once the language-engine repo and
   this one are co-located.
+
+## Session Feb-2026 (continued) — Bridge.cpp shipped + language engine co-located
+
+### Status
+- **Bridge.cpp DONE (52/52 tests pass, smoke green)**: User re-uploaded
+  the two zips and confirmed the language engine is inside
+  `Probability-engine--main.zip`'s `elle-engine/` subdir. Extracted it
+  into `/app/ElleAnn/Engines/elle-language/` as a peer to the
+  probability engine. Wrote the full `Bridge.cpp` against the now-
+  co-located headers and pushed it through ctest + a dedicated smoke
+  binary.
+
+### Files added/modified
+- NEW: `/app/ElleAnn/Engines/elle-language/` — full language engine
+  source tree (420 KB, 16 sources + 18 headers + tests + apps + sql
+  schemas). Self-contained CMake build.
+- NEW: `/app/ElleAnn/Engines/elle-probability/src/Bridge.cpp`
+  (~180 lines) — Integration Points A (weights) + B (request).
+- NEW: `/app/ElleAnn/Engines/elle-probability/apps/bridge_smoke_demo.cpp`
+  (~155 lines) — 4-stage end-to-end demo.
+- NEW: `/app/ElleAnn/Engines/elle-probability/tests/test_bridge.cpp`
+  (~155 lines) — 9 doctest cases covering Bridge surface.
+- MODIFIED: `/app/ElleAnn/Engines/elle-probability/CMakeLists.txt` —
+  auto-detect sibling `../elle-language/`, conditionally compile
+  Bridge.cpp + add `ELLE_PROB_HAS_LANGUAGE_BRIDGE=1` define.
+- MODIFIED: `/app/ElleAnn/Engines/elle-language/include/elle/OdbcConnection.hpp`
+  — added missing `#include <stdexcept>` so `elle_odbc` library
+  compiles on Linux (was only failing under -Wall).
+- MODIFIED: `INTEGRATION.md` — Bridge section + status update.
+
+### Verification
+- `cmake --build build`: 0 errors, 0 warnings.
+- `ctest`: **52/52 PASS** (43 original + 9 new Bridge tests).
+- `./bridge_smoke_demo`: 4-stage demo runs cleanly:
+  - **A**: ScoringWeights ↔ WeightVector round-trip OK.
+  - **B**: MeaningObject + ConversationContext → ProbabilityRequest
+    (2 units, 2 context hints, 2 emotions).
+  - **C**: Cold engine analyze on intimate speaker — overall confidence
+    0.577, sense "fine: well" wins at p=0.333 (3-way tie broken).
+  - **D**: After feedback + trust signal + hormonal injection — speaker
+    trust climbed 0.500 → 0.661, winning sense strengthened to p=0.369,
+    recommended weights shifted (emoAlign 0.700 → 0.758).
+- `./prob_heartbeat_demo`: still green (regression check).
+
+### Significance
+This is the moment Elle's language-engine scoring weights stop being
+constants and start being **live posteriors**. The next pass in
+`SenseCandidateResolver` can call `Bridge::engine().currentWeights()`
+to pull the freshly-updated weight beliefs instead of reading the
+static `EngineConfig::weights`.
+
+### Next
+- (P1) Wire Bridge into the language engine's `SenseCandidateResolver`
+  so the `analyze()` pipeline actually consumes the live weights
+  (currently the bridge produces them; the language engine still reads
+  from `Config::weights`).
+- (P1) Persist `BeliefStore` to SQL (mirror the language engine's
+  `persistAnalysisTrace` pattern + new `tBeliefStore` table).
+- (P2) Tomorrow's Shine/Fiesta work is in the user's other chat.

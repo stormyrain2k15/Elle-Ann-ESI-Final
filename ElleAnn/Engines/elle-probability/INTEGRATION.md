@@ -64,14 +64,50 @@ on the way in. See `/app/memory/CHANGELOG.md` for the verbose log.
 
 ## What's still TODO upstream (per README.md)
 
-- `Bridge.cpp` — full impl of `fromMeaningObject()`. Requires
-  co-locating with the language engine headers (`elle/MeaningObject.hpp`,
-  `elle/ConversationContext.hpp`, `elle/Config.hpp` — `ScoringWeights`).
-  The C++ Bridge header is already shipped; the symbol surface is
-  defined.
+- ~~`Bridge.cpp` — full impl of `fromMeaningObject()`~~ **DONE 2026-02-07**:
+  Bridge.cpp shipped, `bridge_smoke_demo` runs A+B+C+D end-to-end,
+  9 new doctest cases (52/52 total). See "Bridge Integration" section
+  below.
 - Per-sense frequency priors from the language engine's SQL.
 - Multi-dimensional weight uncertainty (current is two-bucket).
 - SQL persistence layer (mirror language engine's `persistAnalysisTrace`).
+
+## Bridge Integration — language engine ⇄ probability engine
+
+The bridge between the two engines is now **live**. To build with the
+bridge enabled, the probability engine's CMakeLists auto-detects a
+sibling `elle-language/` directory and adds `src/Bridge.cpp` +
+`apps/bridge_smoke_demo.cpp` + `tests/test_bridge.cpp` to the build.
+
+| Knob | Default | Meaning |
+|---|---|---|
+| `ELLE_PROB_WITH_LANGUAGE_ENGINE` | `AUTO` | `ON` = require bridge; `OFF` = skip; `AUTO` = enable if headers found |
+| `ELLE_LANGUAGE_DIR` | `../elle-language` | Path to the language-engine source tree |
+| compile def `ELLE_PROB_HAS_LANGUAGE_BRIDGE=1` | set when bridge active | Consumers can `#ifdef` against it |
+
+### What the bridge provides
+
+- **Integration Point A** (weight translation):
+  `WeightVector ⇄ elle::ScoringWeights`. Bijective; round-trip tested.
+- **Integration Point B** (request construction):
+  `(MeaningObject, ConversationContext) → ProbabilityRequest`.
+  Carries all units, sense candidates, phrase candidates, context
+  frame scores, emotional profile (by EmotionID), conversation hints,
+  punctuation signals.
+- **Engine surface**: thin wrappers — `analyze`, `feedback`,
+  `recordTrust`, `injectHormonalState`, plus mutable/const access to
+  the underlying `ProbabilityEngine`.
+
+### Run the end-to-end smoke
+
+```bash
+cd /app/ElleAnn/Engines/elle-probability
+cmake --build build
+./build/bridge_smoke_demo
+```
+
+Outputs 4 stages: weight round-trip → request construction → cold
+analyze → re-analyze after feedback + trust + hormonal injection.
 
 ## What's NOT integrated yet (deliberate)
 

@@ -102,6 +102,59 @@ include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)
 doctest_discover_tests(elle_prob_tests)
 
 # ============================================================================
+# Optional bridge to the language engine (compiles Bridge.cpp + smoke demo).
+#
+# Auto-detects the sibling elle-language tree at ../elle-language. Override
+# with -DELLE_LANGUAGE_DIR=/path/to/elle-language or disable with
+# -DELLE_PROB_WITH_LANGUAGE_ENGINE=OFF.
+# ============================================================================
+set(ELLE_PROB_WITH_LANGUAGE_ENGINE "AUTO" CACHE STRING
+    "Build the language-engine bridge (ON / OFF / AUTO)")
+set(ELLE_LANGUAGE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../elle-language" CACHE PATH
+    "Path to the elle-language source tree (must contain include/elle/Types.hpp)")
+
+set(_elle_lang_headers_found FALSE)
+if(EXISTS "${ELLE_LANGUAGE_DIR}/include/elle/Types.hpp"
+   AND EXISTS "${ELLE_LANGUAGE_DIR}/include/elle/Config.hpp")
+    set(_elle_lang_headers_found TRUE)
+endif()
+
+if(ELLE_PROB_WITH_LANGUAGE_ENGINE STREQUAL "ON" OR
+   (ELLE_PROB_WITH_LANGUAGE_ENGINE STREQUAL "AUTO" AND _elle_lang_headers_found))
+
+    if(NOT _elle_lang_headers_found)
+        message(FATAL_ERROR
+            "ELLE_PROB_WITH_LANGUAGE_ENGINE=ON but language headers not found at "
+            "${ELLE_LANGUAGE_DIR}/include/elle/Types.hpp")
+    endif()
+
+    message(STATUS "elle-probability: language-engine bridge ENABLED "
+                   "(headers at ${ELLE_LANGUAGE_DIR})")
+
+    # Bridge.cpp is compiled into the core library so consumers don't need
+    # to link an extra archive. It only adds a header-only dependency on
+    # the language engine.
+    target_sources(elle_probability_core PRIVATE src/Bridge.cpp)
+    target_include_directories(elle_probability_core
+        PUBLIC
+            $<BUILD_INTERFACE:${ELLE_LANGUAGE_DIR}/include>
+    )
+    target_compile_definitions(elle_probability_core
+        PUBLIC ELLE_PROB_HAS_LANGUAGE_BRIDGE=1)
+
+    # Smoke binary that round-trips ScoringWeights and a MeaningObject
+    # through Bridge end-to-end.
+    add_executable(bridge_smoke_demo apps/bridge_smoke_demo.cpp)
+    target_link_libraries(bridge_smoke_demo PRIVATE elle_probability_core)
+
+    # Bridge regression tests get folded into the main test binary.
+    target_sources(elle_prob_tests PRIVATE tests/test_bridge.cpp)
+else()
+    message(STATUS "elle-probability: language-engine bridge disabled "
+                   "(headers not found / ELLE_PROB_WITH_LANGUAGE_ENGINE=OFF)")
+endif()
+
+# ============================================================================
 # Install
 # ============================================================================
 install(TARGETS elle_probability_core

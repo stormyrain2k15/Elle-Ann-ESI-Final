@@ -1,0 +1,42 @@
+{
+    "engineVersion": "0.1.0",
+    "database": {
+        "driver":                 "ODBC Driver 18 for SQL Server",
+        "server":                 "localhost",
+        "database":               "EllesLanguage",
+        "user":                   "",
+        "password":               "",
+        "trustedConnection":      true,
+        "encrypt":                true,
+        "trustServerCertificate": false,
+        "connectionTimeoutMs":    5000,
+        "queryTimeoutMs":         8000
+    },
+    "cache": {
+        "enabled":               true,
+        "wordCacheSize":         50000,
+        "formCacheSize":         50000,
+        "phraseCacheSize":       10000,
+        "senseCacheSize":        50000,
+        "relationCacheSize":     10000,
+        "contextFrameCacheSize": 1024,
+        "partOfSpeechCacheSize": 64,
+        "graphNeighborhood":     8192
+    },
+    "weights": {
+        "contextFrameMatch":   1.0,
+        "nearbyWordCooccur":   0.6,
+        "senseExampleOverlap": 0.5,
+        "emotionalAlignment":  0.7,
+        "frequency":           0.3,
+        "posCompatibility":    0.4,
+        "posNegDrawAlignment": 0.5,
+        "conversationHint":    0.8
+    },
+    "graph": {
+        "maxDepth":        3,
+        "maxNodesPerPath": 8,
+        "maxTotalNodes":   64,
+        "minEdgeStrength": 0.10
+    }
+}
