@@ -1053,7 +1053,7 @@ void ElleIdentityCore::SaveToDatabase() {
     uint64_t nowMs = ELLE_MS_NOW();
 
     {
-        auto conn = ElleSQLPool::Instance().Acquire(5000);
+        SQLConnGuard conn(5000);
         if (!conn) {
             ELLE_ERROR("Autobiography save FAILED — no SQL connection available. "
                        "In-memory state has %zu entries; retry scheduled.",
@@ -1069,6 +1069,7 @@ void ElleIdentityCore::SaveToDatabase() {
                 }
             }
 
+            const bool txStarted = conn.Begin();
             bool ok = true;
             uint32_t inserted = 0;
             for (size_t i = 0; i < m_autobiography.size(); i++) {
@@ -1091,7 +1092,17 @@ void ElleIdentityCore::SaveToDatabase() {
                 inserted++;
             }
 
-            ElleSQLPool::Instance().Release(conn);
+            if (txStarted) {
+                if (ok) {
+                    if (!conn.Commit()) {
+                        ELLE_ERROR("Autobiography commit failed — guard will roll back.");
+                        ok = false;
+                    }
+                } else {
+                    conn.Rollback();
+                    inserted = 0;
+                }
+            }
 
             if (!ok) {
                 ELLE_ERROR("Autobiography save FAILED — inserts aborted. "

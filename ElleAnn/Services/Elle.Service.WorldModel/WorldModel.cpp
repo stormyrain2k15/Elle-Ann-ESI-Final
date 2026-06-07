@@ -176,6 +176,7 @@ protected:
 
                 auto out = ElleIPCMessage::Create(IPC_WORLD_RESPONSE,
                                                   SVC_WORLD_MODEL, sender);
+                out.header.correlation_id = msg.header.correlation_id;
                 out.SetStringPayload(resp.dump());
                 GetIPCHub().Send(sender, out);
                 break;

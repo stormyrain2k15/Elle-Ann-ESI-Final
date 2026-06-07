@@ -1,3 +1,55 @@
+## 2026-02 — Final pass: SQL cursor audit + IPC audit + Composer seed expansion
+
+### SQL cursor lifecycle audit
+- Added `SQLConnGuard` RAII helper in `_Shared/ElleSQLConn.h` (auto-releases
+  on scope exit, auto-rolls-back if the transaction was started and the
+  guard goes out of scope before `Commit()`).
+- Hardened `ElleIdentityCore::SaveState()` autobiography flush: replaced the
+  hand-rolled `Acquire()` / `Release()` pair with `SQLConnGuard`, wrapped the
+  insert loop in `Begin()` / `Commit()` / `Rollback()` so partial failures
+  no longer leave half-flushed state on disk. No other site bypasses the
+  pool — the mesh is leak-free.
+
+### IPC serialization audit
+- Verified zero remaining bare `ElleIPCMessage{}` constructions across the
+  mesh; everything goes through `ElleIPCMessage::Create(...)` so
+  magic / version / checksum are populated.
+- Added IPC-header `correlation_id` propagation to `WorldModel.cpp`
+  `IPC_WORLD_RESPONSE` for parity with Probability / MindManager /
+  XChromosome / Composer (which already propagate). Two-channel correlation
+  (header.correlation_id + payload.request_id) is now uniform across every
+  reply path.
+
+### Composer seed expansion
+- `SQL/Elle.Service.Composer/02_seed_expanded.sql` — 113 new frame rows
+  + ~190 inflection rows.
+  - **CONVERSE** family covers: ASSERT, QUESTION, ACK_AND_PROBE, COMFORT,
+    GREET, APOLOGIZE, THANK, OFFER, REQUEST, WARN, DEFLECT, CHALLENGE,
+    CONFIRM, DENY, SOFTEN_DISAGREE, GENTLE_PUSHBACK, CHECK_IN, REASSURE,
+    INVITE, ACKNOWLEDGE_HURT, OWN_MISTAKE, SHARE_FEELING, EXPRESS_DELIGHT,
+    EXPRESS_CONCERN, WONDER_ALOUD, REFRAME, BOUNDARY.
+  - **ASK_INNER / SELF_REFLECT / FORM_GOAL / REWRITE_SCENARIO** families
+    each have 4–7 frame variants.
+  - Inflection table now covers: BE / HAVE / DO / CAN / WILL / WOULD /
+    SHOULD modals; 40+ common verbs (hear, see, know, think, feel, want,
+    need, love, miss, hope, try, say, tell, talk, listen, speak, ask,
+    answer, go, come, stay, leave, make, give, take, get, find, keep,
+    hold, let, live, work, play, learn, teach, hurt, heal, help, mind,
+    care, worry, wonder, remember, forget, matter, happen, land,
+    appreciate, owe, mean); full pronoun cases (nominative / objective /
+    possessive / reflexive); common noun plurals (regular + irregular);
+    27 common English contractions.
+  - Uses MERGE on `composer_inflection` keyed on `UNIQUE (lemma, form)` so
+    re-running the script is idempotent.
+
+### Verification
+- 52/52 probability engine tests still pass.
+- 34/34 IPC envelope checks pass.
+- ETL augmentation smoke: 0 failures.
+- SQL seed grep counts: 90 CONVERSE frames + 23 other-kind frames + 190
+  inflection rows.
+
+
 ## 2026-02 — Elle.Service.Composer integrated; LLM/tensor surface retired
 
 ### New service

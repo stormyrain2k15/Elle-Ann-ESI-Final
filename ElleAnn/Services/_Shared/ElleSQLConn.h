@@ -128,6 +128,51 @@ private:
     bool CreateConnection(std::shared_ptr<SQLConnection>& conn);
 };
 
+class SQLConnGuard {
+public:
+    explicit SQLConnGuard(uint32_t timeoutMs = 5000)
+        : m_conn(ElleSQLPool::Instance().Acquire(timeoutMs)) {}
+
+    ~SQLConnGuard() {
+        if (m_conn) {
+            if (m_txActive) {
+                m_conn->Rollback();
+            }
+            ElleSQLPool::Instance().Release(m_conn);
+        }
+    }
+
+    SQLConnGuard(const SQLConnGuard&)            = delete;
+    SQLConnGuard& operator=(const SQLConnGuard&) = delete;
+
+    explicit operator bool() const { return static_cast<bool>(m_conn); }
+    SQLConnection* operator->() const { return m_conn.get(); }
+    SQLConnection& operator*()  const { return *m_conn; }
+
+    bool Begin() {
+        if (!m_conn || m_txActive) return false;
+        if (!m_conn->BeginTransaction()) return false;
+        m_txActive = true;
+        return true;
+    }
+    bool Commit() {
+        if (!m_conn || !m_txActive) return false;
+        const bool ok = m_conn->Commit();
+        m_txActive = false;
+        return ok;
+    }
+    bool Rollback() {
+        if (!m_conn || !m_txActive) return false;
+        const bool ok = m_conn->Rollback();
+        m_txActive = false;
+        return ok;
+    }
+
+private:
+    std::shared_ptr<SQLConnection> m_conn;
+    bool                            m_txActive = false;
+};
+
 namespace ElleDB {
 
     bool SubmitIntent(const ELLE_INTENT_RECORD& intent);
