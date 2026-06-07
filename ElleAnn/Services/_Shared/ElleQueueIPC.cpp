@@ -42,7 +42,7 @@ static const char* g_serviceNames[] = {
 
     "Bonding", "Continuity", "InnerLife", "Solitude",
     "Family", "XChromosome", "Consent", "Fiesta", "Probability",
-    "MindManager", "Imagination"
+    "MindManager", "Imagination", "Composer"
 };
 static_assert(sizeof(g_serviceNames) / sizeof(g_serviceNames[0]) == (size_t)ELLE_SERVICE_COUNT,
               "g_serviceNames size must equal ELLE_SERVICE_COUNT — "

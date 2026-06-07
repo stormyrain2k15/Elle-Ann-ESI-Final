@@ -116,57 +116,7 @@ IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text, co
     result.confidence = 0.5f;
     result.urgency = 0.5f;
     result.raw_text = text;
-
-    std::string raw = ElleLLMEngine::Instance().ParseIntent(text, context);
-    if (raw.empty()) return result;
-
-    nlohmann::json j;
-    if (!Elle::ExtractJsonObject(raw, j)) {
-        ELLE_WARN("IntentParser LLM: no JSON object in response: %.80s", raw.c_str());
-        return result;
-    }
-
-    try {
-        std::string label = j.value("intent_type", std::string("chat"));
-        std::transform(label.begin(), label.end(), label.begin(),
-                       [](unsigned char c){ return (char)std::tolower(c); });
-        static const std::unordered_map<std::string, ELLE_INTENT_TYPE> labelMap = {
-            { "chat",              INTENT_CHAT               },
-            { "hardware_command",  INTENT_HARDWARE_COMMAND   },
-            { "store_memory",      INTENT_STORE_MEMORY       },
-            { "recall_memory",     INTENT_RECALL_MEMORY      },
-            { "execute_action",    INTENT_EXECUTE_ACTION     },
-            { "process_control",   INTENT_PROCESS_CONTROL    },
-            { "file_operation",    INTENT_FILE_OPERATION     },
-            { "self_reflect",      INTENT_SELF_REFLECT       },
-            { "goal_update",       INTENT_GOAL_UPDATE        },
-            { "creative_generate", INTENT_CREATIVE_GENERATE  },
-            { "learn",             INTENT_LEARN              },
-            { "explore",           INTENT_EXPLORE            },
-            { "predict",           INTENT_PREDICT            },
-            { "ethical_evaluate",  INTENT_ETHICAL_EVALUATE   },
-        };
-        auto it = labelMap.find(label);
-        if (it != labelMap.end()) result.type = it->second;
-
-        if (j.contains("confidence") && j["confidence"].is_number())
-            result.confidence = ELLE_CLAMP((float)j["confidence"].get<double>(), 0.0f, 1.0f);
-        if (j.contains("urgency") && j["urgency"].is_number())
-            result.urgency    = ELLE_CLAMP((float)j["urgency"].get<double>(),    0.0f, 1.0f);
-
-        if (j.contains("parameters")) {
-            if (j["parameters"].is_string())      result.parameters = j["parameters"].get<std::string>();
-            else                                   result.parameters = j["parameters"].dump();
-        } else {
-            result.parameters = text;
-        }
-
-        ELLE_DEBUG("IntentParser LLM: type=%d conf=%.2f urg=%.2f",
-                   result.type, result.confidence, result.urgency);
-    } catch (const std::exception& ex) {
-        ELLE_WARN("IntentParser LLM JSON parse failed: %s (raw=%.60s)", ex.what(), raw.c_str());
-    }
-
+    (void)context;
     return result;
 }
 

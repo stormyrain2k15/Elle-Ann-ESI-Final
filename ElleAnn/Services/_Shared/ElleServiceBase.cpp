@@ -1,6 +1,7 @@
 #include "ElleServiceBase.h"
 #include "ElleIdentityCore.h"
 #include "ElleLLM.h"
+#include "ElleComposerClient.h"
 #include "ElleSQLConn.h"
 #include "ElleConfig.h"
 #include "ElleGameAccountDB.h"
@@ -590,12 +591,6 @@ bool ElleServiceBase::InitializeCore() {
         if (msg.header.msg_type == IPC_CONFIG_RELOAD) {
             const bool ok = ElleConfig::Instance().Reload();
 
-            if (ok && ElleLLMEngine::Instance().IsInitialized()) {
-                const bool llmOk = ElleLLMEngine::Instance().Reinitialize();
-                ELLE_INFO("IPC_CONFIG_RELOAD: LLM engine re-init %s",
-                          llmOk ? "succeeded" : "FAILED");
-            }
-
             if (ok) {
                 const auto& svc = ElleConfig::Instance().GetService();
                 if (!svc.sql_connection_string.empty()) {
@@ -611,6 +606,11 @@ bool ElleServiceBase::InitializeCore() {
             this->OnConfigReload();
         }
 
+        if (msg.header.msg_type == IPC_COMPOSE_RESPONSE ||
+            msg.header.msg_type == IPC_COMPOSE_STREAM_CHUNK) {
+            ElleComposer::Client::Instance().Deliver(msg);
+        }
+
         this->OnMessage(msg, sender);
     });
 
@@ -621,12 +621,12 @@ bool ElleServiceBase::InitializeCore() {
 
     if (m_serviceId == SVC_COGNITIVE || m_serviceId == SVC_SELF_PROMPT ||
         m_serviceId == SVC_DREAM || m_serviceId == SVC_GOAL_ENGINE ||
-        m_serviceId == SVC_HTTP_SERVER) {
-        if (!ElleLLMEngine::Instance().Initialize()) {
-            ELLE_WARN("LLM engine failed to initialize — AI features degraded");
-        } else {
-            ELLE_INFO("LLM engine initialized (mode: %d)", (int)ElleConfig::Instance().GetLLM().mode);
-        }
+        m_serviceId == SVC_HTTP_SERVER || m_serviceId == SVC_IMAGINATION ||
+        m_serviceId == SVC_MEMORY || m_serviceId == SVC_BONDING ||
+        m_serviceId == SVC_CONTINUITY || m_serviceId == SVC_INNER_LIFE ||
+        m_serviceId == SVC_SOLITUDE) {
+        ElleLLMEngine::Instance().BindHub(&m_ipcHub, m_serviceId);
+        ELLE_INFO("%s registered as Composer client", m_displayName.c_str());
     }
 
     ELLE_INFO("%s core initialization complete", m_displayName.c_str());
@@ -645,7 +645,6 @@ void ElleServiceBase::ShutdownCore() {
 
     ElleIdentityCore::SetIPCHub(nullptr);
     m_ipcHub.Shutdown();
-    ElleLLMEngine::Instance().Shutdown();
     ElleSQLPool::Instance().Shutdown();
     ElleLogger::Instance().Shutdown();
 }

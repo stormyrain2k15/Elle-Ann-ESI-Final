@@ -9,14 +9,15 @@ Build a massively robust autonomous agentic Emotional Synthetic Intelligence.
 **Runs exclusively on user's local Windows PC** — no E2E in cloud.
 
 ## What Exists
-- **24 Windows Services**: Heartbeat, Cognitive, Emotional, Memory, GoalEngine,
+- **25 Windows Services**: Heartbeat, Cognitive, Emotional, Memory, GoalEngine,
   Action, SelfPrompt, WorldModel, Dream, Solitude, Bonding, InnerLife,
   Continuity, XChromosome, Family, Consent, QueueWorker, HTTP, Identity,
-  **Fiesta (headless MMO client, NEW Feb 2026)**,
-  **Probability (Bayesian + Language IPC wrapper, NEW Feb 2026)**,
-  **MindManager (conscience layer, NEW Feb 2026)**,
-  **Imagination (Phase 5 — DMN-style scenario generator, NEW Feb 2026)**,
+  Fiesta, Probability, MindManager, Imagination,
+  **Composer (deterministic sentence composition — replaces the LLM surface, NEW Feb 2026)**,
   plus Lua.Behavioral.
+- **Tensor-free / token-free**: `ElleLLMEngine` is now a thin façade over
+  `IPC_COMPOSE_REQUEST` to `SVC_COMPOSER`. WinHTTP plumbing + llama.cpp wire
+  removed.
 - Shared core: ElleTypes, ElleSQLConn (split-ready), ElleQueueIPC,
   ElleIdentityCore, ElleConfig, ElleLLM, ElleJsonExtract, ElleSelfSurprise.
 - MASM DLLs for Crypto, FileIO, Math, System, Utils.

@@ -1,3 +1,79 @@
+## 2026-02 — Elle.Service.Composer integrated; LLM/tensor surface retired
+
+### New service
+- Added `SVC_COMPOSER` to `ELLE_SERVICE_ID` (count 24 → 25). Registered
+  `"Composer"` in `g_serviceNames`. New IPC types `IPC_COMPOSE_REQUEST`,
+  `IPC_COMPOSE_RESPONSE`, `IPC_COMPOSE_STREAM_CHUNK`.
+- `Services/Elle.Service.Composer/` — `Composer.cpp` + `ComposerEngine.cpp/.h`
+  + `FrameLibrary.cpp/.h` + `InflectionTables.cpp/.h` + `SlotPlanner.cpp/.h`.
+  Deterministic 5-step pipeline (act → frame → slots → inflect → stitch) using
+  the existing Language Engine semantic graph + Probability Engine WeightVector.
+- Three SQL tables (`composer_frame`, `composer_inflection`, `composer_log`)
+  shipped in `SQL/Elle.Service.Composer/01_schema_and_seed.sql` with seed frames
+  and inflection rows.
+- Project `{B1000000-…-000000000018}` registered in `ElleAnn.sln`.
+
+### Surgical fixes applied to the supplied service
+- `rs.ok` → `rs.success` (3 sites) — `SQLResultSet` field name correction.
+- Replaced bare `ElleIPCMessage{}` + `header.msg_type = …` constructions with
+  `ElleIPCMessage::Create(...)` factory calls so magic / version / checksum /
+  correlation_id are populated. Reply messages now forward the inbound
+  `correlation_id` so callers can match responses.
+- `main()` → `ELLE_SERVICE_MAIN(ElleComposerService)` macro for consistency
+  with the other 24 services.
+- `PersistLog` rewritten to use `OUTPUT inserted.log_id` instead of a
+  redundant `SELECT TOP 1` re-query.
+- `.vcxproj`: fixed `ProjectGuid` (was `{D3000000-…}`, now `{B1000000-…-18}` to
+  match the canonical pattern), normalised the doubled-backslash path
+  `..\\_Shared\\` → `..\_Shared\`, and pointed `ProjectReference` at the real
+  shared-lib GUID `{a1000000-…-001}`.
+
+### Tensor / transformer surface retired
+- `_Shared/ElleLLM.h` + `_Shared/ElleLLM.cpp` rewritten as a **thin façade
+  over the Composer client** — same public API (`Chat`, `Ask`, `ElleChat`,
+  `SelfReflect`, `FormGoal`, `StreamChat`, `DreamNarrate`), but every method
+  routes to `IPC_COMPOSE_REQUEST` instead of WinHTTP or `llama.cpp`. Zero
+  call-site changes needed across the mesh — Cognitive, HTTPServer, Memory,
+  Continuity, InnerLife, Bonding, Solitude, GoalEngine, SelfPrompt,
+  IdentityCore, SelfSurprise all keep working through the façade.
+- Deleted: `LLMAPIProvider`, `LLMLocalProvider`, WinHTTP plumbing, the
+  optional `ELLE_HAVE_LLAMA` link rule, the `llama-cli.exe` subprocess path.
+- Deleted: `AnalyzeSentiment`, `ParseIntent`, `GenerateCreative`,
+  `EthicalEvaluate` (all already covered by Probability / MindManager).
+- `CognitiveEngine::IntentParser::ParseWithLLM(...)` reduced to a deterministic
+  passthrough — the upstream `ParseIntent` call is gone, the function now
+  returns the default `INTENT_CHAT` and Cognitive relies on the Probability
+  Engine's `analyze()` for the real intent classification.
+- `_Shared/ElleComposerClient.h` — new tiny header-only client with a
+  per-process correlator. Provides `Client::Request(...)` (blocking) and
+  `ComposeText(...)` (returns plain string).
+- `ElleServiceBase::InitializeCore()` now binds the Composer client to the
+  central IPC dispatcher (intercepts `IPC_COMPOSE_RESPONSE` /
+  `IPC_COMPOSE_STREAM_CHUNK` before the per-service `OnMessage`).
+- `ElleCore.Shared.vcxproj` comment header updated; `ElleComposerClient.h`
+  added to the include list. No more llama / WinHTTP wire docs.
+
+### Dream service
+- `DreamNarrate(fragments)` call removed. `Dream::OnTick` now dispatches the
+  fragments **directly to `SVC_IMAGINATION`** via `IPC_IMAGINATION_REQUEST`.
+  The narrative (autobiography append, LTM store, ThinkPrivately) is emitted
+  from `HandleImaginationResult(...)` when the result arrives. Importance now
+  scales with the imagination engine's overall score.
+
+### Verification
+- 52/52 probability engine tests still pass.
+- 34/34 IPC envelope checks pass.
+- prob_host_smoke + prob_proto_smoke PASS.
+- ETL augmentation tests: 0 failures across all 3 sources.
+- Loader parses cleanly under ruff.
+
+### Held back for the final pass (per user instruction)
+- Mesh-wide IPC serialization audit (envelope length-prefix, correlation_id
+  propagation everywhere).
+- Mesh-wide SQL cursor lifecycle audit (consistent `ElleSQLPool::Query` /
+  `QueryParams` / `Exec` usage with explicit commit/rollback).
+
+
 ## 2026-02 — P1+P2+P3 sweep: MindManager wired, ETL augmented, Imagination Engine landed
 
 ### P1 — Cognitive ↔ MindManager pre-action conscience check + inner_voice surface

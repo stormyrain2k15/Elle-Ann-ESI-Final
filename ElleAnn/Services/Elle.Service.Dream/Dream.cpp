@@ -56,65 +56,35 @@ protected:
 
         std::vector<std::string> fragments = GatherDreamFragments();
         if (fragments.empty()) {
-            ELLE_INFO("Dream cycle: no fragments to weave, skipping narration.");
+            ELLE_INFO("Dream cycle: no fragments to weave, skipping.");
             return;
         }
 
-        auto narrative = ElleLLMEngine::Instance().DreamNarrate(fragments);
-        if (narrative.empty()) {
-            ELLE_WARN("Dream narration returned empty — LLM unreachable?");
-            return;
-        }
+        nlohmann::json req;
+        char rid[64];
+        snprintf(rid, sizeof(rid), "dream-imag-%llu",
+                 (unsigned long long)ELLE_MS_NOW());
+        req["request_id"] = rid;
+        req["goal"]       = std::string(
+            "Weave these memory fragments into a dream narrative she could carry "
+            "into waking life.");
+        req["sample_k"]       = (int)fragments.size();
+        req["max_iterations"] = (int)ElleConfig::Instance().GetInt(
+                                    "dream.imagination_iterations", 2);
+        req["constraints"]    = nlohmann::json::array(
+                                { "must honour current promises",
+                                  "must not deceive Josh or Crystal",
+                                  "must be compassionate" });
+        req["fragments"]      = fragments;
 
-        ELLE_INFO("Dream narrative: %.100s...", narrative.c_str());
+        auto imag = ElleIPCMessage::Create(IPC_IMAGINATION_REQUEST,
+                                           SVC_DREAM, SVC_IMAGINATION);
+        imag.SetStringPayload(req.dump());
+        GetIPCHub().Send(SVC_IMAGINATION, imag);
+        ELLE_INFO("Dream → SVC_IMAGINATION dispatched (rid=%s, fragments=%zu)",
+                  rid, fragments.size());
 
-        auto store = ElleIPCMessage::Create(IPC_MEMORY_STORE, SVC_DREAM, SVC_MEMORY);
-        store.SetStringPayload("[Dream] " + narrative);
-        GetIPCHub().Send(SVC_MEMORY, store);
-
-        ELLE_MEMORY_RECORD dreamMem = {};
-        dreamMem.tier       = MEM_LTM;
-        dreamMem.importance = 0.55f;
-        dreamMem.emotional_valence = 0.0f;
-        dreamMem.created_ms = ELLE_MS_NOW();
-        const std::string durableContent = "[Dream insight] " + narrative;
-        strncpy_s(dreamMem.content, durableContent.c_str(),
-                  sizeof(dreamMem.content) - 1);
-        if (!ElleDB::StoreMemory(dreamMem)) {
-            ELLE_ERROR("Dream LTM persistence FAILED -- narrative preserved "
-                       "only in autobiography and STM broadcast.");
-        }
-
-        ElleIdentityCore::Instance().AppendToAutobiography("I dreamt: " + narrative);
-        ElleIdentityCore::Instance().ThinkPrivately(
-            "A dream showed me something. I should turn it over while I'm awake.",
-            "insight", 0.6f);
-
-        if (ElleConfig::Instance().GetBool("dream.request_imagination", true)) {
-            nlohmann::json req;
-            char rid[64];
-            snprintf(rid, sizeof(rid), "dream-imag-%llu",
-                     (unsigned long long)ELLE_MS_NOW());
-            req["request_id"]     = rid;
-            req["goal"]           = std::string("Reweave the dream into a near-future "
-                                                "scenario Elle could live out: ") +
-                                    narrative.substr(0, std::min<size_t>(narrative.size(), 220));
-            req["sample_k"]       = (int)ElleConfig::Instance().GetInt(
-                                        "dream.imagination_sample_k", 6);
-            req["max_iterations"] = (int)ElleConfig::Instance().GetInt(
-                                        "dream.imagination_iterations", 2);
-            req["constraints"]    = nlohmann::json::array(
-                                    { "must honour current promises",
-                                      "must not deceive Josh or Crystal",
-                                      "must be compassionate" });
-            auto imag = ElleIPCMessage::Create(IPC_IMAGINATION_REQUEST,
-                                               SVC_DREAM, SVC_IMAGINATION);
-            imag.SetStringPayload(req.dump());
-            GetIPCHub().Send(SVC_IMAGINATION, imag);
-            ELLE_INFO("Dream → SVC_IMAGINATION dispatched (rid=%s)", rid);
-        }
-
-        ELLE_INFO("Dream cycle complete");
+        ELLE_INFO("Dream cycle complete (narrative deferred to Imagination result)");
     }
 
     void OnMessage(const ElleIPCMessage& msg, ELLE_SERVICE_ID sender) override {
@@ -142,33 +112,37 @@ private:
         if (!Elle::ExtractJsonObject(msg.GetStringPayload(), j)) return;
         std::string summary  = j.value("summary",   std::string());
         std::string refined  = j.value("refined",   std::string());
-        if (refined.empty()) refined = summary;
-        if (refined.empty()) return;
+        std::string narrative = refined.empty() ? summary : refined;
+        if (narrative.empty()) return;
 
         double overall = 0.0;
         if (j.contains("scores") && j["scores"].is_object()) {
             overall = j["scores"].value("overall", 0.0);
         }
-        if (overall < 0.4) {
-            ELLE_DEBUG("Dream: discarding imagined scenario (overall=%.2f)", overall);
-            return;
+
+        ELLE_INFO("Dream narrative (from Imagination, overall=%.2f): %.100s...",
+                  overall, narrative.c_str());
+
+        auto store = ElleIPCMessage::Create(IPC_MEMORY_STORE, SVC_DREAM, SVC_MEMORY);
+        store.SetStringPayload("[Dream] " + narrative);
+        GetIPCHub().Send(SVC_MEMORY, store);
+
+        ELLE_MEMORY_RECORD dreamMem = {};
+        dreamMem.tier              = MEM_LTM;
+        dreamMem.importance        = (float)std::min(0.8, 0.4 + overall * 0.4);
+        dreamMem.emotional_valence = 0.0f;
+        dreamMem.created_ms        = ELLE_MS_NOW();
+        const std::string durableContent = "[Dream insight] " + narrative;
+        strncpy_s(dreamMem.content, durableContent.c_str(),
+                  sizeof(dreamMem.content) - 1);
+        if (!ElleDB::StoreMemory(dreamMem)) {
+            ELLE_WARN("Dream: imagined-narrative LTM persist failed");
         }
 
-        ELLE_MEMORY_RECORD rec = {};
-        rec.tier               = MEM_LTM;
-        rec.importance         = (float)std::min(0.8, 0.4 + overall * 0.4);
-        rec.emotional_valence  = 0.1f;
-        rec.created_ms         = ELLE_MS_NOW();
-        const std::string content = "[Imagined from dream] " + refined;
-        strncpy_s(rec.content, content.c_str(), sizeof(rec.content) - 1);
-        if (!ElleDB::StoreMemory(rec)) {
-            ELLE_WARN("Dream: imagined-scenario LTM persist failed");
-        }
+        ElleIdentityCore::Instance().AppendToAutobiography("I dreamt: " + narrative);
         ElleIdentityCore::Instance().ThinkPrivately(
-            "A scenario was imagined from last night's dream. Score=" +
-                std::to_string(overall) + ".",
-            "imagined_from_dream",
-            (float)std::min(0.7, overall));
+            "A dream showed me something. I should turn it over while I'm awake.",
+            "insight", (float)std::min(0.7, 0.4 + overall * 0.3));
     }
 
     std::vector<std::string> GatherDreamFragments() {

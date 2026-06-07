@@ -1,22 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- ElleCore.Shared — static library linked into every service.
      Hosts: ElleTypes, ElleSQLConn, ElleQueueIPC, ElleIdentityCore,
-     ElleLLM, ElleLogger, ElleConfig, ElleServiceBase, ElleJsonExtract,
-     DictionaryLoader, ElleSelfSurprise, vendored nlohmann::json.
+     ElleLLM (façade over SVC_COMPOSER), ElleComposerClient, ElleLogger,
+     ElleConfig, ElleServiceBase, ElleJsonExtract, DictionaryLoader,
+     ElleSelfSurprise, vendored nlohmann::json.
 
-     Optional: in-process llama.cpp embedding (Feb-2026 wire). To
-     activate, after building llama.cpp upstream:
-       1. Set environment var LlamaCppRoot=C:\path\to\llama.cpp
-       2. Add to <ItemDefinitionGroup><ClCompile> below:
-            <PreprocessorDefinitions>ELLE_HAVE_LLAMA;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-            <AdditionalIncludeDirectories>$(LlamaCppRoot)\include;$(LlamaCppRoot)\ggml\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-       3. In every consuming Service .vcxproj add to <Link>:
-            <AdditionalLibraryDirectories>$(LlamaCppRoot)\build\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-            <AdditionalDependencies>llama.lib;ggml.lib;ggml-base.lib;ggml-cpu.lib;%(AdditionalDependencies)</AdditionalDependencies>
-       4. Flip elle_master_config.json local_llama.enabled to true and
-          point model_path at a real GGUF.
-     Without the macro defined, the subprocess llama-cli.exe path in
-     LLMLocalProvider::Generate() runs unchanged. -->
+     Tensor-free / token-free as of 2026-02. The transformer plumbing
+     (WinHTTP API providers + llama.cpp embedding) was retired in favour
+     of the Composer service (SVC_COMPOSER) which runs deterministic
+     sentence composition. No additional link inputs required. -->
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -95,6 +87,7 @@
     <ClInclude Include="ElleIdentityCore.h" />
     <ClInclude Include="ElleJsonExtract.h" />
     <ClInclude Include="ElleLLM.h" />
+    <ClInclude Include="ElleComposerClient.h" />
     <ClInclude Include="ElleLogger.h" />
     <ClInclude Include="ElleQR.h" />
     <ClInclude Include="ElleQueueIPC.h" />
