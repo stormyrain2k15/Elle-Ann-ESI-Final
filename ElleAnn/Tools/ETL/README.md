@@ -45,10 +45,46 @@ without losing fidelity.
 Tools/etl/
 ├── README.md              this file
 ├── sources/
-│   └── wordnet_to_elle.py     WordNet → CSV (117 k synsets → 12 CSVs)
+│   ├── wordnet_to_elle.py     WordNet → CSV (117 k synsets → 12 CSVs)
+│   ├── nrc_emolex_to_elle.py  NRC EmoLex → sense_emotions_nrc.csv augmentation
+│   ├── nrc_vad_to_elle.py     NRC VAD lexicon → sense_valence_vad.csv overrides
+│   └── wiktionary_to_elle.py  Wiktionary (kaikki.org JSONL) → words/senses/relations
+├── tests/
+│   └── test_augmentations.py  Synthetic-input smoke for the 3 augmentation sources
 ├── validate_csvs.py           Container-side schema + FK validator
 ├── load_to_sqlserver.py       Windows-side bulk loader (pyodbc + staging procs)
+├── data/                      Drop external lexicon files here (gitignored)
 └── output/                    CSVs land here (gitignored)
+```
+
+## Augmentation sources
+
+Each augmentation source reads existing `output/words.csv` + `output/senses.csv`
+(produced by `wordnet_to_elle.py`) and emits **additive** CSVs that the loader
+can stage into the same SQL tables in a second pass. None of them rewrite the
+WordNet baseline.
+
+| Script                       | Input file (drop into `data/`)                       | Outputs                                                                 |
+| ---------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------- |
+| `nrc_emolex_to_elle.py`      | `NRC-Emotion-Lexicon-Wordlevel-v0.92.txt`             | `sense_emotions_nrc.csv` (Plutchik 8 + pos/neg → Elle's 12 emotion codes) |
+| `nrc_vad_to_elle.py`         | `NRC-VAD-Lexicon.txt`                                 | `sense_valence_vad.csv` (centered valence ∈ [-1,1], pos/neg draws, arousal, dominance) |
+| `wiktionary_to_elle.py`      | `kaikki-en.jsonl` or `kaikki-en.jsonl.gz`             | `words_wikt.csv`, `senses_wikt.csv`, `word_relations_wikt.csv`            |
+
+Where to get the inputs:
+
+- **NRC EmoLex** — https://saifmohammad.com/WebPages/NRC-Emotion-Lexicon.htm
+- **NRC VAD** — https://saifmohammad.com/WebPages/nrc-vad.html
+- **Wiktionary (kaikki)** — https://kaikki.org/dictionary/English/
+
+After dropping the file under `Tools/ETL/data/`, run the corresponding script;
+each one is self-contained and idempotent, so re-running on a fresh dump
+overwrites only its own output file(s).
+
+Smoke test (no real lexicons required — uses synthetic fixtures):
+
+```bash
+python3 /app/ElleAnn/Tools/ETL/tests/test_augmentations.py
+# → 3 sources × multiple checks, all green
 ```
 
 ## CSV contract

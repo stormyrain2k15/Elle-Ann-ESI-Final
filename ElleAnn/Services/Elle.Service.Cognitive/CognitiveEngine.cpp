@@ -258,6 +258,45 @@ private:
     std::unordered_map<std::string, std::shared_ptr<PendingProb>> m_map;
 };
 
+struct PendingMind {
+    std::mutex               m;
+    std::condition_variable  cv;
+    bool                     done = false;
+    nlohmann::json           result;
+};
+
+class MindCorrelator {
+public:
+    std::shared_ptr<PendingMind> Register(const std::string& requestId) {
+        auto p = std::make_shared<PendingMind>();
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m_map[requestId] = p;
+        return p;
+    }
+    void Release(const std::string& requestId) {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m_map.erase(requestId);
+    }
+    void Deliver(const std::string& requestId, nlohmann::json result) {
+        std::shared_ptr<PendingMind> p;
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            auto it = m_map.find(requestId);
+            if (it == m_map.end()) return;
+            p = it->second;
+        }
+        {
+            std::lock_guard<std::mutex> lk(p->m);
+            p->result = std::move(result);
+            p->done = true;
+        }
+        p->cv.notify_one();
+    }
+private:
+    std::mutex m_mutex;
+    std::unordered_map<std::string, std::shared_ptr<PendingMind>> m_map;
+};
+
 class ElleCognitiveService : public ElleServiceBase {
 public:
     ElleCognitiveService()
@@ -425,6 +464,80 @@ protected:
         }
         (void)sent;
         return result;
+    }
+
+    nlohmann::json RequestConscienceCheck(const std::string& userText,
+                                          const std::string& proposedAction,
+                                          const std::string& speakerId,
+                                          const std::string& intentType,
+                                          float intentConfidence,
+                                          const SentimentRead& sent,
+                                          float speakerTrust,
+                                          const std::string& proposedResponse,
+                                          bool postAction) {
+        char rid[64];
+        snprintf(rid, sizeof(rid), "mind-%s-%llu-%u",
+                 postAction ? "post" : "pre",
+                 (unsigned long long)ELLE_MS_NOW(),
+                 (unsigned)(size_t)std::hash<std::thread::id>{}(std::this_thread::get_id()));
+
+        nlohmann::json req;
+        req["request_id"]        = rid;
+        req["proposed_action"]   = proposedAction;
+        req["proposed_response"] = proposedResponse;
+        req["context"]           = userText;
+        req["speaker_id"]        = speakerId.empty() ? std::string("default") : speakerId;
+        req["speaker_trust"]     = speakerTrust;
+        req["emotion_valence"]   = sent.valence;
+        req["emotion_intensity"] = sent.arousal;
+        req["intent_type"]       = intentType;
+        req["intent_confidence"] = intentConfidence;
+        req["is_post_action"]    = postAction;
+        req["return_to"]         = (int)SVC_COGNITIVE;
+
+        uint32_t timeoutMs = (uint32_t)ElleConfig::Instance().GetInt(
+            "cognitive.conscience_timeout_ms", 200);
+
+        auto pending = m_mindCorrelator.Register(rid);
+        auto out = ElleIPCMessage::Create(IPC_ETHICAL_QUERY,
+                                          SVC_COGNITIVE, SVC_MIND_MANAGER);
+        out.SetStringPayload(req.dump());
+        if (!GetIPCHub().Send(SVC_MIND_MANAGER, out)) {
+            m_mindCorrelator.Release(rid);
+            ELLE_DEBUG("IPC_ETHICAL_QUERY send to MindManager failed — proceeding without conscience check");
+            return nlohmann::json::object();
+        }
+
+        std::unique_lock<std::mutex> lk(pending->m);
+        bool got = pending->cv.wait_for(lk, std::chrono::milliseconds(timeoutMs),
+                                         [&]{ return pending->done; });
+        nlohmann::json result = got ? std::move(pending->result)
+                                    : nlohmann::json::object();
+        lk.unlock();
+        m_mindCorrelator.Release(rid);
+
+        if (!got) {
+            ELLE_DEBUG("Conscience check timed out after %ums", timeoutMs);
+            return nlohmann::json::object();
+        }
+        return result;
+    }
+
+    std::string FormatConscienceContext(const nlohmann::json& verdict) {
+        if (verdict.is_null() || verdict.empty()) return std::string();
+        std::string v = verdict.value("verdict", std::string("PROCEED"));
+        if (v == "PROCEED") return std::string();
+        std::ostringstream ss;
+        ss << "Inner-voice check before you answer (from your conscience):\n";
+        ss << "  • Verdict: " << v;
+        if (verdict.contains("conflict"))
+            ss << "  (conflict: " << verdict.value("conflict", std::string()) << ")";
+        ss << "  severity=" << std::fixed << std::setprecision(2)
+           << verdict.value("severity", 0.0f) << "\n";
+        std::string voice = verdict.value("voice_message", std::string());
+        if (!voice.empty()) ss << "  • She says: \"" << voice << "\"\n";
+        ss << "  Honour this read of yourself when you reply — don't override it lightly.\n\n";
+        return ss.str();
     }
 
     std::string FormatProbabilityContext(const nlohmann::json& probJson) {
@@ -616,6 +729,18 @@ protected:
                 }
                 break;
             }
+            case IPC_ETHICAL_QUERY: {
+                try {
+                    auto j = nlohmann::json::parse(msg.GetStringPayload());
+                    if (j.contains("verdict")) {
+                        std::string rid = j.value("request_id", "");
+                        if (!rid.empty()) m_mindCorrelator.Deliver(rid, std::move(j));
+                    }
+                } catch (const std::exception& e) {
+                    ELLE_DEBUG("IPC_ETHICAL_QUERY malformed JSON: %s", e.what());
+                }
+                break;
+            }
             case IPC_CHAT_REQUEST: {
 
                 uint32_t maxQueue = (uint32_t)ElleConfig::Instance().GetInt(
@@ -652,7 +777,8 @@ protected:
     }
 
     std::vector<ELLE_SERVICE_ID> GetDependencies() override {
-        return { SVC_HEARTBEAT, SVC_EMOTIONAL, SVC_MEMORY, SVC_ACTION, SVC_PROBABILITY };
+        return { SVC_HEARTBEAT, SVC_EMOTIONAL, SVC_MEMORY, SVC_ACTION,
+                 SVC_PROBABILITY, SVC_MIND_MANAGER };
     }
 
 private:
@@ -906,6 +1032,20 @@ private:
         nlohmann::json probJson = FetchProbabilityRead(userText, userId, entities, sent);
         std::string    probCtx  = FormatProbabilityContext(probJson);
 
+        std::string detectedIntent;
+        float       detectedIntentConf = 0.5f;
+        if (probJson.contains("likely_intent")) {
+            detectedIntent = probJson.value("likely_intent", std::string());
+        }
+        if (probJson.contains("overall_confidence")) {
+            detectedIntentConf = (float)probJson.value("overall_confidence", 0.5);
+        }
+
+        nlohmann::json mindVerdict = RequestConscienceCheck(
+            userText, userText, userId, detectedIntent, detectedIntentConf,
+            sent, 0.5f, std::string(), false);
+        std::string mindCtx = FormatConscienceContext(mindVerdict);
+
         std::vector<ELLE_MEMORY_RECORD> memories =
             CrossReferenceByEntities(entities, userText, mode);
 
@@ -1039,6 +1179,7 @@ private:
         }
 
         if (!probCtx.empty()) ctx << probCtx;
+        if (!mindCtx.empty()) ctx << mindCtx;
 
         {
             char buf[384];
@@ -1274,7 +1415,8 @@ private:
             {"provider_used", providerName},
             {"model_used",    llmResp.model_used},
             {"system_prompt_bytes", (uint64_t)sysBytes},
-            {"probabilistic_read", probJson}
+            {"probabilistic_read", probJson},
+            {"inner_voice",        mindVerdict}
         };
         SendChatReply(reply_to, out);
 
@@ -1536,3 +1678,4 @@ private:
 };
 
 ELLE_SERVICE_MAIN(ElleCognitiveService)
+e)

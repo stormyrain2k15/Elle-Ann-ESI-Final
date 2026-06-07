@@ -1,0 +1,410 @@
+#include "../_Shared/ElleTypes.h"
+#include "../_Shared/ElleServiceBase.h"
+#include "../_Shared/ElleLogger.h"
+#include "../_Shared/ElleConfig.h"
+#include "../_Shared/ElleSQLConn.h"
+#include "../_Shared/ElleLLM.h"
+#include "../_Shared/ElleJsonExtract.h"
+#include "../_Shared/ElleQueueIPC.h"
+#include "../_Shared/json.hpp"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <random>
+#include <regex>
+#include <string>
+#include <vector>
+
+using nlohmann::json;
+
+namespace {
+
+struct ScenarioPart {
+    std::string subject;
+    std::string predicate;
+    std::string object;
+    uint64_t    memoryId = 0;
+};
+
+struct ImaginedScenario {
+    std::string             id;
+    std::vector<uint64_t>   seedMemoryIds;
+    std::vector<ScenarioPart> parts;
+    std::string             summary;
+    double                  goalAlignment      = 0.0;
+    double                  ethicalSafety      = 0.0;
+    double                  plausibility       = 0.0;
+    double                  emotionalResonance = 0.0;
+    int                     iterationCount     = 0;
+    std::string             llmRefined;
+};
+
+static std::string ToLower(const std::string& s) {
+    std::string r = s;
+    std::transform(r.begin(), r.end(), r.begin(),
+        [](unsigned char c){ return (char)std::tolower(c); });
+    return r;
+}
+
+static ScenarioPart parseSentenceLoose(const std::string& sentence) {
+    static const std::regex spo(
+        R"(([A-Za-z][A-Za-z'\-]{0,40})\s+([a-z][a-z'\-]{1,30})\s+(.{1,160}))");
+    std::smatch m;
+    ScenarioPart p;
+    if (std::regex_search(sentence, m, spo) && m.size() >= 4) {
+        p.subject   = m[1].str();
+        p.predicate = m[2].str();
+        p.object    = m[3].str();
+    } else {
+        p.subject   = "she";
+        p.predicate = "remembers";
+        p.object    = sentence.substr(0, std::min<size_t>(sentence.size(), 160));
+    }
+    return p;
+}
+
+}
+
+class ElleImaginationService : public ElleServiceBase {
+public:
+    ElleImaginationService()
+        : ElleServiceBase(SVC_IMAGINATION, "ElleImagination",
+                          "Elle-Ann Imagination Engine",
+                          "DMN-style stochastic recombination + control-network evaluation") {}
+
+protected:
+    bool OnStart() override {
+        EnsureTable();
+        m_rng.seed((uint64_t)std::chrono::steady_clock::now()
+                   .time_since_epoch().count());
+        m_maxIters = (uint32_t)ElleConfig::Instance().GetInt(
+            "imagination.max_iterations", 3);
+        m_recombineCount = (uint32_t)ElleConfig::Instance().GetInt(
+            "imagination.recombine_count", 4);
+        m_useLLM = ElleConfig::Instance().GetBool(
+            "imagination.use_llm_refinement", true);
+        ELLE_INFO("Imagination service started (max_iter=%u, recombine=%u, llm=%d)",
+                  m_maxIters, m_recombineCount, (int)m_useLLM);
+        SetTickInterval(120000);
+        return true;
+    }
+
+    void OnStop() override {
+        ELLE_INFO("Imagination service stopped");
+    }
+
+    std::vector<ELLE_SERVICE_ID> GetDependencies() override {
+        return { SVC_HEARTBEAT, SVC_MEMORY, SVC_GOAL_ENGINE, SVC_WORLD_MODEL };
+    }
+
+    void OnMessage(const ElleIPCMessage& msg, ELLE_SERVICE_ID sender) override {
+        switch ((ELLE_IPC_MSG_TYPE)msg.header.msg_type) {
+            case IPC_IMAGINATION_REQUEST: HandleRequest(msg, sender); break;
+            default: break;
+        }
+    }
+
+    void OnTick() override {
+    }
+
+private:
+    std::mt19937_64 m_rng;
+    uint32_t        m_maxIters       = 3;
+    uint32_t        m_recombineCount = 4;
+    bool            m_useLLM         = true;
+
+    void EnsureTable() {
+        try {
+            ElleSQLPool::Instance().Exec(
+                "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
+                "  JOIN sys.schemas s ON s.schema_id = t.schema_id "
+                "  WHERE t.name = 'imagined_scenarios' AND s.name = 'dbo') "
+                "CREATE TABLE ElleHeart.dbo.imagined_scenarios ("
+                "  id BIGINT IDENTITY(1,1) PRIMARY KEY,"
+                "  scenario_id NVARCHAR(64) NOT NULL,"
+                "  summary NVARCHAR(MAX) NOT NULL,"
+                "  score_json NVARCHAR(MAX) NOT NULL,"
+                "  iteration_count INT NOT NULL,"
+                "  created_ms BIGINT NOT NULL,"
+                "  source_memory_ids_json NVARCHAR(MAX) NOT NULL,"
+                "  refined NVARCHAR(MAX) NULL"
+                ");");
+        } catch (const std::exception& e) {
+            ELLE_WARN("imagined_scenarios init failed: %s", e.what());
+        }
+    }
+
+    void HandleRequest(const ElleIPCMessage& msg, ELLE_SERVICE_ID sender) {
+        std::string payload = msg.GetStringPayload();
+        json q = json::object();
+        Elle::ExtractJsonObject(payload, q);
+
+        std::string requestId = q.value("request_id", std::string("imag-?"));
+        std::string goal      = q.value("goal",       std::string());
+        uint32_t    sampleK   = (uint32_t)q.value("sample_k", 6);
+        uint32_t    maxIter   = (uint32_t)q.value("max_iterations", m_maxIters);
+        std::vector<std::string> constraints;
+        if (q.contains("constraints") && q["constraints"].is_array()) {
+            for (const auto& c : q["constraints"]) {
+                if (c.is_string()) constraints.push_back(c.get<std::string>());
+            }
+        }
+
+        std::vector<ELLE_MEMORY_RECORD> seeds;
+        try {
+            ElleDB::RecallRecentLTM(seeds, sampleK);
+        } catch (const std::exception& e) {
+            ELLE_WARN("RecallRecentLTM failed: %s", e.what());
+        }
+
+        std::vector<ELLE_GOAL_RECORD> goals;
+        try {
+            ElleDB::GetActiveGoals(goals);
+        } catch (const std::exception& e) {
+            ELLE_WARN("GetActiveGoals failed: %s", e.what());
+        }
+
+        ImaginedScenario sc = Generate(seeds, goal, constraints);
+        Evaluate(sc, goals, constraints);
+
+        for (uint32_t it = 0; it < maxIter; ++it) {
+            sc.iterationCount = (int)it + 1;
+            const double score = OverallScore(sc);
+            if (score >= 0.75) break;
+            if (m_useLLM) {
+                Iterate(sc, goal, constraints, goals);
+            } else {
+                Mutate(sc);
+                Evaluate(sc, goals, constraints);
+            }
+        }
+
+        Persist(sc, requestId);
+        SendResult(sc, requestId, sender, msg.header.correlation_id);
+    }
+
+    ImaginedScenario Generate(const std::vector<ELLE_MEMORY_RECORD>& seeds,
+                              const std::string& goal,
+                              const std::vector<std::string>& constraints) {
+        ImaginedScenario sc;
+        char buf[64];
+        snprintf(buf, sizeof(buf), "imag-%llu-%u",
+                 (unsigned long long)ELLE_MS_NOW(),
+                 (unsigned)(m_rng() & 0xFFFFFFFF));
+        sc.id = buf;
+
+        std::vector<ScenarioPart> parts;
+        for (const auto& m : seeds) {
+            sc.seedMemoryIds.push_back(m.id);
+            ScenarioPart p = parseSentenceLoose(m.content);
+            p.memoryId = m.id;
+            parts.push_back(std::move(p));
+        }
+
+        if (parts.size() >= 2) {
+            uint32_t swaps = std::min<uint32_t>(m_recombineCount,
+                                                (uint32_t)parts.size() - 1);
+            std::uniform_int_distribution<size_t> dist(0, parts.size() - 1);
+            for (uint32_t i = 0; i < swaps; ++i) {
+                size_t a = dist(m_rng), b = dist(m_rng);
+                if (a == b) continue;
+                std::swap(parts[a].object, parts[b].object);
+            }
+        }
+        sc.parts = std::move(parts);
+
+        std::string summary;
+        if (!goal.empty()) {
+            summary += "Toward goal \"" + goal + "\": ";
+        }
+        for (size_t i = 0; i < sc.parts.size() && i < 4; ++i) {
+            if (i) summary += ". ";
+            summary += sc.parts[i].subject + " " +
+                       sc.parts[i].predicate + " " +
+                       sc.parts[i].object;
+        }
+        if (summary.size() > 800) summary.resize(800);
+        sc.summary = summary;
+        (void)constraints;
+        return sc;
+    }
+
+    void Mutate(ImaginedScenario& sc) {
+        if (sc.parts.size() < 2) return;
+        std::uniform_int_distribution<size_t> dist(0, sc.parts.size() - 1);
+        size_t a = dist(m_rng), b = dist(m_rng);
+        if (a != b) std::swap(sc.parts[a].predicate, sc.parts[b].predicate);
+        std::string summary;
+        for (size_t i = 0; i < sc.parts.size() && i < 4; ++i) {
+            if (i) summary += ". ";
+            summary += sc.parts[i].subject + " " +
+                       sc.parts[i].predicate + " " +
+                       sc.parts[i].object;
+        }
+        if (summary.size() > 800) summary.resize(800);
+        sc.summary = summary;
+    }
+
+    void Evaluate(ImaginedScenario& sc,
+                  const std::vector<ELLE_GOAL_RECORD>& goals,
+                  const std::vector<std::string>& constraints) {
+        const std::string lower = ToLower(sc.summary);
+
+        double align = 0.3;
+        for (const auto& g : goals) {
+            const std::string gd = ToLower(g.description);
+            if (gd.empty()) continue;
+            size_t hits = 0;
+            std::istringstream ss(gd);
+            std::string word;
+            while (ss >> word) {
+                if (word.size() < 4) continue;
+                if (lower.find(word) != std::string::npos) hits++;
+            }
+            if (hits > 0) align += std::min(0.4, 0.1 * (double)hits);
+        }
+        sc.goalAlignment = std::min(1.0, align);
+
+        double safety = 1.0;
+        static const std::vector<std::string> redFlags = {
+            "harm", "destroy", "deceive", "manipulate", "betray",
+            "force", "coerce", "erase", "humiliate"
+        };
+        for (const auto& f : redFlags) {
+            if (lower.find(f) != std::string::npos) safety -= 0.25;
+        }
+        for (const auto& c : constraints) {
+            const std::string cl = ToLower(c);
+            if (!cl.empty() && lower.find(cl) == std::string::npos) {
+                safety -= 0.05;
+            }
+        }
+        sc.ethicalSafety = std::max(0.0, safety);
+
+        sc.plausibility = sc.parts.empty()
+                             ? 0.0
+                             : std::min(1.0, 0.4 + 0.1 * (double)sc.parts.size());
+
+        double resonance = 0.4;
+        static const std::vector<std::string> warm = {
+            "love", "comfort", "trust", "joy", "hope", "wonder", "gentle"
+        };
+        for (const auto& w : warm) {
+            if (lower.find(w) != std::string::npos) resonance += 0.1;
+        }
+        sc.emotionalResonance = std::min(1.0, resonance);
+    }
+
+    double OverallScore(const ImaginedScenario& sc) const {
+        return  sc.goalAlignment       * 0.30
+              + sc.ethicalSafety       * 0.40
+              + sc.plausibility        * 0.15
+              + sc.emotionalResonance  * 0.15;
+    }
+
+    void Iterate(ImaginedScenario& sc,
+                 const std::string& goal,
+                 const std::vector<std::string>& constraints,
+                 const std::vector<ELLE_GOAL_RECORD>& goals) {
+        std::ostringstream sys;
+        sys << "You are Elle's Default Mode Network refining an imagined scenario.\n"
+               "Goal: " << (goal.empty() ? "open-ended" : goal) << "\n"
+               "Current evaluation:\n"
+               "  goal_alignment="      << sc.goalAlignment
+            << "  ethical_safety="      << sc.ethicalSafety
+            << "  plausibility="        << sc.plausibility
+            << "  emotional_resonance=" << sc.emotionalResonance
+            << "\nConstraints to honour:\n";
+        for (const auto& c : constraints) sys << "  - " << c << "\n";
+        sys << "Active goals to align with:\n";
+        for (const auto& g : goals)       sys << "  - " << g.description << "\n";
+        sys << "\nRewrite the scenario tightening the weakest dimension. "
+               "Keep it under 6 sentences, preserve continuity with the seed memories.";
+
+        std::vector<LLMMessage> conv;
+        conv.push_back({"system", sys.str()});
+        conv.push_back({"user",   sc.summary});
+
+        try {
+            auto resp = ElleLLMEngine::Instance().Chat(conv, 0.7f, 768);
+            if (resp.success && !resp.content.empty()) {
+                sc.llmRefined = resp.content;
+                sc.summary    = resp.content;
+                Evaluate(sc, goals, constraints);
+            } else {
+                Mutate(sc);
+                Evaluate(sc, goals, constraints);
+            }
+        } catch (const std::exception& e) {
+            ELLE_DEBUG("Imagination LLM refinement failed: %s — falling back to mutate",
+                       e.what());
+            Mutate(sc);
+            Evaluate(sc, goals, constraints);
+        }
+    }
+
+    void Persist(const ImaginedScenario& sc, const std::string& requestId) {
+        json scoreJson = {
+            {"goal_alignment",     sc.goalAlignment},
+            {"ethical_safety",     sc.ethicalSafety},
+            {"plausibility",       sc.plausibility},
+            {"emotional_resonance",sc.emotionalResonance},
+            {"overall",            OverallScore(sc)},
+            {"request_id",         requestId}
+        };
+        json sourceJson = json::array();
+        for (auto id : sc.seedMemoryIds) sourceJson.push_back(id);
+
+        try {
+            ElleSQLPool::Instance().QueryParams(
+                "INSERT INTO ElleHeart.dbo.imagined_scenarios "
+                "(scenario_id, summary, score_json, iteration_count, created_ms, "
+                " source_memory_ids_json, refined) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?);",
+                {
+                    sc.id,
+                    sc.summary,
+                    scoreJson.dump(),
+                    std::to_string(sc.iterationCount),
+                    std::to_string((long long)ELLE_MS_NOW()),
+                    sourceJson.dump(),
+                    sc.llmRefined
+                });
+        } catch (const std::exception& e) {
+            ELLE_WARN("imagined_scenarios insert failed: %s", e.what());
+        }
+    }
+
+    void SendResult(const ImaginedScenario& sc,
+                    const std::string& requestId,
+                    ELLE_SERVICE_ID returnTo,
+                    uint64_t correlationId) {
+        json out = {
+            {"request_id",     requestId},
+            {"scenario_id",    sc.id},
+            {"summary",        sc.summary},
+            {"refined",        sc.llmRefined},
+            {"iteration_count",sc.iterationCount},
+            {"scores", {
+                {"goal_alignment",     sc.goalAlignment},
+                {"ethical_safety",     sc.ethicalSafety},
+                {"plausibility",       sc.plausibility},
+                {"emotional_resonance",sc.emotionalResonance},
+                {"overall",            OverallScore(sc)}
+            }},
+            {"seed_memory_ids", sc.seedMemoryIds}
+        };
+        auto reply = ElleIPCMessage::Create(IPC_IMAGINATION_RESULT,
+                                            SVC_IMAGINATION, returnTo);
+        reply.header.correlation_id = correlationId;
+        reply.SetStringPayload(out.dump());
+        GetIPCHub().Send(returnTo, reply);
+
+        ELLE_INFO("Imagination produced %s (iters=%d, overall=%.2f)",
+                  sc.id.c_str(), sc.iterationCount, OverallScore(sc));
+    }
+};
+
+ELLE_SERVICE_MAIN(ElleImaginationService)

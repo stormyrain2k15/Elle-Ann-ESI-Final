@@ -1,3 +1,67 @@
+## 2026-02 — P1+P2+P3 sweep: MindManager wired, ETL augmented, Imagination Engine landed
+
+### P1 — Cognitive ↔ MindManager pre-action conscience check + inner_voice surface
+- Added `MindCorrelator` (mirrors `WorldCorrelator`/`ProbCorrelator`) and an
+  `IPC_ETHICAL_QUERY` reply handler keyed off the `verdict` field.
+- `HandleChatRequest` now:
+  - Calls `RequestConscienceCheck(...)` AFTER `FetchProbabilityRead` so the
+    conscience can read the probabilistic intent label + confidence.
+  - Formats `FormatConscienceContext(...)` into the LLM system prompt only when
+    the verdict ≠ `PROCEED` (severity, conflict, voice_message inline).
+  - Adds an `inner_voice` field to the chat reply payload so HTTP/Android can
+    render Elle's conscience whisper alongside the response.
+- Added `SVC_MIND_MANAGER` to Cognitive's `GetDependencies()` so the pipe is
+  brought up during boot.
+- New config key: `cognitive.conscience_timeout_ms` (default 200ms).
+
+### P2 — ETL expansion (NRC-EmoLex + NRC-VAD + Wiktionary)
+- `Tools/ETL/sources/nrc_emolex_to_elle.py` — maps the 10 NRC categories onto
+  Elle's 12 emotion codes, emits `sense_emotions_nrc.csv` keyed by WordNet
+  sense tags so the existing loader can stage it.
+- `Tools/ETL/sources/nrc_vad_to_elle.py` — emits `sense_valence_vad.csv` with
+  centered valence ∈ [-1,1], pos/neg draws, arousal, dominance per sense.
+- `Tools/ETL/sources/wiktionary_to_elle.py` — reads kaikki.org English JSONL
+  (.jsonl or .jsonl.gz), emits `words_wikt.csv`, `senses_wikt.csv`, and
+  `word_relations_wikt.csv` for entries / senses / relations NOT already in
+  the WordNet baseline.
+- `Tools/ETL/tests/test_augmentations.py` — synthetic-data smoke that drives
+  all three scripts end-to-end (no real lexicon files required); 0 failures.
+- README updated with download URLs and the new pipeline layout.
+
+### P3 — Phase 5 Imagination Engine (NEW Windows service)
+- Added `SVC_IMAGINATION` to `ELLE_SERVICE_ID` (count 23 → 24) and registered
+  `"Imagination"` in `g_serviceNames`. New IPC types `IPC_IMAGINATION_REQUEST`
+  + `IPC_IMAGINATION_RESULT`.
+- `Services/Elle.Service.Imagination/Imagination.cpp` — full service with:
+  - **Generative phase (DMN analog)**: pulls seeds via `ElleDB::RecallRecentLTM`,
+    parses each into S/P/O parts via regex, stochastically swaps objects /
+    predicates across parts using a seeded `mt19937_64`.
+  - **Evaluative phase (Control network analog)**: computes 4 scores —
+    `goal_alignment` (token overlap with `GetActiveGoals()` descriptions),
+    `ethical_safety` (red-flag word list subtraction + constraint coverage),
+    `plausibility` (linear in seed count), `emotional_resonance` (warm-word
+    boost). Overall = 0.30/0.40/0.15/0.15 weighted blend.
+  - **Iterative phase (DMN ↔ Control loop)**: until overall ≥ 0.75 or
+    `imagination.max_iterations` reached, either ask `ElleLLMEngine` to
+    rewrite the weakest dimension (config-gated) or pure-C++ mutate and
+    re-score.
+  - Persists every scenario to `ElleHeart.dbo.imagined_scenarios` (id,
+    score_json, iteration_count, source_memory_ids_json, refined).
+- `Elle.Service.Imagination.vcxproj` (GUID `{B1000000-…-000000000017}`)
+  registered in `ElleAnn.sln`.
+- SQL: `SQL/Engine/imagined_and_conscience.sql` ships both the
+  `imagined_scenarios` and `conscience_log` tables with appropriate indices.
+- Config keys: `imagination.max_iterations` (3), `imagination.recombine_count`
+  (4), `imagination.use_llm_refinement` (true).
+
+### Verification
+- 52/52 probability engine tests pass.
+- 34/34 IPC envelope checks pass.
+- prob_host_smoke + prob_proto_smoke both PASS after the count bump 22→24.
+- ETL augmentation smoke: 0 failures across all 3 sources.
+- Build on Windows pending (signed-commit policy).
+
+
 ## 2026-02 — Elle.Service.Probability (Windows Service wrapper) + Cognitive/XChromosome wiring
 
 - Added `SVC_PROBABILITY` to `ELLE_SERVICE_ID` (bumped `ELLE_SERVICE_COUNT` 21 → 22) and
