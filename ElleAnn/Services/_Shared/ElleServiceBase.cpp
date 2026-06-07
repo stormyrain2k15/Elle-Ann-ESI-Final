@@ -1,6 +1,5 @@
 #include "ElleServiceBase.h"
 #include "ElleIdentityCore.h"
-#include "ElleLLM.h"
 #include "ElleComposerClient.h"
 #include "ElleSQLConn.h"
 #include "ElleConfig.h"
@@ -625,7 +624,7 @@ bool ElleServiceBase::InitializeCore() {
         m_serviceId == SVC_MEMORY || m_serviceId == SVC_BONDING ||
         m_serviceId == SVC_CONTINUITY || m_serviceId == SVC_INNER_LIFE ||
         m_serviceId == SVC_SOLITUDE) {
-        ElleLLMEngine::Instance().BindHub(&m_ipcHub, m_serviceId);
+        ElleComposer::Client::Instance().Bind(&m_ipcHub, m_serviceId);
         ELLE_INFO("%s registered as Composer client", m_displayName.c_str());
     }
 

@@ -1,7 +1,7 @@
 #include "../_Shared/ElleTypes.h"
 #include "../_Shared/ElleServiceBase.h"
 #include "../_Shared/ElleIdentityCore.h"
-#include "../_Shared/ElleLLM.h"
+#include "../_Shared/ElleComposerClient.h"
 #include "../_Shared/ElleLogger.h"
 #include "../_Shared/ElleConfig.h"
 #include "../_Shared/ElleSQLConn.h"
@@ -272,7 +272,7 @@ private:
             "chars>\",\"valence\":<-1.0 to 1.0>,\"strength\":<0.0 to 1.0>,"
             "\"skip\":<true if the exchange doesn't warrant a preference>}. "
             "No prose outside the JSON.";
-        std::string raw = ElleLLMEngine::Instance().Ask(prompt,
+        std::string raw = ElleComposer::Ask(prompt,
             "You distill exchanges into preferences. Terse. JSON only.");
         if (raw.empty()) return;
         nlohmann::json j;

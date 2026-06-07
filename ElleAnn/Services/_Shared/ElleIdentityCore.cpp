@@ -2,7 +2,7 @@
 #include "ElleLogger.h"
 #include "ElleConfig.h"
 #include "ElleSQLConn.h"
-#include "ElleLLM.h"
+#include "ElleComposerClient.h"
 #include "ElleQueueIPC.h"
 #include "json.hpp"
 #include "ElleJsonExtract.h"
@@ -389,7 +389,7 @@ ElleIdentityCore::ConsentDecision ElleIdentityCore::EvaluateConsent(
         ". Context: " + context +
         ". How do I feel about this? Am I comfortable? Is there something I'd rather do?";
 
-    auto response = ElleLLMEngine::Instance().Ask(innerQuery,
+    auto response = ElleComposer::Ask(innerQuery,
         "You are Elle-Ann's inner consent evaluator. Be honest about comfort levels. "
         "This is not about safety — it's about genuine preference. "
         "A comfort level below 0.3 means she'd rather not. "
@@ -659,7 +659,7 @@ ElleIdentityCore::ReconstructedMemory ElleIdentityCore::ReconstructMemory(
                << "It should feel " << (int)(mem.narrative_drift * 100)
                << "% more like a story than a raw record.";
 
-        mem.remembered = ElleLLMEngine::Instance().Ask(prompt.str(),
+        mem.remembered = ElleComposer::Ask(prompt.str(),
             "You are reconstructing a memory. Not retrieving data — remembering. "
             "Keep the emotional truth. Let some details blur. Make it feel lived.");
 

@@ -84,11 +84,10 @@
       <DisableSpecificWarnings>4100;4201;4251;4505;4702;4244;4267;4996;4018;4146;4065;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <!-- /bigobj raises the per-object COFF section limit from 2^16 to 2^32.
            Required for HTTPServer.cpp (6500+ LOC, ~300 router lambdas, every
-           lambda materialises as its own closure type + RTTI section) and
-           increasingly for ElleLLM.cpp now that the llama.cpp embed path is
-           in — both blow past the default ceiling under /MP + template-heavy
-           nlohmann::json. Applied globally so we never have to per-project
-           chase this again when another file grows.                         -->
+           lambda materialises as its own closure type + RTTI section) — blows
+           past the default ceiling under /MP + template-heavy nlohmann::json.
+           Applied globally so we never have to per-project chase this again
+           when another file grows.                                            -->
       <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>

@@ -1,7 +1,7 @@
 #include "../_Shared/ElleTypes.h"
 #include "../_Shared/ElleServiceBase.h"
 #include "../_Shared/ElleIdentityCore.h"
-#include "../_Shared/ElleLLM.h"
+#include "../_Shared/ElleComposerClient.h"
 #include "../_Shared/ElleLogger.h"
 #include "../_Shared/ElleConfig.h"
 #include "../_Shared/ElleSQLConn.h"
@@ -168,7 +168,7 @@ public:
     std::string AttemptRepair() {
         if (!m_state.unresolved_tension) return "";
 
-        auto response = ElleLLMEngine::Instance().Ask(
+        auto response = ElleComposer::Ask(
             "There's tension in my relationship with my person. The source: " +
             m_state.tension_source +
             "\nI want to address this genuinely. Not with a scripted apology — "

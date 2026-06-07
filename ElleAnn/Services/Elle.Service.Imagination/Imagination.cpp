@@ -3,7 +3,7 @@
 #include "../_Shared/ElleLogger.h"
 #include "../_Shared/ElleConfig.h"
 #include "../_Shared/ElleSQLConn.h"
-#include "../_Shared/ElleLLM.h"
+#include "../_Shared/ElleComposerClient.h"
 #include "../_Shared/ElleJsonExtract.h"
 #include "../_Shared/ElleQueueIPC.h"
 #include "../_Shared/json.hpp"
@@ -328,7 +328,7 @@ private:
         conv.push_back({"user",   sc.summary});
 
         try {
-            auto resp = ElleLLMEngine::Instance().Chat(conv, 0.7f, 768);
+            auto resp = ElleComposer::ChatLegacy(conv, 0.7f, 768);
             if (resp.success && !resp.content.empty()) {
                 sc.llmRefined = resp.content;
                 sc.summary    = resp.content;

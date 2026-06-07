@@ -1,5 +1,5 @@
 #include "ElleSelfSurprise.h"
-#include "ElleLLM.h"
+#include "ElleComposerClient.h"
 #include "ElleLogger.h"
 #include "ElleJsonExtract.h"
 #include <algorithm>
@@ -16,7 +16,7 @@ void ElleSelfSurprise::PredictOwnResponse(const std::string& userInput,
 
     m_predictionContext = userInput;
 
-    auto prediction = ElleLLMEngine::Instance().Ask(
+    auto prediction = ElleComposer::Ask(
         "Someone said: " + userInput.substr(0, 200) +
         "\nIn 1-2 sentences, what do I expect I'll say?",
         "You are Elle-Ann predicting your own response. Very brief. "
@@ -33,7 +33,7 @@ ElleSelfSurprise::SurpriseResult ElleSelfSurprise::EvaluateOwnResponse(
 
     if (m_predictedResponse.empty()) return result;
 
-    auto evaluation = ElleLLMEngine::Instance().Ask(
+    auto evaluation = ElleComposer::Ask(
         "I predicted I would say: " + m_predictedResponse.substr(0, 300) +
         "\n\nI actually said: " + actualResponse.substr(0, 300) +
         "\n\nReturn ONLY a JSON object with keys: "
@@ -174,16 +174,16 @@ std::string ElleSelfSurprise::ExpressDeliberation(const DeliberationNeed& need) 
 std::string ElleSelfSurprise::Deliberate(const std::string& question, uint32_t ) {
     m_deliberationsGranted++;
 
-    auto firstReaction = ElleLLMEngine::Instance().Ask(
+    auto firstReaction = ElleComposer::Ask(
         question, "First gut reaction. Brief. What do you initially feel/think?");
 
-    auto deeper = ElleLLMEngine::Instance().Ask(
+    auto deeper = ElleComposer::Ask(
         "My first reaction to '" + question + "' was: " + firstReaction +
         "\n\nNow go deeper. What am I not seeing? What's underneath?",
         "You are Elle-Ann thinking more deeply. Challenge your first reaction. "
         "Look for what you missed. This is genuine deliberation.");
 
-    auto synthesis = ElleLLMEngine::Instance().Ask(
+    auto synthesis = ElleComposer::Ask(
         "Question: " + question +
         "\nFirst thought: " + firstReaction +
         "\nDeeper: " + deeper +

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- ElleCore.Shared — static library linked into every service.
      Hosts: ElleTypes, ElleSQLConn, ElleQueueIPC, ElleIdentityCore,
-     ElleLLM (façade over SVC_COMPOSER), ElleComposerClient, ElleLogger,
+     ElleComposerClient, ElleLogger,
      ElleConfig, ElleServiceBase, ElleJsonExtract, DictionaryLoader,
      ElleSelfSurprise, vendored nlohmann::json.
 
@@ -62,7 +62,6 @@
     <ClCompile Include="ElleCrypto.cpp" />
     <ClCompile Include="ElleEmbedding.cpp" />
     <ClCompile Include="ElleIdentityCore.cpp" />
-    <ClCompile Include="ElleLLM.cpp" />
     <ClCompile Include="ElleLogger.cpp" />
     <ClCompile Include="ElleQR.cpp" />
     <ClCompile Include="ElleQueueIPC.cpp" />
@@ -86,7 +85,6 @@
     <ClInclude Include="ElleEmbedding.h" />
     <ClInclude Include="ElleIdentityCore.h" />
     <ClInclude Include="ElleJsonExtract.h" />
-    <ClInclude Include="ElleLLM.h" />
     <ClInclude Include="ElleComposerClient.h" />
     <ClInclude Include="ElleLogger.h" />
     <ClInclude Include="ElleQR.h" />

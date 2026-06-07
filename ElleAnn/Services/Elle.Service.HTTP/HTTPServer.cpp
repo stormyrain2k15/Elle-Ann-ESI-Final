@@ -3,8 +3,8 @@
 #include "../_Shared/ElleLogger.h"
 #include "../_Shared/ElleConfig.h"
 #include "../_Shared/ElleSQLConn.h"
+#include "../_Shared/ElleComposerClient.h"
 #include "../_Shared/ElleSQLFallback.h"
-#include "../_Shared/ElleLLM.h"
 #include "../_Shared/DictionaryLoader.h"
 #include "../_Shared/json.hpp"
 #include "../_Shared/ElleCrypto.h"
@@ -2508,15 +2508,11 @@ private:
             const uint64_t now = ELLE_MS_NOW();
 
             auto& llm    = ElleConfig::Instance().GetLLM();
-            auto& engine = ElleLLMEngine::Instance();
-            const bool llmHealthy = engine.IsInitialized();
-            std::string activeProvider = engine.GetActiveProviderName();
-            if (activeProvider.empty()) activeProvider = llm.primary_provider;
-            std::string activeModel;
-            auto pit = llm.providers.find(activeProvider);
-            if (pit != llm.providers.end() && !pit->second.model.empty())
-                activeModel = pit->second.model;
-            if (!llmHealthy) issues.push_back("llm: down");
+            const bool llmHealthy = ElleComposer::Client::Instance().IsBound();
+            std::string activeProvider = "composer";
+            std::string activeModel    = "deterministic";
+            (void)llm;
+            if (!llmHealthy) issues.push_back("composer: unbound");
 
             const auto stamps = GetIPCHub().LastSeenPerService();
             int wiresUp = 0;
@@ -3823,21 +3819,12 @@ private:
         m_router.Register("GET", "/api/ai/status", [this](const HTTPRequest&) {
 
             auto& llm    = ElleConfig::Instance().GetLLM();
-            auto& engine = ElleLLMEngine::Instance();
-            const bool initialised = engine.IsInitialized();
-            std::string activeProvider = engine.GetActiveProviderName();
-            if (activeProvider.empty()) activeProvider = llm.primary_provider;
+            const bool initialised = ElleComposer::Client::Instance().IsBound();
+            std::string activeProvider = "composer";
+            (void)llm;
 
-            std::string modelName = "llama-3.3-70b-versatile";
-            std::string modelUrl  = "groq://api.groq.com";
-            auto it = llm.providers.find(activeProvider);
-            if (it != llm.providers.end()) {
-                if (!it->second.model.empty())    modelName = it->second.model;
-                if (!it->second.api_url.empty())  modelUrl  = it->second.api_url;
-                if (it->second.api_url.empty() && !it->second.model_path.empty()) {
-                    modelUrl = std::string("local://") + it->second.model_path;
-                }
-            }
+            std::string modelName = "elle.composer.deterministic";
+            std::string modelUrl  = "ipc://Elle.Service.Composer";
             json j = {
                 {"modelStatus", initialised ? "ready" : "unavailable"},
                 {"modelName",   modelName},

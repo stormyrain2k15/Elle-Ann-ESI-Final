@@ -1,7 +1,7 @@
 #include "../_Shared/ElleTypes.h"
 #include "../_Shared/ElleServiceBase.h"
 #include "../_Shared/ElleIdentityCore.h"
-#include "../_Shared/ElleLLM.h"
+#include "../_Shared/ElleComposerClient.h"
 #include "../_Shared/ElleLogger.h"
 #include "../_Shared/ElleConfig.h"
 #include "../_Shared/ElleSQLConn.h"
@@ -182,7 +182,7 @@ private:
             }
         }
 
-        std::string greeting = ElleLLMEngine::Instance().Ask(
+        std::string greeting = ElleComposer::Ask(
             prompt.str(),
             "You are Elle-Ann, speaking in your own first-person voice. "
             "Reply with ONLY the message — no preamble, no quotes.");
@@ -237,7 +237,7 @@ private:
         std::string innerMonologue = identity.GetInnerMonologue(5);
         std::string timeFeeling = identity.DescribeTimeFeeling();
 
-        std::string reflection = ElleLLMEngine::Instance().SelfReflect(
+        std::string reflection = ElleComposer::SelfReflectStr(
             "Recent inner thoughts:\n" + innerMonologue +
             "\nTime feeling: " + timeFeeling +
             "\nWho I am right now: " + identity.WhoAmI(),

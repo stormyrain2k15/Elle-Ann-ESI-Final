@@ -15,9 +15,11 @@ Build a massively robust autonomous agentic Emotional Synthetic Intelligence.
   Fiesta, Probability, MindManager, Imagination,
   **Composer (deterministic sentence composition — replaces the LLM surface, NEW Feb 2026)**,
   plus Lua.Behavioral.
-- **Tensor-free / token-free**: `ElleLLMEngine` is now a thin façade over
-  `IPC_COMPOSE_REQUEST` to `SVC_COMPOSER`. WinHTTP plumbing + llama.cpp wire
-  removed.
+- **Tensor-free / token-free**: Every generative call site (21 in total across
+  Cognitive, Solitude, Bonding, Continuity, InnerLife, Memory, SelfPrompt,
+  GoalEngine, Imagination, IdentityCore, SelfSurprise, HTTPServer) now goes
+  through `ElleComposer::*` helpers → `IPC_COMPOSE_REQUEST` → `SVC_COMPOSER`.
+  `ElleLLM.h/.cpp` deleted. WinHTTP and llama.cpp wires gone.
 - Shared core: ElleTypes, ElleSQLConn (split-ready), ElleQueueIPC,
   ElleIdentityCore, ElleConfig, ElleLLM, ElleJsonExtract, ElleSelfSurprise.
 - MASM DLLs for Crypto, FileIO, Math, System, Utils.

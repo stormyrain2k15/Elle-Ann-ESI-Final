@@ -1,6 +1,6 @@
 #include "../_Shared/ElleTypes.h"
 #include "../_Shared/ElleServiceBase.h"
-#include "../_Shared/ElleLLM.h"
+#include "../_Shared/ElleComposerClient.h"
 #include "../_Shared/ElleLogger.h"
 #include "../_Shared/ElleConfig.h"
 #include "../_Shared/ElleSQLConn.h"
@@ -142,7 +142,7 @@ private:
             "Keep it under 200 words.\n\n" + emotionCtx});
         messages.push_back({"user", "Think about: " + prompt});
 
-        auto resp = ElleLLMEngine::Instance().Chat(messages, 0.9f, 512);
+        auto resp = ElleComposer::ChatLegacy(messages, 0.9f, 512);
 
         if (resp.success) {
             ELLE_INFO("Self-thought: %.100s...", resp.content);

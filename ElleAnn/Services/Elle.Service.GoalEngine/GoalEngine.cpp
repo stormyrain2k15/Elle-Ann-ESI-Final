@@ -1,6 +1,6 @@
 #include "../_Shared/ElleTypes.h"
 #include "../_Shared/ElleServiceBase.h"
-#include "../_Shared/ElleLLM.h"
+#include "../_Shared/ElleComposerClient.h"
 #include "../_Shared/ElleLogger.h"
 #include "../_Shared/ElleConfig.h"
 #include "../_Shared/ElleSQLConn.h"
@@ -153,7 +153,7 @@ public:
             }
         }
 
-        std::string suggestion = ElleLLMEngine::Instance().FormGoal(
+        std::string suggestion = ElleComposer::FormGoal(
             ctx.str(), "emotions influence: " + std::to_string(emotions.valence));
 
         if (!suggestion.empty()) {

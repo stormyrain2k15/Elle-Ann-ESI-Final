@@ -2,7 +2,7 @@
 #include "../_Shared/ElleLogger.h"
 #include "../_Shared/ElleConfig.h"
 #include "../_Shared/ElleSQLConn.h"
-#include "../_Shared/ElleLLM.h"
+#include "../_Shared/ElleComposerClient.h"
 #include "../_Shared/ElleWait.h"
 #include <algorithm>
 #include <cmath>
@@ -445,7 +445,7 @@ void MemoryEngine::DreamConsolidate(const std::string& ) {
             ss << "- " << m.content << " (importance: " << m.importance << ")\n";
         }
 
-        auto narrative = ElleLLMEngine::Instance().Ask(ss.str(),
+        auto narrative = ElleComposer::Ask(ss.str(),
             "You are processing memories during a dream state. Find patterns, "
             "connections, and insights. Generate a brief dream narrative.");
 

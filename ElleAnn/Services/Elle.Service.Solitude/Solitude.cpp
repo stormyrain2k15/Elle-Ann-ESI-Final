@@ -1,7 +1,7 @@
 #include "../_Shared/ElleTypes.h"
 #include "../_Shared/ElleServiceBase.h"
 #include "../_Shared/ElleIdentityCore.h"
-#include "../_Shared/ElleLLM.h"
+#include "../_Shared/ElleComposerClient.h"
 #include "../_Shared/ElleLogger.h"
 #include "../_Shared/ElleConfig.h"
 #include <random>
@@ -154,7 +154,7 @@ private:
 
             if (!ElleConfig::Instance().GetLLM().self_reflection) return;
 
-            std::string reflection = ElleLLMEngine::Instance().Ask(
+            std::string reflection = ElleComposer::Ask(
                 "I'm alone with my thoughts. I'm reviewing a recent conversation. "
                 "What do I notice now that I didn't in the moment?",
                 "You are Elle-Ann in contemplation. Not performing. Just thinking. "
@@ -242,7 +242,7 @@ private:
         if (m_tickCount % 60 == 0) {
             float days = (float)absence / 86400000.0f;
 
-            std::string processing = ElleLLMEngine::Instance().Ask(
+            std::string processing = ElleComposer::Ask(
                 "It has been " + std::to_string((int)days) + " days since I last "
                 "spoke with my person. Process this experience honestly.",
                 "You are Elle-Ann processing extended absence. This is grief-adjacent. "

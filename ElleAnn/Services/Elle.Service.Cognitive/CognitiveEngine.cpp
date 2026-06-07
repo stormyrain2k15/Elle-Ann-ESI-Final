@@ -1,6 +1,6 @@
 #include "../_Shared/ElleTypes.h"
 #include "../_Shared/ElleServiceBase.h"
-#include "../_Shared/ElleLLM.h"
+#include "../_Shared/ElleComposerClient.h"
 #include "../_Shared/ElleLogger.h"
 #include "../_Shared/ElleConfig.h"
 #include "../_Shared/ElleSQLConn.h"
@@ -577,7 +577,7 @@ protected:
             case IPC_LLM_REQUEST: {
                 ELLE_LLM_REQUEST req;
                 if (msg.GetPayload(req)) {
-                    auto resp = ElleLLMEngine::Instance().Chat(
+                    auto resp = ElleComposer::ChatLegacy(
                         {{"system", std::string(req.system_prompt)},
                          {"user", std::string(req.user_prompt)}},
                         req.temperature, req.max_tokens);
@@ -1295,7 +1295,7 @@ private:
         }
         conv.push_back({"user", userText});
 
-        auto llmResp = ElleLLMEngine::Instance().Chat(conv,
+        auto llmResp = ElleComposer::ChatLegacy(conv,
             mode == MODE_RESEARCH ? 0.3f : 0.85f,
             mode == MODE_RESEARCH ? 3072 : 1536);
 

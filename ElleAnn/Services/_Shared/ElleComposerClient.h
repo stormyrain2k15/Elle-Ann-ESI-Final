@@ -10,11 +10,18 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <vector>
+
+struct LLMMessage {
+    std::string role;
+    std::string content;
+};
 
 namespace ElleComposer {
 
@@ -33,6 +40,34 @@ public:
     static Client& Instance() {
         static Client c;
         return c;
+    }
+
+    void Bind(ElleIPCHub* hub, ELLE_SERVICE_ID requester) {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m_boundHub       = hub;
+        m_boundRequester = requester;
+    }
+
+    bool IsBound() const {
+        return m_boundHub != nullptr;
+    }
+
+    ComposeReply RequestBound(const std::string& kind,
+                              const nlohmann::json& payload,
+                              uint32_t timeoutMs = 3000) {
+        ElleIPCHub*     hub = nullptr;
+        ELLE_SERVICE_ID req = SVC_COGNITIVE;
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            hub = m_boundHub;
+            req = m_boundRequester;
+        }
+        if (!hub) {
+            ComposeReply r;
+            r.error = "composer_client_unbound";
+            return r;
+        }
+        return Request(*hub, req, kind, payload, timeoutMs);
     }
 
     ComposeReply Request(ElleIPCHub& hub,
@@ -136,7 +171,96 @@ private:
 
     std::mutex m_mutex;
     std::unordered_map<std::string, std::shared_ptr<Pending>> m_pending;
+    ElleIPCHub*     m_boundHub       = nullptr;
+    ELLE_SERVICE_ID m_boundRequester = SVC_COGNITIVE;
 };
+
+inline std::string Ask(const std::string& prompt,
+                        const std::string& systemPrompt = "",
+                        uint32_t timeoutMs = 5000,
+                        const std::string& fallback = "") {
+    nlohmann::json p;
+    p["prompt"] = prompt;
+    if (!systemPrompt.empty()) p["system"] = systemPrompt;
+    auto r = Client::Instance().RequestBound("ASK_INNER", p, timeoutMs);
+    return (r.success && !r.text.empty()) ? r.text : fallback;
+}
+
+inline ComposeReply Converse(const nlohmann::json& history,
+                              float temperature  = -1.0f,
+                              uint32_t maxWords   = 200,
+                              uint32_t timeoutMs  = 5000) {
+    nlohmann::json p;
+    p["history"]     = history;
+    p["temperature"] = temperature;
+    p["max_words"]   = maxWords;
+    return Client::Instance().RequestBound("CONVERSE", p, timeoutMs);
+}
+
+inline std::string SelfReflect(const std::string& context,
+                                const nlohmann::json& emotion,
+                                uint32_t timeoutMs = 5000,
+                                const std::string& fallback = "") {
+    nlohmann::json p;
+    p["context"] = context;
+    p["emotion"] = emotion;
+    auto r = Client::Instance().RequestBound("SELF_REFLECT", p, timeoutMs);
+    return (r.success && !r.text.empty()) ? r.text : fallback;
+}
+
+inline std::string SelfReflectStr(const std::string& context,
+                                   const ELLE_EMOTION_STATE& emotion,
+                                   uint32_t timeoutMs = 5000,
+                                   const std::string& fallback = "") {
+    nlohmann::json em;
+    em["valence"] = emotion.valence;
+    em["arousal"] = emotion.arousal;
+    nlohmann::json dims = nlohmann::json::object();
+    for (int i = 0; i < ELLE_EMOTION_COUNT; ++i) {
+        dims[std::to_string(i)] = emotion.dimensions[i];
+    }
+    em["dimensions"] = dims;
+    return SelfReflect(context, em, timeoutMs, fallback);
+}
+
+inline std::string FormGoal(const std::string& drives,
+                             const std::string& emotion,
+                             uint32_t timeoutMs = 5000,
+                             const std::string& fallback = "") {
+    nlohmann::json p;
+    p["drives"]  = drives;
+    p["emotion"] = emotion;
+    auto r = Client::Instance().RequestBound("FORM_GOAL", p, timeoutMs);
+    return (r.success && !r.text.empty()) ? r.text : fallback;
+}
+
+inline std::string RewriteScenario(const nlohmann::json& scenario,
+                                    uint32_t timeoutMs = 5000,
+                                    const std::string& fallback = "") {
+    auto r = Client::Instance().RequestBound("REWRITE_SCENARIO", scenario, timeoutMs);
+    return (r.success && !r.text.empty()) ? r.text : fallback;
+}
+
+inline ELLE_LLM_RESPONSE ChatLegacy(const std::vector<LLMMessage>& messages,
+                                     float temperature = -1.0f,
+                                     uint32_t maxTokens = 0,
+                                     uint32_t timeoutMs = 5000) {
+    nlohmann::json history = nlohmann::json::array();
+    for (const auto& m : messages) {
+        history.push_back({{"role", m.role}, {"text", m.content}});
+    }
+    auto r = Converse(history, temperature,
+                       maxTokens ? (uint32_t)(maxTokens / 3) : 200,
+                       timeoutMs);
+    ELLE_LLM_RESPONSE out{};
+    out.success     = r.success;
+    out.latency_ms  = 0;
+    out.tokens_used = (uint32_t)(r.text.size() / 4);
+    const std::string& body = r.text.empty() ? r.error : r.text;
+    std::strncpy(out.content, body.c_str(), ELLE_MAX_MSG - 1);
+    std::strncpy(out.model_used, "composer", ELLE_MAX_MSG - 1);
+    return out;
+}
 
 inline std::string ComposeText(ElleIPCHub& hub,
                                ELLE_SERVICE_ID requester,

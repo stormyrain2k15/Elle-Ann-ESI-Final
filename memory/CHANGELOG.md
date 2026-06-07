@@ -1,3 +1,54 @@
+## 2026-02 — Last mile: ElleLLM façade deleted, 21 call sites rewired direct-to-Composer
+
+### Rewired (Cognitive/Solitude/Bonding/Continuity/InnerLife/Memory/SelfPrompt/GoalEngine/Imagination/IdentityCore/SelfSurprise/HTTPServer)
+- All 19 call sites the user identified + 2 HTTP health endpoints now hit
+  `ElleComposer::Ask / ChatLegacy / SelfReflect / SelfReflectStr / FormGoal /
+  RewriteScenario` directly. Total: **21 call sites rewired**.
+- `ElleComposerClient.h` extended with:
+  - `Client::Bind(hub, requester)` + `Client::IsBound()` + `Client::RequestBound(...)` —
+    stateful client; `ElleServiceBase::InitializeCore()` binds the singleton
+    during boot for the 11 services that talk to Composer.
+  - Free helpers `ElleComposer::Ask / Converse / SelfReflect / SelfReflectStr /
+    FormGoal / RewriteScenario / ChatLegacy` — drop-in replacements with the
+    same return shapes the old `ElleLLMEngine` methods produced.
+  - `LLMMessage` struct moved here so the conversation-history shape survives
+    after `ElleLLM.h` deletion.
+  - `SelfReflectStr` overload accepts a raw `ELLE_EMOTION_STATE` and converts
+    to JSON for callers (Continuity).
+- `ElleServiceBase`: bind call switched from the now-deleted
+  `ElleLLMEngine::BindHub(...)` to `ElleComposer::Client::Instance().Bind(...)`.
+
+### Deleted
+- `_Shared/ElleLLM.h` (removed from disk).
+- `_Shared/ElleLLM.cpp` (removed from disk).
+- `ElleLLM.h` / `ElleLLM.cpp` entries stripped from `ElleCore.Shared.vcxproj`.
+- `Directory.Build.props` /bigobj comment cleaned of the dead llama.cpp note.
+- Final `grep ElleLLMEngine|ElleLLM\.h|ElleLLM\.cpp|LLMAPIProvider|LLMLocalProvider`
+  across `/app/ElleAnn/` returns **zero matches** in source. Mesh is fully
+  token-free and tensor-free.
+
+### Verification
+- 52/52 probability engine tests still pass.
+- 34/34 IPC envelope checks pass.
+- `prob_host_smoke` PASS.
+- Composer call sites distributed across 11 files (Cognitive, Solitude,
+  Bonding, Continuity, InnerLife, Memory, SelfPrompt, GoalEngine, Imagination,
+  IdentityCore, SelfSurprise) plus HTTPServer health endpoints.
+
+### What `ElleComposer::Ask("...", "...")` does at runtime now
+1. Builds `IPC_COMPOSE_REQUEST` envelope with `kind="ASK_INNER"`, the prompt,
+   and the optional system header.
+2. Sends to `SVC_COMPOSER` over IOCP named pipe.
+3. Composer runs its 5-step deterministic pipeline (sentence-plan → frame →
+   slot-fill → inflect → stitch) using Language Engine's semantic graph +
+   Probability Engine's WeightVector.
+4. Reply arrives as `IPC_COMPOSE_RESPONSE`, intercepted by
+   `ElleServiceBase`'s central dispatcher and routed via
+   `ElleComposer::Client::Deliver(...)` to the waiting future.
+5. Caller gets a plain `std::string` (or `ELLE_LLM_RESPONSE` for ChatLegacy).
+No tokens. No tensors. No transformers anywhere in the loop.
+
+
 ## 2026-02 — Final pass: SQL cursor audit + IPC audit + Composer seed expansion
 
 ### SQL cursor lifecycle audit
