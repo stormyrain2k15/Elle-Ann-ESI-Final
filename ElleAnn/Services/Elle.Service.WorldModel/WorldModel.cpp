@@ -1,6 +1,3 @@
-/*******************************************************************************
- * WorldModel.cpp — Environmental Awareness & Theory of Mind
- ******************************************************************************/
 #include "../../Shared/ElleTypes.h"
 #include "../../Shared/ElleServiceBase.h"
 #include "../../Shared/ElleLLM.h"
@@ -17,10 +14,7 @@ using json = nlohmann::json;
 class WorldModel {
 public:
     bool Initialize() {
-        /* Hydrate from SQL so the in-memory entity list starts warm, not
-         * cold on every process restart. Previously Initialize just
-         * logged and returned — so even though entities were persisted
-         * via StoreEntity, the next boot forgot all of them.             */
+
         std::vector<ELLE_WORLD_ENTITY> rows;
         if (ElleDB::GetAllEntities(rows)) {
             m_entities = std::move(rows);
@@ -31,7 +25,6 @@ public:
         return true;
     }
 
-    /* Add or update an entity (person, concept, place) */
     void UpdateEntity(const std::string& name, const std::string& type,
                       const std::string& observation) {
         for (auto& e : m_entities) {
@@ -39,8 +32,7 @@ public:
                 e.interaction_count++;
                 e.last_interaction_ms = ELLE_MS_NOW();
                 e.familiarity = std::min(1.0f, e.familiarity + 0.05f);
-                
-                /* Update mental model with new observation */
+
                 std::string model(e.mental_model);
                 model += "\n" + observation;
                 if (model.size() > ELLE_MAX_MSG - 1) model = model.substr(model.size() - ELLE_MAX_MSG + 1);
@@ -51,7 +43,6 @@ public:
             }
         }
 
-        /* New entity */
         ELLE_WORLD_ENTITY entity = {};
         strncpy_s(entity.name, name.c_str(), ELLE_MAX_NAME - 1);
         strncpy_s(entity.type, type.c_str(), ELLE_MAX_TAG - 1);
@@ -68,13 +59,6 @@ public:
         ELLE_INFO("New entity: %s (%s)", name.c_str(), type.c_str());
     }
 
-    /* Theory of Mind and world summary helpers (PredictBehavior /
-     * GetWorldSummary) used to live here but had no live call sites
-     * anywhere in the code base — removed during the second-wave audit.
-     * If reintroduced, route them through explicit IPC query opcodes so
-     * they actually get exercised.                                       */
-
-    /* Decay familiarity for entities not recently interacted with */
     void Tick() {
         float decay = (float)ElleConfig::Instance().GetFloat("world_model.familiarity_decay_rate", 0.001);
         for (auto& e : m_entities) {
@@ -82,16 +66,6 @@ public:
         }
     }
 
-    /* Query the in-memory entity set against the request filters.
-     * Returns up to `limit` entities matching any of the supplied names
-     * OR types, with familiarity ≥ min_familiarity. Empty `names` means
-     * "no name filter"; empty `types` means "no type filter". If both
-     * are empty and min_familiarity is 0, returns the first `limit`
-     * entities sorted by last_interaction_ms descending (most recent
-     * first) — useful for "what has she been thinking about lately?".
-     *
-     * Returns a vector rather than writing directly into the IPC
-     * response so the caller can serialize once.                       */
     std::vector<ELLE_WORLD_ENTITY> Query(const std::vector<std::string>& names,
                                          const std::vector<std::string>& types,
                                          float minFamiliarity,
@@ -113,8 +87,7 @@ public:
             if (e.familiarity < minFamiliarity) continue;
             out.push_back(e);
         }
-        /* Sort by recency so "give me the top 5" returns the most
-         * relevant five, not the first five alphabetically.             */
+
         std::sort(out.begin(), out.end(),
                   [](const ELLE_WORLD_ENTITY& a, const ELLE_WORLD_ENTITY& b) {
                       return a.last_interaction_ms > b.last_interaction_ms;
@@ -137,7 +110,7 @@ public:
 protected:
     bool OnStart() override {
         m_model.Initialize();
-        SetTickInterval(60000); /* Update every minute */
+        SetTickInterval(60000);
         ELLE_INFO("World model service started");
         return true;
     }
@@ -155,16 +128,12 @@ protected:
                 break;
             }
             case IPC_WORLD_QUERY: {
-                /* Parse the JSON request, query the in-memory set, reply
-                 * IPC_WORLD_RESPONSE to the sender with the matching
-                 * entities. Strict JSON — malformed bodies return an
-                 * empty entity list with the echoed request_id so the
-                 * caller can still correlate.                            */
+
                 std::string bodyStr = msg.GetStringPayload();
                 std::string requestId;
                 std::vector<std::string> names, types;
                 float  minFam = 0.0f;
-                size_t limit  = 16;  /* sensible default ceiling */
+                size_t limit  = 16;
                 try {
                     json req = json::parse(bodyStr);
                     if (req.contains("request_id") && req["request_id"].is_string())

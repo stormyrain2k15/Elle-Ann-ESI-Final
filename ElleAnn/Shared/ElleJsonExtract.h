@@ -1,27 +1,3 @@
-/*------------------------------------------------------------------------------
- * ElleJsonExtract.h -- brace-balanced JSON object extraction from LLM text.
- *
- * LLMs often wrap structured output in prose / code fences:
- *   "Here's the answer: ```json\n{\"x\":1}\n``` hope that helps"
- * Our old approach was `response.substr(first_{, last_} - first_{ + 1)`,
- * which breaks the moment the prose ALSO contains braces ("Example: {a}").
- * This extractor walks the string, counting nesting while respecting
- * string literals and escape sequences, and returns the first top-level
- * `{...}` block that parses as JSON.
- *
- * Strictness contract (OpSec audit):
- *   - String-literal scan respects ALL JSON escape sequences including
- *     the 6-char \uXXXX form (incl. surrogate pairs \uD83D\uDE00).
- *     A stray `{` or `}` inside a string can never change the nesting
- *     counter.
- *   - A raw NUL byte (0x00) outside a string literal aborts the scan --
- *     JSON does not permit it, and letting it through risks downstream
- *     C string handlers truncating the buffer.
- *   - We never parse more than one candidate region per starting `{`;
- *     malformed candidates advance by exactly one character, so the
- *     worst case is O(N^2) in the length of the prose -- bounded and
- *     deterministic, no infinite loop on pathological input.
- *------------------------------------------------------------------------------*/
 #ifndef ELLE_JSON_EXTRACT_H
 #define ELLE_JSON_EXTRACT_H
 
@@ -30,20 +6,13 @@
 
 namespace Elle {
 
-/* Result classification for callers that want richer logging than a
- * single bool. All NONE/MALFORMED cases produce an `out` unchanged from
- * its pre-call state. Audit item #80, Feb 2026.                        */
 enum class JsonExtractResult {
-    Ok              = 0,  /* a `{...}` region was found and parsed as an object */
-    NoBraceFound    = 1,  /* input contained no `{` at all                      */
-    Unbalanced      = 2,  /* every candidate ran off the end without closing    */
-    ParseFailed     = 3,  /* one+ candidate(s) had balanced braces but nlohmann
-                             refused the body (e.g. `{not json at all}`)       */
-    FailClosed      = 4,  /* embedded NUL outside a string OR runaway nesting
-                             (>1024). Input is hostile; caller should not
-                             retry.                                             */
-    RootNotObject   = 5   /* parse succeeded but root was not a JSON object
-                             (top-level array / number / string etc.)          */
+    Ok              = 0,
+    NoBraceFound    = 1,
+    Unbalanced      = 2,
+    ParseFailed     = 3,
+    FailClosed      = 4,
+    RootNotObject   = 5
 };
 
 inline const char* JsonExtractResultName(JsonExtractResult r) {
@@ -58,8 +27,6 @@ inline const char* JsonExtractResultName(JsonExtractResult r) {
     return "?";
 }
 
-/* Rich variant of ExtractJsonObject. Returns the classified result and
- * populates `out` only on Ok.                                            */
 inline JsonExtractResult ExtractJsonObjectEx(const std::string& s, nlohmann::json& out) {
     if (s.empty()) return JsonExtractResult::NoBraceFound;
     constexpr int kMaxDepth = 1024;
@@ -108,17 +75,10 @@ inline JsonExtractResult ExtractJsonObjectEx(const std::string& s, nlohmann::jso
         try {
             out = nlohmann::json::parse(s.substr(start, end - start + 1));
             if (out.is_object()) return JsonExtractResult::Ok;
-            /* Balanced + parsed but a non-object root -- keep searching;
-             * the caller asked for an object. If nothing later parses as
-             * an object, we report RootNotObject (more specific than
-             * ParseFailed).                                               */
+
             saw_parse_failure = true;
         } catch (const nlohmann::json::parse_error&) {
-            /* Tighter than catch(...): nlohmann::json::parse only ever
-             * throws parse_error for invalid input. If something else
-             * appears here (e.g. std::bad_alloc from a huge buffer),
-             * let it propagate — that's a real system signal, not a
-             * candidate-rejected signal.                                 */
+
             saw_parse_failure = true;
         }
         i = start + 1;
@@ -129,14 +89,10 @@ inline JsonExtractResult ExtractJsonObjectEx(const std::string& s, nlohmann::jso
     return JsonExtractResult::RootNotObject;
 }
 
-/* Scan `s` for a brace-balanced `{...}` region and parse it as JSON.
- * Returns true on success with `out` populated. Kept as the simple
- * bool entry point; callers wanting richer diagnostics should call
- * `ExtractJsonObjectEx` directly.                                      */
 inline bool ExtractJsonObject(const std::string& s, nlohmann::json& out) {
     return ExtractJsonObjectEx(s, out) == JsonExtractResult::Ok;
 }
 
-} /* namespace Elle */
+}
 
-#endif /* ELLE_JSON_EXTRACT_H */
+#endif

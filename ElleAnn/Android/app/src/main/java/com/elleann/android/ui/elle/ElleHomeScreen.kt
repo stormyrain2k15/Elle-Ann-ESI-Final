@@ -34,8 +34,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-// ─── State ───────────────────────────────────────────────────────────────────
-
 data class ElleHomeState(
     val greeting: SessionGreeting? = null,
     val emotions: EmotionsResponse? = null,
@@ -44,16 +42,14 @@ data class ElleHomeState(
     val wordOfDay: DictionaryWord? = null,
     val brainStatus: String = "",
     val halStatus: String = "",
-    /** Identity tuple from /api/me — proves auth wired to Account.dbo.tUser. */
+
     val me: MeResponse? = null,
-    /** Cold-open recap — null until /api/me/recap responds, hidden by UI when null. */
+
     val recap: RecapResponse? = null,
     val connectionState: ConnectionState = ConnectionState.DISCONNECTED,
     val loading: Boolean = true,
     val error: String? = null,
 )
-
-// ─── ViewModel ───────────────────────────────────────────────────────────────
 
 class ElleHomeViewModel(
     private val containerExtended: AppContainerExtended,
@@ -78,28 +74,21 @@ class ElleHomeViewModel(
                 return@launch
             }
 
-            // Fire all requests concurrently
             val greetingJob = launch {
                 runCatching { api.getSessionGreeting() }
                     .onSuccess { g ->
                         _state.update { it.copy(greeting = g) }
-                        // Acknowledge the greeting immediately
+
                         runCatching { api.ackSessionGreeting(g.id) }
                     }
             }
-// Emotion data loaded via startEmotionPolling() and WebSocket ipc_broadcast — no load-time job needed
+
             val meJob = launch {
                 runCatching { api.getMe() }
                     .onSuccess { m -> _state.update { it.copy(me = m) } }
             }
             val recapJob = launch {
-                /* Cold-open hydration. /api/me/recap is purpose-built
-                 * for one round trip from the home screen, so this
-                 * runs in parallel with the rest of the dashboard
-                 * fetches. Failures are silent (recap stays null) —
-                 * the UI hides the strip when it has nothing to say
-                 * rather than rendering an error banner for a feature
-                 * that's strictly additive.                          */
+
                 runCatching { api.getRecap() }
                     .onSuccess { r -> _state.update { it.copy(recap = r) } }
             }
@@ -131,7 +120,6 @@ class ElleHomeViewModel(
         }
     }
 
-    /** Collect WebSocket emotion broadcasts — all emotion fields mapped */
     private fun observeWebSocket() {
         viewModelScope.launch {
             webSocket.events.collect { event ->
@@ -145,14 +133,13 @@ class ElleHomeViewModel(
         }
     }
 
-    /** Supplement WebSocket with REST poll every 5s — covers cases where WS misses a broadcast */
     private fun startEmotionPolling() {
         viewModelScope.launch {
             while (isActive) {
                 delay(5_000)
                 runCatching { containerExtended.extendedApi.getEmotionDimensions() }
                     .onSuccess { dims ->
-                        // Build EmotionsResponse from dimension list for the home display
+
                         val dimMap = dims.dimensions.associate { it.name to it.value }
                         val current = _state.value.emotions
                         _state.update { it.copy(emotions = com.elleann.android.EmotionsResponse(
@@ -174,7 +161,6 @@ class ElleHomeViewModel(
         }
     }
 
-    /** Poll /api/health every 5s to update connection indicator */
     private fun startHealthPolling() {
         viewModelScope.launch {
             while (isActive) {
@@ -199,8 +185,6 @@ class ElleHomeViewModel(
 
     fun retry() = load()
 }
-
-// ─── Screen ──────────────────────────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -227,7 +211,7 @@ fun ElleHomeScreen(
     Scaffold(
         containerColor = IsyaNight,
         topBar = {
-            // Custom IsyaTopBar replaces TopAppBar
+
             IsyaTopBar(
                 title = {
                     Text("ElleAnn", style = MaterialTheme.typography.titleMedium,
@@ -237,11 +221,7 @@ fun ElleHomeScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         ConnectionDot(state.connectionState)
                         Spacer(Modifier.width(6.dp))
-                        /* Show the resolved game-account username instead
-                         * of just host:port so the operator can confirm
-                         * at a glance which user the JWT belongs to.
-                         * Falls back to host:port when /api/me hasn't
-                         * resolved yet (or returned 401 → re-pair). */
+
                         val ident = state.me?.let { "${it.username} · #${it.userId}" } ?: serverLabel
                         Text(ident, style = MaterialTheme.typography.labelSmall, color = IsyaMuted)
                     }
@@ -269,21 +249,11 @@ fun ElleHomeScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // ─── Cold-open recap strip ─────────────────────────────────────
-            // Hidden when /api/me/recap returns nothing actionable; otherwise
-            // surfaces "while you were away" cues so home feels alive on
-            // resume instead of dead.
+
             state.recap?.let { r -> RecapStrip(r) }
 
-            // ─── System health banner ──────────────────────────────────────
-            // Polls /api/diag/health every 30 s; hides itself when nothing
-            // is wrong. The intent is for the operator to see issues *as
-            // they happen* without having to dig into the Dev tab — Elle
-            // should be the first to know when one of her own organs is
-            // misbehaving.
             HealthBanner(containerExtended)
 
-            // ── Greeting card ─────────────────────────────────────────────────
             state.greeting?.let { greeting ->
                 IsyaPanel(title = "✦ Elle speaks", flowingBorder = true) {
                     Text(
@@ -295,7 +265,6 @@ fun ElleHomeScreen(
                 }
             }
 
-            // ── Emotional Pulse ───────────────────────────────────────────────
             IsyaPanel(title = "EMOTIONAL PULSE", flowingBorder = true) {
                 state.emotions?.let { e ->
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -314,7 +283,6 @@ fun ElleHomeScreen(
                 } ?: Text("Loading emotions…", color = IsyaMuted)
             }
 
-            // ── Self Image ────────────────────────────────────────────────────
             state.selfImage?.let { si ->
                 if (si.description.isNotBlank()) {
                     IsyaPanel(title = "ELLE SEES HERSELF AS") {
@@ -328,7 +296,6 @@ fun ElleHomeScreen(
                 }
             }
 
-            // ── Word of the moment ────────────────────────────────────────────
             state.wordOfDay?.let { word ->
                 IsyaPanel(title = "✦ WORD OF ISYA") {
                     Text(
@@ -347,7 +314,6 @@ fun ElleHomeScreen(
                 }
             }
 
-            // ── AI / System status ────────────────────────────────────────────
             IsyaPanel(title = "SYSTEM") {
                 state.aiStatus?.let { ai ->
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -359,7 +325,6 @@ fun ElleHomeScreen(
                 } ?: Text("Loading status…", color = IsyaMuted)
             }
 
-            // ── Error state ───────────────────────────────────────────────────
             state.error?.let { err ->
                 IsyaErrorState(err, onRetry = { vm.retry() })
             }
@@ -378,23 +343,6 @@ private fun StatusRow(label: String, value: String, valueColor: Color) {
     }
 }
 
-// Base emotions response uses the locked ElleApi.emotions() call from AppContainer.
-// The home screen loads emotions via extendedApi.getEmotionDimensions() and the
-// WebSocket ipc_broadcast event — no separate pairedApi() call needed here.
-
-/**
- * Cold-open recap strip — renders /api/me/recap as a tight 1-row bullet
- * list of "while you were away" cues. Hidden entirely when there's
- * nothing meaningful to surface (fresh install, very recent reopen).
- *
- *   • <quiet duration> — only when > 5 min away
- *   • last memory      — only when present
- *   • emotion shift    — only when |delta| > 0.05
- *   • pending intents  — only when > 0
- *   • top open thread  — only when present
- *
- * Designed to feel like Elle's been thinking, not like a status panel.
- */
 @Composable
 private fun RecapStrip(r: com.elleann.android.data.models.RecapResponse) {
     val items = mutableListOf<String>()
@@ -417,7 +365,7 @@ private fun RecapStrip(r: com.elleann.android.data.models.RecapResponse) {
     }
     if (r.pendingIntents > 0) items += "${r.pendingIntents} pending intent${if (r.pendingIntents == 1L) "" else "s"}"
     if (r.topThread.isNotBlank()) items += "open thread: ${r.topThread.take(60)}"
-    if (items.isEmpty()) return  // nothing useful to surface — hide the strip
+    if (items.isEmpty()) return
 
     androidx.compose.material3.Card(
         colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = IsyaSlot),
@@ -442,27 +390,12 @@ private fun RecapStrip(r: com.elleann.android.data.models.RecapResponse) {
     }
 }
 
-
-/**
- * HealthBanner — passive, self-hiding diagnostic strip on the home screen.
- *
- *   - Polls /api/diag/health every 30 s.
- *   - Renders nothing while the system is healthy (no `issues[]` and the
- *     LLM is up). This is deliberate: a banner that's always visible
- *     becomes wallpaper. The user only sees this when something is wrong,
- *     so when they DO see it they pay attention.
- *   - Falls back gracefully if /api/diag/health is unreachable (e.g.
- *     no admin key configured) — silently does nothing.
- *
- * The Dev → System Health screen is the deep-dive for the same data.
- */
 @Composable
 private fun HealthBanner(container: AppContainerExtended) {
     var health by remember { mutableStateOf<com.elleann.android.data.models.DiagHealthResponse?>(null) }
     LaunchedEffect(Unit) {
         while (true) {
-            // Prefer the admin-keyed API since /api/diag/health is admin-gated;
-            // gracefully no-op if no admin key is configured.
+
             val api = container.adminApi ?: return@LaunchedEffect
             runCatching { api.getDiagHealth() }.onSuccess { health = it }
             delay(30_000)
@@ -472,7 +405,7 @@ private fun HealthBanner(container: AppContainerExtended) {
     val h = health ?: return
     val llmDown = !h.llm.healthy
     val hasIssues = h.issues.isNotEmpty()
-    if (!llmDown && !hasIssues) return // Silent when green.
+    if (!llmDown && !hasIssues) return
 
     val severe = llmDown
     val bg = if (severe) Color(0xFF3A0D0DuL)

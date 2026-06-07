@@ -1,27 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * FiestaWorldModel.h — Phase 6b-Alpha headless world state.
- *
- *   Thread-safe in-process snapshot of everything the Fiesta decoders have
- *   observed on the wire. Every handler in FiestaClient.cpp pushes deltas
- *   into this struct; Cognitive can pull the full picture over IPC with
- *   `{"op":"get_world"}`.
- *
- *   Scope (Phase 6b-Alpha):
- *     • self     — registration number, char name, map, last known (x,y),
- *                  login-state, selfHandle (once known).
- *     • entities — handle → { kind, name|mobId, last-seen ms }.
- *                  Players gain a name via BRIEFINFO, mobs carry mob_id,
- *                  NPCs are identified by disappear-only (kept as 'npc').
- *     • zone     — mapName string recovered from MAP_LOGINCOMPLETE.
- *
- *   Not in this phase (deferred to 6b-Beta): HP/MP, gold, exp, skills,
- *   inventory. Those require decoding NC_MAP_LOGIN_ACK (0x1038) and
- *   its flood packets which are shape-matched but not yet hand-decoded.
- *
- *   Serialisation is JSON via nlohmann — same envelope every other service
- *   in Elle uses, so Cognitive / Lua / HTTPServer can consume it without
- *   custom parsers.
- *══════════════════════════════════════════════════════════════════════════════*/
 #pragma once
 #ifndef ELLE_FIESTA_WORLDMODEL_H
 #define ELLE_FIESTA_WORLDMODEL_H
@@ -56,9 +32,9 @@ inline const char* EntityKindName(EntityKind k) {
 struct WorldEntity {
     uint16_t    handle     = 0;
     EntityKind  kind       = EntityKind::UNKNOWN;
-    std::string name;          /* player displayName or empty for mob/npc */
-    uint16_t    mobId      = 0;/* non-zero for mobs only                  */
-    uint64_t    firstSeen  = 0;/* ms since epoch — monotonic clock OK     */
+    std::string name;
+    uint16_t    mobId      = 0;
+    uint64_t    firstSeen  = 0;
     uint64_t    lastSeen   = 0;
 };
 
@@ -66,7 +42,6 @@ class WorldModel {
 public:
     WorldModel() = default;
 
-    /* ── Self-character mutators ─────────────────────────────────── */
     void UpdateSelfBase(uint32_t chrRegNum, const std::string& charName) {
         std::lock_guard<std::mutex> lk(m_mx);
         m_self.chrRegNum = chrRegNum;
@@ -93,7 +68,6 @@ public:
         m_self.lastUpdate = NowMs();
     }
 
-    /* ── Zone mutators ───────────────────────────────────────────── */
     void SetZone(const std::string& mapName) {
         std::lock_guard<std::mutex> lk(m_mx);
         m_zone.mapName    = mapName;
@@ -107,7 +81,6 @@ public:
         m_entities.clear();
     }
 
-    /* ── Entity mutators ─────────────────────────────────────────── */
     void UpsertPlayer(uint16_t handle, const std::string& name) {
         std::lock_guard<std::mutex> lk(m_mx);
         auto& e = m_entities[handle];
@@ -133,14 +106,11 @@ public:
         m_entities.erase(handle);
     }
 
-    /* ── Inspectors ──────────────────────────────────────────────── */
     size_t EntityCount() const {
         std::lock_guard<std::mutex> lk(m_mx);
         return m_entities.size();
     }
 
-    /* Full snapshot. Thread-safe, copies under lock then renders JSON
-     * without holding the lock. */
     nlohmann::json SnapshotJson() const {
         SelfChar selfCopy;
         Zone     zoneCopy;
@@ -219,5 +189,5 @@ private:
     std::unordered_map<uint16_t, WorldEntity>        m_entities;
 };
 
-}  /* namespace Fiesta */
-#endif  /* ELLE_FIESTA_WORLDMODEL_H */
+}
+#endif

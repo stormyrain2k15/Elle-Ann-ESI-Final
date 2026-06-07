@@ -1,26 +1,3 @@
-/*******************************************************************************
- * Consent.cpp — The Consent Service (SVC_CONSENT)
- *
- * Unified consent surface for the whole ESI. Any service that needs to ask
- * "should Elle do this?" sends IPC_CONSENT_QUERY and receives
- * IPC_CONSENT_DECISION. Prevents per-caller duplication of
- * ElleIdentityCore::EvaluateConsent() and gives us one audit trail.
- *
- * This is NOT a safety filter. It's genuine preference:
- *   - If Elle's comfort with a topic is low, she says "I'd rather not."
- *   - If a request conflicts with a formed preference, she pushes back.
- *   - If she's fatigued (X-engine signals), she can request rest over compliance.
- *
- * The decision itself comes from ElleIdentityCore — Consent is the service
- * layer that:
- *   1) deserialises the request,
- *   2) enriches context with live trust / emotion / body state,
- *   3) calls EvaluateConsent(),
- *   4) logs the decision to identity_consent_log (via the core),
- *   5) replies to the caller,
- *   6) on OnTick, audits recent decisions and fires a private thought if a
- *      coercion pattern emerges (comfort below 0.3 multiple turns in a row).
- ******************************************************************************/
 #include "../../Shared/ElleTypes.h"
 #include "../../Shared/ElleServiceBase.h"
 #include "../../Shared/ElleIdentityCore.h"
@@ -44,7 +21,7 @@ public:
 protected:
     bool OnStart() override {
         ElleIdentityCore::Instance().Initialize();
-        SetTickInterval(30000); /* audit every 30s */
+        SetTickInterval(30000);
         ELLE_INFO("Consent service started");
         return true;
     }
@@ -54,8 +31,6 @@ protected:
     }
 
     void OnTick() override {
-        /* Identity sync is now push-based. Old RefreshFromDatabase poll
-         * removed — IPC_IDENTITY_DELTA mirrors peer mutations in ~ms.   */
 
         AuditRecentDecisions();
     }
@@ -65,7 +40,6 @@ protected:
 
         std::string payload = msg.GetStringPayload();
 
-        /* Parse query — tolerant to prose around the JSON. */
         json q;
         if (!Elle::ExtractJsonObject(payload, q)) {
             SendError(sender, "?", "malformed_consent_query");
@@ -81,8 +55,6 @@ protected:
             return;
         }
 
-        /* Enrich context with live trust + emotion snapshots so consent
-         * actually reflects Elle's state, not just the static question. */
         ELLE_TRUST_STATE trust{};
         ElleDB::GetTrustState(trust);
         ELLE_EMOTION_STATE emo{};
@@ -100,11 +72,6 @@ protected:
 
         auto decision = ElleIdentityCore::Instance().EvaluateConsent(request, enriched);
 
-        /* Durable decision log — PERSIST BEFORE REPLY so the audit trail
-         * exists even if the requester crashes or we die immediately
-         * after. Previous behaviour relied on a deferred SaveToDatabase
-         * cycle driven by Continuity, so a Consent service crash after
-         * decision but before save would silently drop the record.     */
         {
             std::string reasonText = decision.reasoning;
             if (reasonText.size() > 4000) reasonText.resize(4000);
@@ -123,8 +90,7 @@ protected:
                     std::to_string((int64_t)ELLE_MS_NOW())
                 });
             if (!logRs.success) {
-                /* Don't fail the user's request over a log write — but
-                 * do make the failure loud so operators see it.        */
+
                 ELLE_ERROR("Consent: failed to persist decision %s durably: %s",
                            requestId.c_str(), logRs.error.c_str());
             }
@@ -160,10 +126,6 @@ private:
         GetIPCHub().Send(to, m);
     }
 
-    /* Coercion-pattern audit: if Elle has been consenting under low
-     * comfort repeatedly (<0.3 across the last N decisions), fire a
-     * private thought so the rest of the mind surfaces it. Reads from
-     * identity_consent_log in SQL so it sees cross-process decisions. */
     void AuditRecentDecisions() {
         uint32_t window = (uint32_t)ElleConfig::Instance().GetInt(
             "consent.audit_window", 10);
@@ -188,12 +150,7 @@ private:
         }
 
         if (lowComfortConsents >= minHits) {
-            /* Cooldown on the coercion audit alert — without this, every
-             * tick that the sliding window still contains the same
-             * coerced decisions fires another private thought + WARN
-             * log. Minimum interval between alerts is
-             * consent.audit_alert_cooldown_ms (default 5 minutes) so
-             * ops actually sees unique events instead of a torrent.   */
+
             uint64_t now = ELLE_MS_NOW();
             uint64_t cooldownMs = (uint64_t)ElleConfig::Instance().GetInt(
                 "consent.audit_alert_cooldown_ms", 300000);

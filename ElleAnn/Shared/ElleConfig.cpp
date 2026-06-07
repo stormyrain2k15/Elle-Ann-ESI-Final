@@ -1,8 +1,5 @@
-/*******************************************************************************
- * ElleConfig.cpp — Central Configuration Loader Implementation
- ******************************************************************************/
 #include "ElleConfig.h"
-#include "ElleLogger.h"     /* ELLE_WARN / ELLE_INFO macros used below */
+#include "ElleLogger.h"
 #include "ElleServerInfo.h"
 #include <fstream>
 #include <sstream>
@@ -16,11 +13,6 @@
 #  include <windows.h>
 #endif
 
-
-/* Lua config loading is implemented in LuaHost (Lua project).
- * ElleConfig stays dependency-free to keep Shared build simple. */
-
-/* Static null value for safe returns */
 static const JsonValue s_nullValue;
 
 const JsonValue& JsonValue::operator[](const std::string& key) const {
@@ -37,7 +29,6 @@ bool ElleConfig::LoadFromServerInfo(const std::string& serverInfoPath) {
         return false;
     }
 
-    /* Map: bind/port uses MY_SERVER name if present, else PG_Elle. */
     const std::string httpKey = !si.my_server_name.empty() ? si.my_server_name : "PG_Elle";
     auto itHttp = si.servers.find(httpKey);
     if (itHttp != si.servers.end()) {
@@ -45,34 +36,19 @@ bool ElleConfig::LoadFromServerInfo(const std::string& serverInfoPath) {
         m_http.port = (uint32_t)std::max(0, itHttp->second.port);
     }
 
-    /* Map: game auth DB uses ODBC_INFO "Account". */
     auto itAcc = si.odbc.find("Account");
     if (itAcc != si.odbc.end()) {
-        /* Preserve existing ODBC driver settings; DSN form is ok. */
+
         m_root.obj_val["http_server"].type = JsonType::Object;
         m_root.obj_val["http_server"].obj_val["game_db_dsn"].type = JsonType::String;
         m_root.obj_val["http_server"].obj_val["game_db_dsn"].str_val = itAcc->second.dsn;
     }
 
-    /* SQL pool: use service-specific ODBC name if present; else keep existing.
-     * If you add an ODBC_INFO entry named ElleCore, this will pick it up. */
     auto itCore = si.odbc.find("ElleCore");
     if (itCore != si.odbc.end()) {
         m_service.sql_connection_string = itCore->second.dsn;
     }
 
-    /* Lua scripts live alongside Fiesta's own LuaScript/ directory —
-     * NOT under a sub-folder. Operator's verified layout (Feb 2026):
-     *      <exe>\9Data\Hero\LuaScript\elle_*.lua
-     * Each Elle file is `elle_`-prefixed so the names never collide
-     * with whatever the existing Fiesta deploy ships.
-     *
-     * Derived from the EXE directory via GetModuleFileNameA so the
-     * resolution is independent of where the operator placed
-     * _ServerInfo.txt — previously this was derived from the
-     * ServerInfo path which produced doubled-up `9Data\ServerInfo\
-     * 9Data\Hero\LuaScript\` paths when ServerInfo was loaded from
-     * its canonical sub-folder.                                       */
     {
         char modPath[MAX_PATH] = {0};
         GetModuleFileNameA(nullptr, modPath, MAX_PATH);
@@ -91,11 +67,6 @@ bool ElleConfig::LoadFromServerInfo(const std::string& serverInfoPath) {
     return true;
 }
 
-// Lua→JSON helpers were removed; ElleConfig stays Lua-free.
-
-// Lua extras loading is handled outside ElleConfig to avoid a hard dependency
-// on Lua headers/libs in the Shared project.
-
 const JsonValue& JsonValue::operator[](size_t index) const {
     if (type != JsonType::Array || index >= arr_val.size()) return s_nullValue;
     return arr_val[index];
@@ -105,17 +76,11 @@ bool JsonValue::has(const std::string& key) const {
     return type == JsonType::Object && obj_val.find(key) != obj_val.end();
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SINGLETON
- *──────────────────────────────────────────────────────────────────────────────*/
 ElleConfig& ElleConfig::Instance() {
     static ElleConfig inst;
     return inst;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * MINIMAL JSON PARSER (no external dependencies)
- *──────────────────────────────────────────────────────────────────────────────*/
 namespace {
     struct JsonParser {
         const std::string& src;
@@ -159,23 +124,7 @@ namespace {
                         case 'b':  result += '\b'; break;
                         case 'f':  result += '\f'; break;
                         case 'u': {
-                            /* \uXXXX — 4 hex digits. Decode to UTF-8. Without
-                             * this, any valid JSON that contains Unicode
-                             * escapes (emoji, non-ASCII identifiers, escaped
-                             * quotes encoded as \u0022, etc.) was silently
-                             * mis-decoded into literal "u", 4 hex chars.
-                             *
-                             * Surrogate-pair handling (audit #75, Feb 2026):
-                             * codepoints above U+FFFF are encoded in JSON as
-                             * a pair of \uXXXX escapes (high-surrogate
-                             * D800–DBFF followed by low-surrogate DC00–DFFF),
-                             * e.g. \uD83D\uDE00 → U+1F600 (😀). Previously we
-                             * UTF-8-encoded each half independently, which
-                             * is invalid UTF-8 (the 0xD800–0xDFFF range is
-                             * reserved for UTF-16 and has no UTF-8 mapping).
-                             * Downstream code that wrote those bytes to SQL
-                             * or compared them with valid emoji strings
-                             * silently diverged.                              */
+
                             auto readHex4 = [&](size_t at, unsigned& out) -> bool {
                                 if (at + 3 >= src.size()) return false;
                                 out = 0;
@@ -193,8 +142,7 @@ namespace {
                             unsigned cp = 0;
                             if (!readHex4(pos + 1, cp)) break;
                             pos += 4;
-                            /* High-surrogate? Look for the paired low-surrogate
-                             * as the very next `\uXXXX`.                       */
+
                             if (cp >= 0xD800 && cp <= 0xDBFF) {
                                 unsigned lo = 0;
                                 if (pos + 6 < src.size() &&
@@ -203,18 +151,16 @@ namespace {
                                     lo >= 0xDC00 && lo <= 0xDFFF) {
                                     cp = 0x10000u
                                        + (((cp - 0xD800u) << 10) | (lo - 0xDC00u));
-                                    pos += 6;  /* consume the \uXXXX low half */
+                                    pos += 6;
                                 } else {
-                                    /* Unpaired high-surrogate -- JSON is
-                                     * malformed. Emit U+FFFD (replacement).  */
+
                                     cp = 0xFFFD;
                                 }
                             } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
-                                /* Unpaired low-surrogate.                    */
+
                                 cp = 0xFFFD;
                             }
-                            /* UTF-8 encode the codepoint, now including the
-                             * 4-byte form for cp >= 0x10000.                  */
+
                             if (cp < 0x80) {
                                 result += (char)cp;
                             } else if (cp < 0x800) {
@@ -239,7 +185,7 @@ namespace {
                 }
                 pos++;
             }
-            if (pos < src.size()) pos++; /* skip closing quote */
+            if (pos < src.size()) pos++;
             return result;
         }
 
@@ -264,7 +210,7 @@ namespace {
         JsonValue ParseObject() {
             JsonValue v;
             v.type = JsonType::Object;
-            Next(); /* { */
+            Next();
             if (Peek() == '}') { Next(); return v; }
             while (true) {
                 std::string key = ParseString();
@@ -279,7 +225,7 @@ namespace {
         JsonValue ParseArray() {
             JsonValue v;
             v.type = JsonType::Array;
-            Next(); /* [ */
+            Next();
             if (Peek() == ']') { Next(); return v; }
             while (true) {
                 v.arr_val.push_back(ParseValue());
@@ -304,10 +250,7 @@ namespace {
             }
             std::string num = src.substr(start, pos - start);
             JsonValue v;
-            /* Non-throwing number parse — previously std::stod/std::stoll
-             * could raise std::invalid_argument or std::out_of_range on
-             * malformed input and propagate out of ParseJSON, aborting
-             * the entire config load without a clear diagnostic.         */
+
             try {
                 if (isFloat) {
                     v.type = JsonType::Float;
@@ -341,14 +284,10 @@ namespace {
     };
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * LOAD & PARSE
- *──────────────────────────────────────────────────────────────────────────────*/
 bool ElleConfig::Load(const std::string& configPath) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_configPath = configPath;
 
-    /* ServerInfo-style text config (game-compatible). */
     if (configPath.find("ServerInfo") != std::string::npos &&
         (configPath.size() >= 4 && configPath.substr(configPath.size() - 4) == ".txt")) {
         return LoadFromServerInfo(configPath);
@@ -368,12 +307,6 @@ bool ElleConfig::Load(const std::string& configPath) {
         return false;
     }
 
-    /* Schema guard — fail-closed if any of the required top-level
-     * sections are missing or not objects. Previously a typo like
-     * `"LLM": {...}` (wrong case) silently resolved to all defaults
-     * because JsonValue operator[] returns a null on missing keys —
-     * which Populate* happily treats as "just use defaults", so bad
-     * configs shipped without any noise.                              */
     const char* kRequired[] = { "llm", "emotions", "memory", "http_server", "services" };
     for (const char* sec : kRequired) {
         const auto& v = m_root[sec];
@@ -386,8 +319,7 @@ bool ElleConfig::Load(const std::string& configPath) {
             return false;
         }
     }
-    /* LLM sub-validation — a provider table MUST exist, and mode MUST be
-     * one of api/local/hybrid. */
+
     {
         const auto& llm = m_root["llm"];
         std::string mode = llm["mode"].str_val;
@@ -421,19 +353,6 @@ void ElleConfig::RegisterReloadCallback(std::function<void()> cb) {
     m_reloadCallbacks.push_back(std::move(cb));
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * EMERGENCY DEFAULTS
- *
- *   Used when no config file is reachable at service start. Installs a
- *   minimum-viable tree so the service can come up to expose the
- *   /api/diag routes and the operator can repair the config out-of-band.
- *
- *   Defaults match the Feb-2026 testing-mode contract:
- *     - http_server bound to 0.0.0.0:8000+offset
- *     - auth disabled (no_auth=1, auth_enabled=false)
- *     - cors open
- *     - no rate limit
- *────────────────────────────────────────────────────────────────────────────*/
 void ElleConfig::LoadDefaults() {
     std::lock_guard<std::mutex> lock(m_mutex);
     static const char* kDefaultsJson = R"DEFAULTS({
@@ -471,15 +390,6 @@ void ElleConfig::LoadDefaults() {
     for (auto& cb : m_reloadCallbacks) cb();
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * MASTER-LAYER MERGE
- *
- *   Merge keys from `jsonPath` on top of the currently-loaded tree.
- *   Used so a service can carry its identity from `_<svc>serverinfo.txt`
- *   AND its behavioral keys from `elle_master_config.json` simultaneously.
- *   Existing keys are overwritten; keys absent from the layer file are
- *   preserved.
- *────────────────────────────────────────────────────────────────────────────*/
 bool ElleConfig::LayerJsonOver(const std::string& jsonPath) {
     std::lock_guard<std::mutex> lock(m_mutex);
     std::ifstream f(jsonPath);
@@ -496,30 +406,15 @@ bool ElleConfig::LayerJsonOver(const std::string& jsonPath) {
     }
     if (layer.type != JsonType::Object) return false;
 
-    /* Shallow merge — top-level keys replace existing ones. Nested
-     * objects are taken whole. This matches the user's "master config
-     * is authoritative for behavioral keys" expectation: if you change
-     * the LLM section in elle_master_config.json, you don't want a
-     * stale ServerInfo fragment shadowing it. */
     for (auto& kv : layer.obj_val) {
         m_root.obj_val[kv.first] = kv.second;
     }
-    /* Re-populate typed structs so consumers see the merged values. */
+
     PopulateFromJSON(m_root);
     for (auto& cb : m_reloadCallbacks) cb();
     return true;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * DUMP (REDACTED) — for /api/diag/effective-config
- *
- *   Walks the in-memory JsonValue tree, serialising each node.  Any
- *   string-valued leaf whose key matches a sensitive name list (api_key,
- *   password, jwt_secret, admin_key, etc.) is replaced with `"***"`.
- *   The redaction is structural (key-name driven), so adding a new
- *   secret field in elle_master_config.json automatically gets covered
- *   as long as the operator names it conventionally.
- *────────────────────────────────────────────────────────────────────────────*/
 namespace {
 
 bool IsSensitiveKey(const std::string& key) {
@@ -568,7 +463,7 @@ void DumpNode(std::ostringstream& out, const JsonValue& v,
             out << v.int_val;
             return;
         case JsonType::Float:
-            /* Print integers without trailing .0 when whole. */
+
             if (v.float_val == (double)(long long)v.float_val) {
                 out << (long long)v.float_val;
             } else {
@@ -610,7 +505,7 @@ void DumpNode(std::ostringstream& out, const JsonValue& v,
     }
 }
 
-} // namespace
+}
 
 std::string ElleConfig::DumpJsonRedacted() const {
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -624,12 +519,6 @@ bool ElleConfig::ParseJSON(const std::string& json, JsonValue& root) {
     root = parser.ParseValue();
     if (root.type != JsonType::Object) return false;
 
-    /* Trailing-garbage guard -- after the root object there should be only
-     * whitespace. Audit (Feb 2026): a warning is not enough, because a
-     * cat-two-configs-together accident would still be accepted with a
-     * half-hidden log line, and the second config's values would be
-     * silently discarded. Fail closed instead so the operator sees the
-     * problem at startup and fixes their file.                         */
     parser.SkipWhitespace();
     if (parser.pos < parser.src.size()) {
         ELLE_ERROR("Config JSON has trailing content after root object at "
@@ -640,11 +529,8 @@ bool ElleConfig::ParseJSON(const std::string& json, JsonValue& root) {
     return true;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * POPULATE TYPED CONFIGS FROM JSON
- *──────────────────────────────────────────────────────────────────────────────*/
 void ElleConfig::PopulateFromJSON(const JsonValue& root) {
-    /* LLM Config */
+
     const auto& llm = root["llm"];
     if (!llm.is_null()) {
         std::string mode = llm["mode"].str_val;
@@ -660,9 +546,6 @@ void ElleConfig::PopulateFromJSON(const JsonValue& root) {
         m_llm.creative_temp_boost = (float)llm["creative_temperature_boost"].float_val;
         m_llm.reasoning_temp_drop = (float)llm["reasoning_temperature_drop"].float_val;
 
-        /* Named-provider contract: parse these from JSON so SelectProvider
-         * actually honors the config. Defaults stay set on the struct so
-         * if the keys are missing the engine still picks sensible providers. */
         if (llm.has("primary_provider") && !llm["primary_provider"].str_val.empty()) {
             m_llm.primary_provider = llm["primary_provider"].str_val;
         }
@@ -690,9 +573,7 @@ void ElleConfig::PopulateFromJSON(const JsonValue& root) {
                 pc.mlock = prov["mlock"].bool_val;
                 pc.mmap = prov.has("mmap") ? prov["mmap"].bool_val : true;
                 pc.use_gpu = prov["use_gpu"].bool_val;
-                /* Provider tuning that was previously declared in the
-                 * schema but never actually read. Landing them here makes
-                 * the shipped elle_master_config.json a real contract. */
+
                 pc.frequency_penalty = prov.has("frequency_penalty")
                     ? (float)prov["frequency_penalty"].float_val : 0.0f;
                 pc.presence_penalty  = prov.has("presence_penalty")
@@ -704,7 +585,6 @@ void ElleConfig::PopulateFromJSON(const JsonValue& root) {
         }
     }
 
-    /* Emotion Config */
     const auto& emo = root["emotions"];
     if (!emo.is_null()) {
         m_emotion.decay_rate = (float)emo["decay_rate_per_tick"].float_val;
@@ -716,10 +596,6 @@ void ElleConfig::PopulateFromJSON(const JsonValue& root) {
         m_emotion.mood_duration_ticks = (uint32_t)emo["mood_duration_ticks"].int_val;
         m_emotion.sentiment_analysis = emo["sentiment_analysis_enabled"].bool_val;
 
-        /* Reload idempotency: PopulateFromJSON is called on every
-         * ReloadConfig(), and these collections get rebuilt from scratch.
-         * Without clearing we doubled the baselines / triggers on every
-         * reload and the repeated triggers amplified emotional deltas.   */
         m_emotion.baselines.clear();
         m_emotion.triggers.clear();
 
@@ -742,7 +618,6 @@ void ElleConfig::PopulateFromJSON(const JsonValue& root) {
         }
     }
 
-    /* Service Config */
     const auto& svc = root["services"];
     if (!svc.is_null()) {
         m_service.iocp_threads = (uint32_t)svc["iocp_thread_count"].int_val;
@@ -768,7 +643,6 @@ void ElleConfig::PopulateFromJSON(const JsonValue& root) {
         }
     }
 
-    /* Trust Config */
     const auto& trust = root["trust"];
     if (!trust.is_null()) {
         m_trust.initial_score = (int32_t)trust["initial_score"].int_val;
@@ -780,7 +654,6 @@ void ElleConfig::PopulateFromJSON(const JsonValue& root) {
         m_trust.audit_all = trust["audit_all_actions"].bool_val;
     }
 
-    /* Memory Config */
     const auto& mem = root["memory"];
     if (!mem.is_null()) {
         m_memory.stm_capacity = (uint32_t)mem["stm_capacity"].int_val;
@@ -796,25 +669,18 @@ void ElleConfig::PopulateFromJSON(const JsonValue& root) {
         m_memory.archive_after_days = (uint32_t)mem["archive_after_days"].int_val;
     }
 
-    /* HTTP Config */
     const auto& http = root["http_server"];
     if (!http.is_null()) {
         m_http.bind_address = http["bind_address"].str_val;
         m_http.port = (uint32_t)http["port"].int_val;
         m_http.ws_path = http["websocket_path"].str_val;
         m_http.max_connections = (uint32_t)http["max_connections"].int_val;
-        /* auth_enabled: honor the JSON-defined value ONLY when the key is
-         * actually present. Previously we wrote `http["auth_enabled"].bool_val`
-         * unconditionally, which flipped auth OFF whenever the key was
-         * missing — a silent fail-open. Missing key now keeps the struct
-         * default (true = fail-closed).                                   */
+
         if (!http["auth_enabled"].is_null())
             m_http.auth_enabled = http["auth_enabled"].bool_val;
         m_http.jwt_secret = http["jwt_secret"].str_val;
         m_http.jwt_expiry_hours = (uint32_t)http["jwt_expiry_hours"].int_val;
 
-        /* Optional CORS + rate-limit + body-size knobs. Missing keys
-         * keep the struct defaults (CORS on, wildcard, no rate limit). */
         if (!http["cors_enabled"].is_null())
             m_http.cors_enabled = http["cors_enabled"].bool_val;
         if (http["cors_origins"].type == JsonType::Array) {
@@ -839,9 +705,6 @@ void ElleConfig::PopulateFromJSON(const JsonValue& root) {
     }
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * GENERIC ACCESSORS (dot-path navigation)
- *──────────────────────────────────────────────────────────────────────────────*/
 const JsonValue* ElleConfig::Navigate(const std::string& dotPath) const {
     const JsonValue* current = &m_root;
     std::istringstream iss(dotPath);

@@ -1,8 +1,3 @@
-/* ╔════════════════════════════════════════════════════════════════════════╗
- * ║                     FiestaProtoOpcodes.h                                ║
- * ║  AUTO-GENERATED — DO NOT EDIT                                            ║
- * ║  Maps every recovered Fiesta opcode (NETCOMMAND) to its C++ POD type.  ║
- * ╚════════════════════════════════════════════════════════════════════════╝ */
 #pragma once
 #include <cstdint>
 
@@ -232,5 +227,4 @@ enum class Opcode : uint16_t {
     _0x2FDB = NC_GAMBLE_SLOTMACHINE_WINRANKING_REQ,
 };
 
-/* 221 opcodes from shine_opcodes.tsv */
-}  /* namespace ElleFiesta::Proto */
+}

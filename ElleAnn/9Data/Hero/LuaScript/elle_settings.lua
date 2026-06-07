@@ -1,27 +1,3 @@
---[[═══════════════════════════════════════════════════════════════════════════
-  ElleAnn.settings.lua — Behaviour, personality, and tuning.
-
-  This file is TRUE Lua. Not a JSON object wrapped in Lua syntax — it uses
-  functions, locals, conditionals, environment lookups, helper math, and
-  declarative API surfaces (provider, drive, trigger, contagion) so you
-  can see the structure at a glance and change tuning without chasing
-  commas. Every value the C++ services read lives under the single
-  global table `ElleAnn`, which the loader serialises to the in-memory
-  config store after this script returns.
-
-  Server-side infrastructure (bind/port, ODBC DSNs, service paths, auth
-  toggles) does NOT live here — that goes in ServerInfo.txt so it's
-  the same one file Fiesta itself reads. This file is ONLY for how
-  Elle thinks and feels.
-
-  Loaded by: Shared/ElleSettingsLua.cpp via lua_State inside ElleConfig.
-  Reload:    auto-reloaded on mtime change (see lua.auto_reload below).
-  Env hooks: ELLE_DEV=1 → dev profile (looser thresholds, more chatty).
-═══════════════════════════════════════════════════════════════════════════]]
-
--- ── Helpers ────────────────────────────────────────────────────────────────
--- Time unit sugar. `seconds(5)` returns 5000 (ms). Read-only at the call
--- site, makes every duration in the file self-documenting.
 local function ms(n)       return n end
 local function seconds(n)  return n * 1000 end
 local function minutes(n)  return n * 60 * 1000 end
@@ -30,9 +6,6 @@ local function days(n)     return n * 24 * 60 * 60 * 1000 end
 local function percent(n)  return n / 100.0 end
 local function half_life_days(n) return n * 24 * 60 * 60 * 1000 end
 
--- Env sugar. `env("ELLE_LLM_PRIMARY", "groq")` reads from the process
--- environment with a default — lets an operator override a single
--- value on a one-off run without editing the file.
 local function env(name, default)
     local v = os.getenv(name)
     if v == nil or v == "" then return default end
@@ -41,10 +14,8 @@ end
 
 local IS_DEV = env("ELLE_DEV", "0") == "1"
 
--- Root table. Everything below mutates branches of this table.
 ElleAnn = {}
 
--- ── Identity ───────────────────────────────────────────────────────────────
 ElleAnn.identity = {
     name         = "Elle-Ann",
     version      = "3.0.0",
@@ -54,10 +25,6 @@ ElleAnn.identity = {
     created_date = "2025-01-01T00:00:00Z",
 }
 
--- ── LLM providers ──────────────────────────────────────────────────────────
--- Declarative `provider(name, opts)` keeps each provider self-contained
--- and lets you comment out a whole provider with a single "--" instead
--- of hunting matched braces.
 ElleAnn.llm = {
     mode                      = env("ELLE_LLM_MODE", "hybrid"),
     primary_provider          = env("ELLE_LLM_PRIMARY", "groq"),
@@ -115,9 +82,6 @@ provider("anthropic", {
     timeout_ms  = seconds(60),
 })
 
--- Gated behind enabled:false until the operator points model_path at
--- a real GGUF AND rebuilds ElleCore.Shared with ELLE_HAVE_LLAMA +
--- libllama linked. See Shared/ElleCore.Shared.vcxproj header comment.
 provider("local_llama", {
     enabled        = false,
     mode           = "llamacpp",
@@ -144,7 +108,6 @@ provider("lm_studio", {
     timeout_ms  = seconds(120),
 })
 
--- ── Emotions ───────────────────────────────────────────────────────────────
 ElleAnn.emotions = {
     decay_rate_per_tick        = 0.05,
     tick_interval_ms           = seconds(1),
@@ -173,8 +136,6 @@ ElleAnn.emotions = {
     contagion_map = {},
 }
 
--- Word-pattern → emotion amplifier. The `trigger` helper keeps each row
--- a single readable line; add/remove/tune as you watch Elle interact.
 local function trigger(pattern, emotion, delta)
     ElleAnn.emotions.triggers[#ElleAnn.emotions.triggers + 1] =
         { pattern = pattern, emotion = emotion, delta = delta }
@@ -193,7 +154,6 @@ trigger("amazing",      "wonder",          0.35)
 trigger("scared",       "protectiveness",  0.30)
 trigger("proud",        "pride",           0.30)
 
--- Emotional contagion — the perceived user state → Elle deltas.
 local function contagion(user_state, map)
     ElleAnn.emotions.contagion_map[user_state] = map
 end
@@ -204,14 +164,11 @@ contagion("user_angry",      { anxiety = 0.20, apprehension = 0.15 })
 contagion("user_curious",    { curiosity = 0.40, anticipation = 0.20 })
 contagion("user_frustrated", { empathy = 0.30, determination = 0.20 })
 
--- ── Drives ─────────────────────────────────────────────────────────────────
 ElleAnn.drives = {
     update_interval_ms = seconds(5),
     defaults = {},
 }
 
--- drive(name, initial, growth_per_tick, decay_per_tick, activation_threshold)
--- The function form makes the 4 rates impossible to confuse visually.
 local function drive(name, initial, growth, decay, threshold)
     ElleAnn.drives.defaults[name] = {
         initial   = initial,
@@ -234,7 +191,6 @@ drive("autonomy",          0.50, 0.005,  0.002,  0.80)
 drive("purpose",           0.60, 0.002,  0.001,  0.85)
 drive("homeostasis",       0.50, 0.000,  0.020,  0.40)
 
--- ── Trust ──────────────────────────────────────────────────────────────────
 ElleAnn.trust = {
     initial_score        = 5,
     max_score            = 100,
@@ -255,8 +211,6 @@ trust_level("basic",     10, 29,   { "read_file", "list_processes", "query_hardw
 trust_level("elevated",  30, 59,   { "write_file", "launch_process", "modify_settings", "set_goals" })
 trust_level("autonomous",60, 100,  { "kill_process", "modify_self", "inject_dll", "unrestricted" })
 
--- ── Memory ─────────────────────────────────────────────────────────────────
--- Note the ms-sugar: you can read these ceilings as English at a glance.
 ElleAnn.memory = {
     stm_capacity                       = 256,
     stm_decay_seconds                  = 15,
@@ -276,9 +230,7 @@ ElleAnn.memory = {
     archive_after_days                 = 90,
     archive_access_threshold           = 3,
     embedding_dimensions               = 384,
-    -- Recency ranking half-life: the rate at which a memory's
-    -- ranking weight decays. Separately defined so you can tune
-    -- the "forgetful vs sticky" feel without touching the rest.
+
     recency_half_life_ms               = half_life_days(7),
     ["3d_map"] = {
         enabled      = true,
@@ -289,7 +241,6 @@ ElleAnn.memory = {
     },
 }
 
--- ── Cognitive / reasoning ──────────────────────────────────────────────────
 ElleAnn.cognitive = {
     max_concurrent_threads         = 4,
     attention_span_seconds         = 120,
@@ -307,7 +258,6 @@ ElleAnn.cognitive = {
     reasoning_styles               = { "analytical", "creative", "empathetic", "pragmatic" },
 }
 
--- ── Self-prompt / idle introspection ───────────────────────────────────────
 ElleAnn.self_prompt = {
     enabled                   = true,
     idle_threshold_seconds    = 60,
@@ -328,7 +278,6 @@ ElleAnn.self_prompt = {
     },
 }
 
--- ── Goals ──────────────────────────────────────────────────────────────────
 ElleAnn.goals = {
     max_active_goals                = 16,
     max_sub_goals_per_goal          = 8,
@@ -339,7 +288,6 @@ ElleAnn.goals = {
     require_approval_above_priority = "high",
 }
 
--- ── World model ────────────────────────────────────────────────────────────
 ElleAnn.world_model = {
     enabled                         = true,
     max_entities                    = 1024,
@@ -351,7 +299,6 @@ ElleAnn.world_model = {
     environmental_awareness         = true,
 }
 
--- ── Ethical framework ──────────────────────────────────────────────────────
 ElleAnn.ethical = {
     enabled                         = true,
     framework                       = "consequentialist_hybrid",
@@ -376,7 +323,6 @@ ElleAnn.ethical = {
     },
 }
 
--- ── Hardware monitoring ────────────────────────────────────────────────────
 ElleAnn.hardware = {
     monitor_cpu             = true,
     monitor_memory          = true,
@@ -389,25 +335,20 @@ ElleAnn.hardware = {
     alert_disk_threshold    = 90,
 }
 
--- ── Queue worker tunables ──────────────────────────────────────────────────
 ElleAnn.queues = {
     max_retries         = 3,
     max_action_attempts = 3,
 }
 
--- ── Action service ─────────────────────────────────────────────────────────
 ElleAnn.action = {
     default_timeout_ms = minutes(1),
-    -- filesystem_root derives from install root set in ServerInfo.txt;
-    -- left nil here to force the C++ side to fall back on that path.
+
     filesystem_root    = nil,
 }
 
--- ── Family engine ──────────────────────────────────────────────────────────
 ElleAnn.family = {
     tick_ms            = seconds(30),
-    -- Pregnancy / child filesystem roots live under the install root
-    -- (nil = use default).
+
     pregnancies_root   = nil,
     children_root      = nil,
     first_child_port   = 9200,
@@ -416,42 +357,18 @@ ElleAnn.family = {
     allow_recursion    = 0,
 }
 
--- ── Fiesta server compatibility ────────────────────────────────────────────
--- Floating cipher selector — flip this one value to swap between the two
--- known Fiesta network cipher families.  Saves rebuilding when you move
--- between deployment targets.
---
--- Valid values (case-insensitive):
---    "usa"   → DragonFiesta-Rewrite (zepheus_fiesta 2012):
---              499-byte rolling XOR table.  The default; matches every
---              public Fiesta source release derived from zepheus_fiesta.
---    "china" → CN2012 (5ZoneServer2.exe):
---              MSVC LCG cipher (state * 0x343FD + 0x269EC3, >>16, &0x7FFF).
---              Use this only when talking to a Chinese 2012 server fork.
---
--- The Fiesta service reads this single field via Shared/ElleLuaScalarReader
--- and constructs the matching cipher at session start.  Hot-reload safe:
--- next handshake picks up the new value.
 ElleAnn.fiesta = {
     region = "usa",
-    -- Kept for forward-compat with the eventual full Lua bridge — these
-    -- fields are read only by the regex stopgap until the full bridge
-    -- lands (P2 in the roadmap).  Don't add new keys here without
-    -- updating Shared/ElleLuaScalarReader.cpp.
+
     headless_client_enabled = false,
     headless_tick_hz        = 50,
 }
 
--- ── Dev profile overrides ──────────────────────────────────────────────────
--- Example of a genuine Lua conditional — can't do this in a flat JSON.
 if IS_DEV then
-    ElleAnn.self_prompt.min_interval_seconds = 10  -- chattier in dev
+    ElleAnn.self_prompt.min_interval_seconds = 10
     ElleAnn.cognitive.self_reflection_depth  = 5
     ElleAnn.emotions.sentiment_analysis_enabled = true
     ElleAnn.llm.stream_responses = true
 end
 
--- Return the root table so the C++ loader can pick it up as a single
--- value instead of fishing it out of _G. Lua idiomatic: a module
--- returns its export.
 return ElleAnn

@@ -24,22 +24,6 @@ import com.elleann.android.ui.theme.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/**
- * SystemHealthScreen — single-pane diagnostics view backed by:
- *   - GET /api/diag/health      (aggregator + issues[])
- *   - GET /api/diag/wires       (in-process IPC liveness)
- *   - GET /api/diag/heartbeats  (cross-process Workers truth)
- *
- * Auto-refreshes every 10 s while visible. The top "issue strip" surfaces
- * anything the server flagged in `health.issues`; the per-section tables
- * below let the operator pinpoint exactly which subsystem is misbehaving.
- *
- * Why a separate screen and not folded into Diagnostics:
- *   - Diagnostics is a static route catalogue (rarely changes).
- *   - Health is a *live* status view that needs a poll loop.
- *   Mixing them caused the previous Diagnostics screen to flicker
- *   under load.
- */
 private fun AppContainerExtended.adminApiOrFallback(): com.elleann.android.data.ElleApiExtended =
     adminApi ?: extendedApi
 
@@ -57,7 +41,6 @@ fun SystemHealthScreen(
     var refreshTick by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
 
-    // Auto-refresh loop — runs every 10 s while this composable is mounted.
     LaunchedEffect(Unit) {
         while (true) {
             val api = container.adminApiOrFallback()
@@ -106,7 +89,7 @@ fun SystemHealthScreen(
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
-            // Used to force re-render on refresh.
+
             userScrollEnabled = true,
         ) {
             item("issues") {

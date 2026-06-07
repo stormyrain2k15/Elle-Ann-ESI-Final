@@ -1,11 +1,3 @@
-/*******************************************************************************
- * ElleDB_Queues.cpp — IntentQueue / ActionQueue / Queue Snapshot
- *
- * Part of the ElleDB namespace — split from the monolithic ElleSQLConn.cpp
- * so each domain can be audited and edited independently. Shares the
- * same ODBC connection pool (ElleSQLPool::Instance()) and the same
- * symbol namespace, so callers need no changes.
- ******************************************************************************/
 #include "ElleSQLConn.h"
 #include "ElleLogger.h"
 #include "ElleConfig.h"
@@ -25,9 +17,7 @@
 namespace ElleDB {
 
 bool SubmitIntent(const ELLE_INTENT_RECORD& intent) {
-    /* Parameterised — description/parameters are user-originated strings and
-     * would break the query (and be a classic injection surface) when built
-     * via concatenation.                                                    */
+
     return ElleSQLPool::Instance().QueryParams(
         "INSERT INTO ElleCore.dbo.IntentQueue "
         "(IntentType, Status, SourceDrive, Urgency, Confidence, Description, Parameters, "
@@ -48,11 +38,7 @@ bool SubmitIntent(const ELLE_INTENT_RECORD& intent) {
 
 bool GetPendingIntents(std::vector<ELLE_INTENT_RECORD>& out, uint32_t maxCount) {
     out.clear();
-    /* Self-healing schema: add the ProcessingMs column on first use if it
-     * isn't already there. Keeps fresh databases working without asking
-     * the operator to manually run ElleAnn_QueueReaperDelta.sql. The
-     * guard is IF NOT EXISTS so subsequent startups are a cheap metadata
-     * query, not a real ALTER. */
+
     ElleSQLPool::Instance().Exec(
         "IF NOT EXISTS (SELECT 1 FROM sys.columns "
         "  WHERE object_id = OBJECT_ID(N'ElleCore.dbo.IntentQueue') "
@@ -65,24 +51,6 @@ bool GetPendingIntents(std::vector<ELLE_INTENT_RECORD>& out, uint32_t maxCount) 
         "CREATE INDEX IX_IntentQueue_Processing "
         "  ON ElleCore.dbo.IntentQueue (Status, ProcessingMs);");
 
-    /* ATOMIC CLAIM-ON-SELECT.
-     *
-     * Previously this called sp_GetPendingIntents which is a plain
-     * SELECT WHERE Status=0 — the row stayed status=PENDING until the
-     * consumer (Cognitive) got around to calling UpdateIntentStatus().
-     * At a 500 ms poll tick any consumer that takes longer than that
-     * (LLM calls routinely do) would see its row re-selected and
-     * re-dispatched on the next QueueWorker tick, duplicating work.
-     *
-     * The SQL-Server-native fix: flip status → PROCESSING and RETURN
-     * the selected rows in a single statement. ROWLOCK + READPAST let
-     * two pollers on different threads carve up the queue cleanly
-     * without blocking each other, and the UPDATE...OUTPUT guarantees
-     * each row is observed by exactly one caller.
-     *
-     * ProcessingMs is stamped in the same UPDATE so the reaper can
-     * measure consumer-deadline drift from claim time, not row
-     * creation time.                                                   */
     auto rs = ElleSQLPool::Instance().QueryParams(
         "UPDATE TOP (" + std::to_string(maxCount) + ") q WITH (ROWLOCK, READPAST) "
         "SET Status = ?, ProcessingMs = ? "
@@ -121,32 +89,12 @@ bool UpdateIntentStatus(uint64_t intentId, ELLE_INTENT_STATUS status, const std:
         {std::to_string(intentId), std::to_string(status), response}).success;
 }
 
-/* Forward declaration — EnsureActionQueueTable is defined further down the
- * file alongside the other action-queue helpers; the reaper + snapshot code
- * below needs it available early.                                          */
 static void EnsureActionQueueTable();
 
-/*──────────────────────────────────────────────────────────────────────────────
- * TIMEOUT REAPER — intents stuck in PROCESSING past their TimeoutMs.
- *
- * The atomic claim-on-select flipped their Status from PENDING to
- * PROCESSING; if the consumer never closed the loop (crash, hang,
- * lost IPC), the row stayed there forever. We re-queue rows whose
- * effective deadline (CreatedMs + max(TimeoutMs, defaultTimeoutMs))
- * has passed, with a hard cap on RetryCount that routes them to
- * INTENT_FAILED instead of an infinite retry loop.
- *
- * Returns the number of rows reaped (re-queued + failed).
- *──────────────────────────────────────────────────────────────────────────────*/
 uint32_t ReapStaleIntents(uint32_t defaultTimeoutMs, uint32_t maxRetries) {
     int64_t now = (int64_t)ELLE_MS_NOW();
     auto& pool = ElleSQLPool::Instance();
 
-    /* Stale means: the row was flipped to PROCESSING (ProcessingMs stamped
-     * by GetPendingIntents) more than TimeoutMs ago and the consumer
-     * never closed the loop. If ProcessingMs is NULL (legacy rows
-     * written before the delta), fall back to CreatedMs so at least
-     * eventually they get handled — but new code always stamps it.   */
     auto rs1 = pool.QueryParams(
         "UPDATE ElleCore.dbo.IntentQueue WITH (ROWLOCK) "
         "SET Status = ?, CompletedMs = ?, Response = N'timeout_max_retries' "
@@ -164,8 +112,6 @@ uint32_t ReapStaleIntents(uint32_t defaultTimeoutMs, uint32_t maxRetries) {
         });
     uint32_t failed = rs1.success ? (uint32_t)rs1.rows_affected : 0;
 
-    /* Step 2 — requeue everyone else back to PENDING, clear ProcessingMs
-     * (next claim will re-stamp it), and bump RetryCount. */
     auto rs2 = pool.QueryParams(
         "UPDATE ElleCore.dbo.IntentQueue WITH (ROWLOCK) "
         "SET Status = ?, RetryCount = RetryCount + 1, ProcessingMs = NULL "
@@ -185,20 +131,11 @@ uint32_t ReapStaleIntents(uint32_t defaultTimeoutMs, uint32_t maxRetries) {
     return failed + requeued;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * TIMEOUT REAPER — actions stuck in LOCKED / EXECUTING past timeout_ms.
- *
- * Same pattern as intents: rows past max attempts go to ACTION_TIMEOUT
- * (terminal); otherwise they're re-queued with attempts += 1.
- * started_ms is what the atomic claim set; we measure from there.
- *──────────────────────────────────────────────────────────────────────────────*/
 uint32_t ReapStaleActions(uint32_t defaultTimeoutMs, uint32_t maxAttempts) {
     int64_t now = (int64_t)ELLE_MS_NOW();
     auto& pool = ElleSQLPool::Instance();
     EnsureActionQueueTable();
 
-    /* action_queue schema we lazy-create doesn't have an 'attempts'
-     * column today — add it on demand so this reaper can enforce caps. */
     pool.Exec(
         "IF NOT EXISTS ("
         "  SELECT 1 FROM sys.columns "
@@ -207,7 +144,6 @@ uint32_t ReapStaleActions(uint32_t defaultTimeoutMs, uint32_t maxAttempts) {
         "ALTER TABLE ElleCore.dbo.action_queue "
         "  ADD attempts INT NOT NULL DEFAULT 0;");
 
-    /* Terminal-timeout pass. */
     auto rs1 = pool.QueryParams(
         "UPDATE ElleCore.dbo.action_queue WITH (ROWLOCK) "
         "SET status = ?, completed_ms = ?, "
@@ -228,7 +164,6 @@ uint32_t ReapStaleActions(uint32_t defaultTimeoutMs, uint32_t maxAttempts) {
         });
     uint32_t failed = rs1.success ? (uint32_t)rs1.rows_affected : 0;
 
-    /* Re-queue pass. */
     auto rs2 = pool.QueryParams(
         "UPDATE ElleCore.dbo.action_queue WITH (ROWLOCK) "
         "SET status = ?, attempts = attempts + 1, started_ms = NULL "
@@ -250,18 +185,12 @@ uint32_t ReapStaleActions(uint32_t defaultTimeoutMs, uint32_t maxAttempts) {
     return failed + requeued;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * QUEUE DIAGNOSTICS — cheap COUNT(*) / windowed COUNT(*) reads for the
- * /api/diag/queues endpoint. One connection, one batched query each for
- * intents, actions, hardware_actions.
- *──────────────────────────────────────────────────────────────────────────────*/
 bool GetQueueSnapshot(QueueSnapshot& out) {
     out = {};
     int64_t now      = (int64_t)ELLE_MS_NOW();
     int64_t hourAgo  = now - 3600000LL;
     auto& pool = ElleSQLPool::Instance();
 
-    /* Intents ---------------------------------------------------------- */
     auto ri = pool.QueryParams(
         "SELECT "
         "  SUM(CASE WHEN Status = ? THEN 1 ELSE 0 END) AS pending, "
@@ -288,7 +217,6 @@ bool GetQueueSnapshot(QueueSnapshot& out) {
         out.intent_stale_processing = (uint32_t)r.GetIntOr(4, 0);
     }
 
-    /* Actions ---------------------------------------------------------- */
     EnsureActionQueueTable();
     auto ra = pool.QueryParams(
         "SELECT "
@@ -325,7 +253,6 @@ bool GetQueueSnapshot(QueueSnapshot& out) {
         out.action_stale_locked = (uint32_t)r.GetIntOr(6, 0);
     }
 
-    /* Hardware actions (pending vs dispatched) ------------------------- */
     auto rh = pool.Query(
         "IF EXISTS (SELECT 1 FROM sys.tables WHERE name = 'hardware_actions') "
         "  SELECT "
@@ -340,12 +267,6 @@ bool GetQueueSnapshot(QueueSnapshot& out) {
     return true;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * ACTIONS — the ActionQueue table is CamelCase in ElleAnn_Schema.sql but
- * every other live table we interact with is snake_case. We lazy-create a
- * snake_case dbo.action_queue to stay consistent with dbo.memory,
- * dbo.world_entity, dbo.hardware_actions, etc.
- *──────────────────────────────────────────────────────────────────────────────*/
 static void EnsureActionQueueTable() {
     ElleSQLPool::Instance().Exec(
         "IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'action_queue') "
@@ -388,12 +309,7 @@ bool SubmitAction(const ELLE_ACTION_RECORD& action) {
 bool GetPendingActions(std::vector<ELLE_ACTION_RECORD>& out, uint32_t maxCount) {
     out.clear();
     EnsureActionQueueTable();
-    /* Atomic claim — flip status QUEUED → LOCKED and return the
-     * claimed rows in a single statement. Two parallel callers (or a
-     * caller + a tick that fires before the first one finishes) can't
-     * collide on the same row any more, because ROWLOCK+READPAST lets
-     * the second caller skip the rows the first one is already
-     * updating, and the OUTPUT clause emits each row exactly once.   */
+
     auto rs = ElleSQLPool::Instance().QueryParams(
         "UPDATE TOP (" + std::to_string(maxCount) + ") q WITH (ROWLOCK, READPAST) "
         "SET status = ?, started_ms = ? "
@@ -437,8 +353,6 @@ bool UpdateActionStatus(uint64_t actionId, ELLE_ACTION_STATUS status,
                      status == ACTION_CANCELLED);
     bool starting = (status == ACTION_LOCKED || status == ACTION_EXECUTING);
 
-    /* Build a single UPDATE with only the columns that change for this
-     * particular transition — avoids the CAST-'0'=1 dance entirely.       */
     std::string sql = "UPDATE ElleCore.dbo.action_queue SET status = ?";
     std::vector<std::string> params = { std::to_string((int)status) };
     if (!result.empty()) {
@@ -458,4 +372,4 @@ bool UpdateActionStatus(uint64_t actionId, ELLE_ACTION_STATUS status,
     return ElleSQLPool::Instance().QueryParams(sql, params).success;
 }
 
-} /* namespace ElleDB */
+}

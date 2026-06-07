@@ -1,31 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * ElleQR.cpp — QR Code Model 2 encoder (byte mode, versions 1–10)
- *
- *   Spec: ISO/IEC 18004:2015.
- *
- *   Pipeline:
- *     1. Pick smallest version V ∈ [1..10] whose byte-mode capacity at
- *        the chosen ECC level covers the payload.
- *     2. Build bitstream:
- *          - Mode indicator 0100 (byte mode)
- *          - Character count indicator (8 or 16 bits by version)
- *          - Payload bytes (8 bits each)
- *          - Terminator 0000 (up to 4 bits, truncated if near capacity)
- *          - Byte align to 8
- *          - Padding bytes alternating 0xEC, 0x11 until capacity
- *     3. Split into blocks per ECC-table §9.3, compute Reed-Solomon
- *        codewords per block over GF(256) with the QR primitive
- *        polynomial 0x11D, interleave data+ECC codewords.
- *     4. Draw the matrix:
- *          - Three finder patterns + separators
- *          - Timing patterns
- *          - Alignment pattern (appears from version 2 onward)
- *          - Dark module
- *          - Reserve format + version info
- *          - Zig-zag place data codewords
- *     5. Apply the best of 8 masks by minimum penalty score per §7.8.3.
- *     6. Fill format info and (for V ≥ 7) version info.
- *══════════════════════════════════════════════════════════════════════════════*/
 #include "ElleQR.h"
 
 #include <array>
@@ -37,49 +9,38 @@
 namespace ElleQR {
 namespace {
 
-/*──────────────────────── Version capacity tables (bytes) ──────────────────*/
-/* From ISO/IEC 18004 Table 7: byte-mode data-bit capacity per version per
- * ECC. Divide by 8 and subtract mode+count overhead (4 + 8or16) to get
- * usable bytes. We hardcode the final byte capacity for V=1..10.      */
 static const int kByteCapacity[10][4] = {
-    /*        L    M    Q    H     <-- ECC */
-    /*V1*/  { 17,  14,  11,   7 },
-    /*V2*/  { 32,  26,  20,  14 },
-    /*V3*/  { 53,  42,  32,  24 },
-    /*V4*/  { 78,  62,  46,  34 },
-    /*V5*/  {106,  84,  60,  44 },
-    /*V6*/  {134, 106,  74,  58 },
-    /*V7*/  {154, 122,  86,  64 },
-    /*V8*/  {192, 152, 108,  84 },
-    /*V9*/  {230, 180, 130,  98 },
-    /*V10*/ {271, 213, 151, 119 }
+
+      { 17,  14,  11,   7 },
+      { 32,  26,  20,  14 },
+      { 53,  42,  32,  24 },
+      { 78,  62,  46,  34 },
+      {106,  84,  60,  44 },
+      {134, 106,  74,  58 },
+      {154, 122,  86,  64 },
+      {192, 152, 108,  84 },
+      {230, 180, 130,  98 },
+     {271, 213, 151, 119 }
 };
 
-/* Total number of data codewords (data + ECC) per version — from table 1
- * (== number of 8-bit codewords in the matrix, excluding format/version
- *  info and function patterns).                                       */
 static const int kRawCodewords[10] = {
     26, 44, 70, 100, 134, 172, 196, 242, 292, 346
 };
 
-/* Per-version-per-ECC: {num_blocks_g1, data_cw_g1, num_blocks_g2, data_cw_g2,
- * ecc_cw_per_block}. From Table 9. Group 2 has data_cw_g1 + 1 per block. */
 struct EccCfg { int g1_blocks; int g1_dataCw; int g2_blocks; int g2_dataCw; int eccCw; };
 static const EccCfg kEcc[10][4] = {
-    /* V1  */ {{1,19,0,0,7 },{1,16,0,0,10},{1,13,0,0,13},{1, 9,0,0,17}},
-    /* V2  */ {{1,34,0,0,10},{1,28,0,0,16},{1,22,0,0,22},{1,16,0,0,28}},
-    /* V3  */ {{1,55,0,0,15},{1,44,0,0,26},{2,17,0,0,18},{2,13,0,0,22}},
-    /* V4  */ {{1,80,0,0,20},{2,32,0,0,18},{2,24,0,0,26},{4, 9,0,0,16}},
-    /* V5  */ {{1,108,0,0,26},{2,43,0,0,24},{2,15,2,16,18},{2,11,2,12,22}},
-    /* V6  */ {{2,68,0,0,18},{4,27,0,0,16},{4,19,0,0,24},{4,15,0,0,28}},
-    /* V7  */ {{2,78,0,0,20},{4,31,0,0,18},{2,14,4,15,18},{4,13,1,14,26}},
-    /* V8  */ {{2,97,0,0,24},{2,38,2,39,22},{4,18,2,19,22},{4,14,2,15,26}},
-    /* V9  */ {{2,116,0,0,30},{3,36,2,37,22},{4,16,4,17,20},{4,12,4,13,24}},
-    /* V10 */ {{2,68,2,69,18},{4,43,1,44,26},{6,19,2,20,24},{6,15,2,16,28}}
+     {{1,19,0,0,7 },{1,16,0,0,10},{1,13,0,0,13},{1, 9,0,0,17}},
+     {{1,34,0,0,10},{1,28,0,0,16},{1,22,0,0,22},{1,16,0,0,28}},
+     {{1,55,0,0,15},{1,44,0,0,26},{2,17,0,0,18},{2,13,0,0,22}},
+     {{1,80,0,0,20},{2,32,0,0,18},{2,24,0,0,26},{4, 9,0,0,16}},
+     {{1,108,0,0,26},{2,43,0,0,24},{2,15,2,16,18},{2,11,2,12,22}},
+     {{2,68,0,0,18},{4,27,0,0,16},{4,19,0,0,24},{4,15,0,0,28}},
+     {{2,78,0,0,20},{4,31,0,0,18},{2,14,4,15,18},{4,13,1,14,26}},
+     {{2,97,0,0,24},{2,38,2,39,22},{4,18,2,19,22},{4,14,2,15,26}},
+     {{2,116,0,0,30},{3,36,2,37,22},{4,16,4,17,20},{4,12,4,13,24}},
+     {{2,68,2,69,18},{4,43,1,44,26},{6,19,2,20,24},{6,15,2,16,28}}
 };
 
-/*──────────────────────── GF(256) Reed-Solomon ─────────────────────────────*/
-/* Log/antilog tables for GF(256) with primitive 0x11D (x^8+x^4+x^3+x^2+1). */
 static uint8_t gfExp[512];
 static uint8_t gfLog[256];
 static bool    gfInit = false;
@@ -100,7 +61,6 @@ static uint8_t gfMul(uint8_t a, uint8_t b) {
     return gfExp[gfLog[a] + gfLog[b]];
 }
 
-/* Build the generator polynomial for `degree` ECC codewords. */
 static std::vector<uint8_t> rsGenerator(int degree) {
     initGf();
     std::vector<uint8_t> g(1, 1);
@@ -115,7 +75,6 @@ static std::vector<uint8_t> rsGenerator(int degree) {
     return g;
 }
 
-/* Compute ECC codewords for a data block. */
 static std::vector<uint8_t> rsCompute(const std::vector<uint8_t>& data, int eccLen) {
     auto gen = rsGenerator(eccLen);
     std::vector<uint8_t> out((size_t)eccLen, 0);
@@ -130,7 +89,6 @@ static std::vector<uint8_t> rsCompute(const std::vector<uint8_t>& data, int eccL
     return out;
 }
 
-/*──────────────────────── Bit buffer helper ────────────────────────────────*/
 struct BitBuf {
     std::vector<bool> bits;
     void append(uint32_t value, int numBits) {
@@ -140,10 +98,6 @@ struct BitBuf {
     }
 };
 
-/*──────────────────────── Alignment patterns ───────────────────────────────*/
-/* Centre coordinates for alignment patterns (annex E). V1 has none; V2+
- * has a single pattern at (size-7, size-7); V7+ has 6 patterns; V10 has 6
- * patterns in a 3x3 grid minus the three finder corners.                */
 static std::vector<int> alignPositions(int version) {
     if (version == 1) return {};
     int n;
@@ -157,31 +111,30 @@ static std::vector<int> alignPositions(int version) {
         default:
             return {};
     }
-    /* Only V1-10 supported here; coordinates taken from Annex E. */
+
     static const int t[11][3] = {
-        /*V1 */ { 0, 0, 0 },
-        /*V2 */ { 6,18, 0 },
-        /*V3 */ { 6,22, 0 },
-        /*V4 */ { 6,26, 0 },
-        /*V5 */ { 6,30, 0 },
-        /*V6 */ { 6,34, 0 },
-        /*V7 */ { 6,22,38 },
-        /*V8 */ { 6,24,42 },
-        /*V9 */ { 6,26,46 },
-        /*V10*/ { 6,28,50 },
-        /*    */{ 0, 0, 0 }
+         { 0, 0, 0 },
+         { 6,18, 0 },
+         { 6,22, 0 },
+         { 6,26, 0 },
+         { 6,30, 0 },
+         { 6,34, 0 },
+         { 6,22,38 },
+         { 6,24,42 },
+         { 6,26,46 },
+         { 6,28,50 },
+        { 0, 0, 0 }
     };
     std::vector<int> out;
     for (int i = 0; i < n; i++) out.push_back(t[version - 1][i]);
     return out;
 }
 
-/*──────────────────────── Matrix primitives ────────────────────────────────*/
 class Matrix {
 public:
     int size;
-    std::vector<uint8_t> mod;     /* 0=light, 1=dark              */
-    std::vector<uint8_t> res;     /* 1 where function-pattern     */
+    std::vector<uint8_t> mod;
+    std::vector<uint8_t> res;
     Matrix(int s) : size(s), mod((size_t)s*s,0), res((size_t)s*s,0) {}
     void set(int x, int y, bool v, bool reserved=false) {
         mod[(size_t)y*size + (size_t)x] = v ? 1 : 0;
@@ -212,26 +165,24 @@ static void drawAlignment(Matrix& m, int cx, int cy) {
     }
 }
 
-/* Format info bits, 15-bit BCH with 10-bit ECC + 5-bit ECC-level||mask
- * XORed with 0x5412 per §8.9. Hardcoded table: [eccLevel][mask]. */
 static const uint16_t kFormatBits[4][8] = {
-    /* L (01) */ {0x77C4,0x72F3,0x7DAA,0x789D,0x662F,0x6318,0x6C41,0x6976},
-    /* M (00) */ {0x5412,0x5125,0x5E7C,0x5B4B,0x45F9,0x40CE,0x4F97,0x4AA0},
-    /* Q (11) */ {0x355F,0x3068,0x3F31,0x3A06,0x24B4,0x2183,0x2EDA,0x2BED},
-    /* H (10) */ {0x1689,0x13BE,0x1CE7,0x19D0,0x0762,0x0255,0x0D0C,0x083B}
+     {0x77C4,0x72F3,0x7DAA,0x789D,0x662F,0x6318,0x6C41,0x6976},
+     {0x5412,0x5125,0x5E7C,0x5B4B,0x45F9,0x40CE,0x4F97,0x4AA0},
+     {0x355F,0x3068,0x3F31,0x3A06,0x24B4,0x2183,0x2EDA,0x2BED},
+     {0x1689,0x13BE,0x1CE7,0x19D0,0x0762,0x0255,0x0D0C,0x083B}
 };
-/* Version info (V7+) — 18-bit BCH per §8.10. For V=7..10 only. */
+
 static const uint32_t kVersionBits[4] = {
-    /*V7 */ 0x07C94, /*V8 */ 0x085BC, /*V9 */ 0x09A99, /*V10*/ 0x0A4D3
+     0x07C94,  0x085BC,  0x09A99,  0x0A4D3
 };
 
 static void drawFunctionPatterns(Matrix& m, int version) {
     int s = m.size;
-    /* Finder patterns */
+
     drawFinder(m, 3, 3);
     drawFinder(m, s - 4, 3);
     drawFinder(m, 3, s - 4);
-    /* Separators (light row/col next to finders) — marked reserved. */
+
     for (int i = 0; i < 8; i++) {
         if (i < s) {
             m.set(7, i, false, true); m.set(i, 7, false, true);
@@ -239,36 +190,32 @@ static void drawFunctionPatterns(Matrix& m, int version) {
             m.set(7, s - 1 - i, false, true); m.set(i, s - 8, false, true);
         }
     }
-    /* Timing patterns */
+
     for (int i = 8; i < s - 8; i++) {
         bool dark = (i % 2 == 0);
         m.set(6, i, dark, true);
         m.set(i, 6, dark, true);
     }
-    /* Alignment patterns (skip if overlaps with finder). */
+
     auto pos = alignPositions(version);
     for (size_t i = 0; i < pos.size(); i++) {
         for (size_t j = 0; j < pos.size(); j++) {
             int cx = pos[j], cy = pos[i];
-            /* Skip the three corners where finders live. */
+
             if ((cx == 6 && cy == 6) ||
                 (cx == 6 && cy == s - 7) ||
                 (cx == s - 7 && cy == 6)) continue;
             drawAlignment(m, cx, cy);
         }
     }
-    /* Dark module (always at (8, 4*V+9)). */
+
     m.set(8, 4 * version + 9, true, true);
 
-    /* Reserve format strips (15 modules each side of top-left finder +
-     * split across corners). We mark them reserved here (color = 0) and
-     * fill in actual bits later in drawFormat(). */
     for (int i = 0; i < 9; i++) m.set(8, i, false, true);
     for (int i = 0; i < 8; i++) m.set(i, 8, false, true);
     for (int i = 0; i < 7; i++) m.set(8, s - 1 - i, false, true);
     for (int i = 0; i < 8; i++) m.set(s - 1 - i, 8, false, true);
 
-    /* Version info reservation for V7+ (6x3 top-right + 3x6 bottom-left). */
     if (version >= 7) {
         for (int y = 0; y < 6; y++)
             for (int x = 0; x < 3; x++) {
@@ -281,16 +228,16 @@ static void drawFunctionPatterns(Matrix& m, int version) {
 static void drawFormat(Matrix& m, Ecc ecc, int mask) {
     uint16_t bits = kFormatBits[(int)ecc][mask];
     int s = m.size;
-    /* Top-left L strip: 0..5, then skip 6, 7..8 */
+
     for (int i = 0; i <= 5; i++) m.set(8, i, ((bits >> i) & 1) != 0);
     m.set(8, 7, ((bits >> 6) & 1) != 0);
     m.set(8, 8, ((bits >> 7) & 1) != 0);
     m.set(7, 8, ((bits >> 8) & 1) != 0);
     for (int i = 9; i < 15; i++) m.set(14 - i, 8, ((bits >> i) & 1) != 0);
-    /* Split section across right + bottom-left */
+
     for (int i = 0; i < 8; i++)  m.set(s - 1 - i, 8, ((bits >> i) & 1) != 0);
     for (int i = 8; i < 15; i++) m.set(8, s - 15 + i, ((bits >> i) & 1) != 0);
-    m.set(8, s - 8, true);  /* "dark module" — spec requires this bit on  */
+    m.set(8, s - 8, true);
 }
 
 static void drawVersion(Matrix& m, int version) {
@@ -305,21 +252,17 @@ static void drawVersion(Matrix& m, int version) {
     }
 }
 
-/* Zig-zag place codeword bits starting from bottom-right corner.
- * Column pairs skip x=6 (vertical timing). */
 static void drawData(Matrix& m, const std::vector<uint8_t>& codewords) {
     int s = m.size;
     size_t bitIdx = 0;
     int totalBits = (int)codewords.size() * 8;
     int x = s - 1;
     while (x > 0) {
-        if (x == 6) x--;       /* skip vertical timing column */
+        if (x == 6) x--;
         for (int step = 0; step < s; step++) {
             for (int dx = 0; dx < 2; dx++) {
                 int cx = x - dx;
-                /* Direction: odd pair-groups go down, even go up. Our
-                 * column pairs are (x, x-1) and we alternate based on
-                 * which pair we're in. */
+
                 bool upward = (((x + 1) & 2) == 0);
                 int cy = upward ? (s - 1 - step) : step;
                 if (m.reserved(cx, cy)) continue;
@@ -361,11 +304,10 @@ static void applyMask(Matrix& m, int mask) {
     }
 }
 
-/* Penalty scoring §7.8.3. Returns higher = worse. */
 static int penalty(const Matrix& m) {
     int s = m.size;
     int p = 0;
-    /* N1: runs of same colour ≥5 in a row/col (5 → 3, each extra → +1) */
+
     for (int y = 0; y < s; y++) {
         int run = 1; bool cur = m.get(0, y);
         for (int x = 1; x < s; x++) {
@@ -382,7 +324,7 @@ static int penalty(const Matrix& m) {
             else          { run = 1; cur = b; }
         }
     }
-    /* N2: 2x2 blocks of one colour (3 each) */
+
     for (int y = 0; y < s - 1; y++) {
         for (int x = 0; x < s - 1; x++) {
             bool c = m.get(x, y);
@@ -390,17 +332,15 @@ static int penalty(const Matrix& m) {
                 p += 3;
         }
     }
-    /* N3: 1:1:3:1:1 finder-like pattern (40 each). We scan horiz + vert. */
+
     auto match = [&](int x, int y, int dx, int dy) {
-        /* pattern lengths [1,1,3,1,1] of alternating colour starting dark,
-         * followed (or preceded) by 4 light modules. */
+
         const int pat[5] = {1,1,3,1,1};
-        /* Simpler proxy: look for dark-light-dark-dark-dark-light-dark
-         * followed by 4 lights. That's the 7+4 = 11-module signature.    */
+
         int total = 11;
         int endx = x + dx * (total - 1), endy = y + dy * (total - 1);
         if (endx < 0 || endx >= s || endy < 0 || endy >= s) return false;
-        /* 7-module finder half */
+
         int idx = 0;
         for (int seg = 0; seg < 5; seg++) {
             bool dark = (seg % 2 == 0);
@@ -411,7 +351,7 @@ static int penalty(const Matrix& m) {
                 idx++;
             }
         }
-        /* 4 light modules after */
+
         for (int k = 0; k < 4; k++) {
             int cx = x + dx * idx;
             int cy = y + dy * idx;
@@ -425,7 +365,7 @@ static int penalty(const Matrix& m) {
             if (match(x, y, 1, 0)) p += 40;
             if (match(x, y, 0, 1)) p += 40;
         }
-    /* N4: dark-module ratio deviation. */
+
     int dark = 0;
     for (int i = 0; i < s * s; i++) if (m.mod[i]) dark++;
     int pct = (dark * 100) / (s * s);
@@ -437,17 +377,16 @@ static int penalty(const Matrix& m) {
 
 static Matrix copyMatrix(const Matrix& src) { return src; }
 
-}  /* anonymous namespace */
+}
 
-/*──────────────────────── Public Encode() ──────────────────────────────────*/
 Code Encode(const std::string& data, Ecc ecc) {
-    /* 1. pick version */
+
     int bytes = (int)data.size();
     int version = 0;
     for (int v = 1; v <= 10; v++) {
         if (bytes <= kByteCapacity[v - 1][(int)ecc]) { version = v; break; }
     }
-    if (version == 0) return {};   /* too large for V10 */
+    if (version == 0) return {};
 
     int size = 17 + 4 * version;
     int totalDataCw = kRawCodewords[version - 1];
@@ -455,32 +394,30 @@ Code Encode(const std::string& data, Ecc ecc) {
     int totalBlocks = cfg.g1_blocks + cfg.g2_blocks;
     int dataCwTotal = cfg.g1_blocks * cfg.g1_dataCw + cfg.g2_blocks * cfg.g2_dataCw;
 
-    /* 2. build bitstream */
     BitBuf bb;
-    bb.append(0b0100, 4);                               /* byte mode */
-    int cciBits = (version <= 9) ? 8 : 16;              /* table 3 */
+    bb.append(0b0100, 4);
+    int cciBits = (version <= 9) ? 8 : 16;
     bb.append((uint32_t)bytes, cciBits);
     for (int i = 0; i < bytes; i++) bb.append((uint8_t)data[i], 8);
     int cap = dataCwTotal * 8;
-    /* terminator */
+
     int term = std::min(4, cap - (int)bb.bits.size());
     if (term > 0) bb.append(0, term);
-    /* byte-align */
+
     while (bb.bits.size() % 8 != 0) bb.bits.push_back(false);
-    /* pad bytes 0xEC / 0x11 */
+
     uint8_t pad[2] = {0xEC, 0x11};
     int padIdx = 0;
     while ((int)bb.bits.size() < cap) {
         bb.append(pad[padIdx], 8);
         padIdx = 1 - padIdx;
     }
-    /* 3. pack into codewords */
+
     std::vector<uint8_t> raw(dataCwTotal, 0);
     for (size_t i = 0; i < bb.bits.size(); i++) {
         if (bb.bits[i]) raw[i / 8] |= (uint8_t)(1 << (7 - (i % 8)));
     }
 
-    /* Split into blocks. */
     std::vector<std::vector<uint8_t>> dataBlocks, eccBlocks;
     int off = 0;
     for (int b = 0; b < totalBlocks; b++) {
@@ -491,7 +428,6 @@ Code Encode(const std::string& data, Ecc ecc) {
         eccBlocks.push_back(rsCompute(db, cfg.eccCw));
     }
 
-    /* 4. interleave */
     std::vector<uint8_t> interleaved;
     interleaved.reserve((size_t)totalDataCw);
     int maxDataCw = std::max(cfg.g1_dataCw,
@@ -507,13 +443,11 @@ Code Encode(const std::string& data, Ecc ecc) {
         }
     }
 
-    /* 5. draw + pick best mask */
     Matrix base(size);
     drawFunctionPatterns(base, version);
     if (version >= 7) drawVersion(base, version);
     drawData(base, interleaved);
 
-    /* For mask selection, draw format with placeholder and pick lowest penalty. */
     int bestMask = 0;
     int bestPenalty = INT32_MAX;
     Matrix bestM(size);
@@ -537,7 +471,6 @@ Code Encode(const std::string& data, Ecc ecc) {
     return c;
 }
 
-/*──────────────────────── SVG renderer ─────────────────────────────────────*/
 std::string ToSvg(const Code& code, int scale, int quietZone) {
     if (code.size == 0) return {};
     if (scale < 1)     scale = 1;
@@ -545,12 +478,7 @@ std::string ToSvg(const Code& code, int scale, int quietZone) {
     int total = (code.size + quietZone * 2) * scale;
 
     std::ostringstream s;
-    /* SVG literals use ordinary escape-quoted strings (not raw strings)
-     * so the CI's naive string/comment stripper — which doesn't
-     * understand C++11 raw-string syntax — correctly treats them as
-     * strings when counting brace/paren balance. Inside a regular
-     * "..." literal the stripper skips until the closing quote, so
-     * `//` in a URL does not trigger comment mode.                   */
+
     s << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
       << "<svg xmlns=\"http://www.w3.org/2000/svg\""
          " viewBox=\"0 0 "
@@ -560,9 +488,7 @@ std::string ToSvg(const Code& code, int scale, int quietZone) {
       << "<rect width=\"100%\" height=\"100%\" fill=\"#ffffff\"/>"
       << "<path fill=\"#000000\" d=\"";
     for (int y = 0; y < code.size; y++) {
-        /* Collapse consecutive dark modules into one horizontal run per
-         * row; cheaper than a rect per module, and every scanner I've
-         * tested reads it identically.                                */
+
         int x = 0;
         while (x < code.size) {
             if (!code.Get(x, y)) { x++; continue; }
@@ -581,4 +507,4 @@ std::string ToSvg(const Code& code, int scale, int quietZone) {
     return s.str();
 }
 
-}  /* namespace ElleQR */
+}

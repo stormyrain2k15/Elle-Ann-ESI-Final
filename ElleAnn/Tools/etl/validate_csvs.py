@@ -1,31 +1,3 @@
-"""
-validate_csvs.py
-================
-
-Container-side validator: walks the CSVs produced by wordnet_to_elle.py
-(or any other source) and checks them against the canonical schema in
-elle-language/sql/01_schema.sql WITHOUT touching SQL Server.
-
-Catches the things that would otherwise blow up the SQL load:
-
-  - Required fields missing
-  - Foreign-key SourceTags that don't resolve
-  - Decimals out of [-1.0, 1.0] range
-  - Phrase WordCount mismatched against phrase_words row count
-  - PartOfSpeech codes unknown
-  - Emotion codes unknown
-  - Relation codes unknown
-  - sense/usage/context slots not in {1,2}
-  - sense_usage_examples and sense_context_examples coverage (warn if a
-    sense has fewer than 2 of each)
-
-Exit code 0 if everything passes; 1 if any ERROR found.  Warnings are
-informational and don't change the exit code.
-
-Usage:
-    python validate_csvs.py [--input-dir ./output]
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -34,7 +6,6 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-# These mirror sql/02_seed_lexicon.sql verbatim.
 KNOWN_POS = {"NOUN", "VERB", "ADJ", "ADV", "PRON", "DET", "PREP",
              "CONJ", "INTERJ", "AUX", "PROPN", "NUM", "PUNCT", "OTHER"}
 KNOWN_RELATIONS = {"SYNONYM", "ANTONYM", "HOMONYM", "HOMOPHONE",
@@ -45,13 +16,11 @@ KNOWN_EMOTIONS = {"VALENCE", "ANGER", "FEAR", "SADNESS", "JOY", "TRUST",
                   "TENDERNESS", "COMFORT", "SHAME", "CURIOSITY",
                   "POS_DRAW", "NEG_DRAW"}
 
-
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input-dir",
                     default=str(Path(__file__).resolve().parent / "output"))
     return ap.parse_args()
-
 
 def in_range(v: str) -> bool:
     try:
@@ -60,12 +29,10 @@ def in_range(v: str) -> bool:
     except (ValueError, TypeError):
         return False
 
-
 def read_csv(path: Path):
     with open(path, "r", encoding="utf-8", newline="") as fp:
         for r in csv.DictReader(fp):
             yield r
-
 
 class Validator:
     def __init__(self, dir_: Path):
@@ -82,8 +49,6 @@ class Validator:
 
     def warn(self, msg: str):
         self.warnings.append(msg)
-
-    # ---------------- per-file checks ---------------- #
 
     def check_words(self):
         path = self.dir / "words.csv"
@@ -123,7 +88,6 @@ class Validator:
             except ValueError:
                 self.err(f"phrases.csv:{i}: non-int WordCount {r.get('WordCount')!r}")
 
-        # cross-check phrase_words rows == WordCount
         actual_counts: dict[str, int] = defaultdict(int)
         for i, r in enumerate(read_csv(pw_path), 2):
             tag = r.get("SourceTag", "")
@@ -184,8 +148,7 @@ class Validator:
             for i, r in enumerate(read_csv(path), 2):
                 tag = r.get("SourceTag", "")
                 if tag not in self.sense_tags:
-                    # silent: phrase-sense examples ride here too if you add
-                    # them later, no error
+
                     continue
                 try:
                     s = int(r.get(slot_field, 0))
@@ -230,7 +193,7 @@ class Validator:
         print(f"[check] sense_emotions.csv : {n:>8,} rows")
 
     def check_relations(self):
-        # sense_relations
+
         path = self.dir / "sense_relations.csv"
         if path.exists():
             n = bad = 0
@@ -242,7 +205,7 @@ class Validator:
                     if bad > 10: break
                 n += 1
             print(f"[check] sense_relations    : {n:>8,} rows")
-        # word_relations
+
         path = self.dir / "word_relations.csv"
         if path.exists():
             n = 0
@@ -286,7 +249,7 @@ class Validator:
                     unresolved += 1
                     continue
                 if t not in self.sense_tags:
-                    continue  # may be phrase-sense
+                    continue
                 n += 1
             if unresolved:
                 self.warn(f"concept_members.csv: {unresolved:,} rows reference "
@@ -303,7 +266,6 @@ class Validator:
         print(f"[summary] {len(self.errors)} errors, {len(self.warnings)} warnings")
         return 1 if self.errors else 0
 
-
 def main() -> int:
     args = parse_args()
     d = Path(args.input_dir)
@@ -318,7 +280,6 @@ def main() -> int:
     v.check_relations()
     v.check_concepts()
     return v.report()
-
 
 if __name__ == "__main__":
     sys.exit(main())

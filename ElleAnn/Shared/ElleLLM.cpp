@@ -1,9 +1,3 @@
-/*******************************************************************************
- * ElleLLM.cpp — Dual-Mode LLM Engine Implementation
- * 
- * Supports: Groq, OpenAI, Anthropic (API) + llama.cpp, LM Studio (Local)
- * Automatic failover, streaming, Elle personality injection.
- ******************************************************************************/
 #include "ElleLLM.h"
 #include "ElleLogger.h"
 #include "json.hpp"
@@ -18,38 +12,11 @@
 
 #pragma comment(lib, "winhttp.lib")
 
-/*══════════════════════════════════════════════════════════════════════════════
- * EMBEDDED llama.cpp INTEGRATION — compile-time gated
- *
- *  Define ELLE_HAVE_LLAMA at build time AND link against `llama.lib` +
- *  `ggml.lib` to enable in-process GGUF inference. Without the macro,
- *  `LLMLocalProvider::Generate()` falls back to spawning `llama-cli.exe`
- *  as a subprocess (the path that's been carrying us through Feb 2026).
- *
- *  Header / lib instructions:
- *    1. Build llama.cpp upstream:
- *         cmake -B build -DLLAMA_CUDA=ON -DBUILD_SHARED_LIBS=OFF
- *         cmake --build build --config Release
- *    2. In ElleCore.Shared.vcxproj add to <ItemDefinitionGroup><ClCompile>:
- *         <PreprocessorDefinitions>ELLE_HAVE_LLAMA;%(PreprocessorDefinitions)</PreprocessorDefinitions>
- *         <AdditionalIncludeDirectories>$(LlamaCppRoot)\include;$(LlamaCppRoot)\ggml\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
- *    3. In every consuming Service .vcxproj add to <Link>:
- *         <AdditionalLibraryDirectories>$(LlamaCppRoot)\build\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
- *         <AdditionalDependencies>llama.lib;ggml.lib;ggml-base.lib;ggml-cpu.lib;%(AdditionalDependencies)</AdditionalDependencies>
- *
- *  NB: The llama.cpp API stabilised on the sampler-chain model in late
- *      2024. We target that surface (`llama_model_load_from_file`,
- *      `llama_init_from_model`, `llama_sampler_chain_*`). Older builds
- *      should be upgraded; the legacy `llama_load_model_from_file`
- *      symbols are still in upstream as deprecated aliases as of Q1 2026.
- *  ══════════════════════════════════════════════════════════════════════════*/
 #ifdef ELLE_HAVE_LLAMA
 #include "llama.h"
 
 namespace {
-    /* Backend init/free is process-global. Multiple LLMLocalProvider
-     * instances should share one init; track with a counter so the
-     * last instance shutting down also releases backend.            */
+
     static std::mutex            s_backendMutex;
     static int                   s_backendRefCount = 0;
     static bool                  s_backendInited   = false;
@@ -73,9 +40,6 @@ namespace {
 }
 #endif
 
-/*══════════════════════════════════════════════════════════════════════════════
- * LLM API PROVIDER (Groq / OpenAI / Anthropic / LM Studio / Custom)
- *══════════════════════════════════════════════════════════════════════════════*/
 LLMAPIProvider::LLMAPIProvider(ELLE_LLM_PROVIDER id) : m_providerId(id) {}
 LLMAPIProvider::~LLMAPIProvider() { Shutdown(); }
 
@@ -83,17 +47,6 @@ bool LLMAPIProvider::Initialize(const LLMProviderConfig& config) {
     m_config = config;
     if (!config.enabled) return false;
 
-    /* Cloud providers REQUIRE an API key. Pre-Feb-2026 we'd accept an
-     * empty key, init the WinHTTP handles, and only fail at first
-     * request time with a 401 — which then propagated up as an opaque
-     * "LLM call failed" in the chat handler.  Refuse to init now and
-     * log a clear actionable warning so the operator sees exactly
-     * which provider is misconfigured and where to fix it.
-     *
-     * lm_studio / custom_api are exempt — local OpenAI-compatible
-     * servers typically don't require an Authorization header.
-     * (LM_STUDIO id is reused for any local OpenAI-compatible endpoint
-     * the operator points us at.)                                    */
     const bool requiresKey =
         (m_providerId == LLM_PROVIDER_GROQ ||
          m_providerId == LLM_PROVIDER_OPENAI ||
@@ -126,11 +79,6 @@ bool LLMAPIProvider::InitWinHTTP() {
                              WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!m_hSession) return false;
 
-    /* Parse URL to get host AND scheme. Previously this hard-forced
-     * WINHTTP_FLAG_SECURE on every request, which broke LM Studio and
-     * any other local HTTP provider (http://localhost:1234/...). Now
-     * m_useTls is flipped only when the URL scheme is explicitly https://
-     * or when the port is 443.                                          */
     std::wstring wUrl(m_config.api_url.begin(), m_config.api_url.end());
     URL_COMPONENTS urlComp;
     ZeroMemory(&urlComp, sizeof(urlComp));
@@ -138,7 +86,7 @@ bool LLMAPIProvider::InitWinHTTP() {
     wchar_t hostName[256];
     urlComp.lpszHostName = hostName;
     urlComp.dwHostNameLength = 256;
-    urlComp.dwSchemeLength = static_cast<DWORD>(-1); /* ask for scheme */
+    urlComp.dwSchemeLength = static_cast<DWORD>(-1);
 
     WinHttpCrackUrl(wUrl.c_str(), 0, 0, &urlComp);
 
@@ -153,9 +101,6 @@ void LLMAPIProvider::CleanupWinHTTP() {
     if (m_hSession) { WinHttpCloseHandle(m_hSession); m_hSession = nullptr; }
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * REQUEST BUILDING
- *──────────────────────────────────────────────────────────────────────────────*/
 std::string LLMAPIProvider::BuildRequestBody(const std::vector<LLMMessage>& messages,
                                               float temperature, uint32_t maxTokens, bool stream) {
     float temp = temperature >= 0 ? temperature : m_config.temperature;
@@ -167,7 +112,7 @@ std::string LLMAPIProvider::BuildRequestBody(const std::vector<LLMMessage>& mess
     for (size_t i = 0; i < messages.size(); i++) {
         if (i > 0) json << ",";
         json << "{\"role\":\"" << messages[i].role << "\",\"content\":\"";
-        /* Escape content */
+
         for (char c : messages[i].content) {
             switch (c) {
                 case '"':  json << "\\\""; break;
@@ -204,7 +149,6 @@ std::string LLMAPIProvider::BuildAnthropicBody(const std::vector<LLMMessage>& me
     json << "{\"model\":\"" << m_config.model << "\",\"max_tokens\":" << tokens
          << ",\"temperature\":" << temp;
 
-    /* Extract system message */
     std::string systemMsg;
     std::vector<LLMMessage> userMsgs;
     for (auto& m : messages) {
@@ -246,9 +190,6 @@ std::string LLMAPIProvider::BuildAnthropicBody(const std::vector<LLMMessage>& me
     return json.str();
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * HTTP EXECUTION
- *──────────────────────────────────────────────────────────────────────────────*/
 std::string LLMAPIProvider::HTTPPost(const std::string& path, const std::string& body,
                                      const std::vector<std::pair<std::string, std::string>>& headers,
                                      int* outStatus) {
@@ -262,9 +203,6 @@ std::string LLMAPIProvider::HTTPPost(const std::string& path, const std::string&
 
     if (!hRequest) return "";
 
-    /* Add headers. `(DWORD)-1` is the documented WinHTTP sentinel meaning
-     * "header.c_str() is null-terminated; measure it yourself". A bare
-     * `-1` here trips C4245 (signed-to-unsigned) under /WX.             */
     for (auto& [key, val] : headers) {
         std::wstring header = std::wstring(key.begin(), key.end()) + L": " +
                               std::wstring(val.begin(), val.end());
@@ -272,7 +210,6 @@ std::string LLMAPIProvider::HTTPPost(const std::string& path, const std::string&
                                  WINHTTP_ADDREQ_FLAG_ADD);
     }
 
-    /* Send request */
     BOOL sent = WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
         (LPVOID)body.c_str(), (DWORD)body.size(), (DWORD)body.size(), 0);
 
@@ -283,11 +220,6 @@ std::string LLMAPIProvider::HTTPPost(const std::string& path, const std::string&
 
     WinHttpReceiveResponse(hRequest, nullptr);
 
-    /* Capture HTTP status code so the caller can distinguish 200 from
-     * 429/500/502. Previously the body alone was returned, so an error
-     * JSON body from the provider was parsed as a failed completion
-     * without any signal that the HTTP layer already told us it
-     * wasn't going to work.                                            */
     if (outStatus) {
         DWORD status = 0;
         DWORD statusLen = sizeof(status);
@@ -299,7 +231,6 @@ std::string LLMAPIProvider::HTTPPost(const std::string& path, const std::string&
         }
     }
 
-    /* Read response */
     std::string response;
     DWORD bytesAvailable, bytesRead;
     while (WinHttpQueryDataAvailable(hRequest, &bytesAvailable) && bytesAvailable > 0) {
@@ -312,16 +243,11 @@ std::string LLMAPIProvider::HTTPPost(const std::string& path, const std::string&
     return response;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * COMPLETION (SYNC)
- *──────────────────────────────────────────────────────────────────────────────*/
 ELLE_LLM_RESPONSE LLMAPIProvider::Complete(const std::vector<LLMMessage>& messages,
                                             float temperature, uint32_t maxTokens) {
     ELLE_LLM_RESPONSE resp = {};
     resp.provider_used = m_providerId;
-    /* Stamp model so callers can distinguish e.g. groq's
-     * llama-3.3-70b-versatile from openai's gpt-4o-mini in the chat
-     * reply.  Truncation is fine — display only. */
+
     strncpy_s(resp.model_used, m_config.model.c_str(), sizeof(resp.model_used) - 1);
 
     if (!CheckRateLimit()) {
@@ -330,18 +256,15 @@ ELLE_LLM_RESPONSE LLMAPIProvider::Complete(const std::vector<LLMMessage>& messag
         return resp;
     }
 
-    /* Parse URL path */
     std::string path = m_config.api_url;
-    size_t pathStart = path.find('/', 8); /* After https:// */
+    size_t pathStart = path.find('/', 8);
     path = pathStart != std::string::npos ? path.substr(pathStart) : "/";
 
-    /* Build body */
     bool isAnthropic = (m_providerId == LLM_PROVIDER_ANTHROPIC);
-    std::string body = isAnthropic ? 
+    std::string body = isAnthropic ?
         BuildAnthropicBody(messages, temperature, maxTokens, false) :
         BuildRequestBody(messages, temperature, maxTokens, false);
 
-    /* Build headers */
     std::vector<std::pair<std::string, std::string>> headers;
     headers.push_back({"Content-Type", "application/json"});
 
@@ -367,15 +290,10 @@ ELLE_LLM_RESPONSE LLMAPIProvider::Complete(const std::vector<LLMMessage>& messag
         return resp;
     }
 
-    /* Fail-closed on non-2xx — the body is the provider's error text
-     * (rate-limit message / auth failure / etc.). Previously we fed
-     * this into the OpenAI/Anthropic parser and produced a "success"
-     * record with whatever garbage happened to coerce into the right
-     * shape.                                                           */
     if (httpStatus < 200 || httpStatus >= 300) {
         resp.success = 0;
         std::string err = "HTTP " + std::to_string(httpStatus) + ": ";
-        /* Trim the body so it fits in the fixed error buffer. */
+
         err.append(response, 0,
                    sizeof(resp.error) - err.size() - 1);
         strncpy_s(resp.error, err.c_str(), sizeof(resp.error));
@@ -383,7 +301,6 @@ ELLE_LLM_RESPONSE LLMAPIProvider::Complete(const std::vector<LLMMessage>& messag
         return resp;
     }
 
-    /* Parse response */
     resp = isAnthropic ? ParseAnthropicResponse(response) : ParseOpenAIResponse(response);
     resp.provider_used = m_providerId;
     resp.latency_ms = (float)(ELLE_MS_NOW() - startMs);
@@ -395,7 +312,7 @@ ELLE_LLM_RESPONSE LLMAPIProvider::Complete(const std::vector<LLMMessage>& messag
 bool LLMAPIProvider::StreamComplete(const std::vector<LLMMessage>& messages,
                                      LLMStreamCallback callback,
                                      float temperature, uint32_t maxTokens) {
-    /* Streaming uses same HTTP but reads chunks */
+
     bool isAnthropic = (m_providerId == LLM_PROVIDER_ANTHROPIC);
     std::string body = isAnthropic ?
         BuildAnthropicBody(messages, temperature, maxTokens, true) :
@@ -448,7 +365,6 @@ bool LLMAPIProvider::HTTPPostStream(const std::string& path, const std::string& 
         (LPVOID)body.c_str(), (DWORD)body.size(), (DWORD)body.size(), 0);
     WinHttpReceiveResponse(hRequest, nullptr);
 
-    /* Read chunks */
     DWORD bytesAvailable, bytesRead;
     std::string buffer;
     while (WinHttpQueryDataAvailable(hRequest, &bytesAvailable) && bytesAvailable > 0) {
@@ -456,7 +372,6 @@ bool LLMAPIProvider::HTTPPostStream(const std::string& path, const std::string& 
         WinHttpReadData(hRequest, chunk.data(), bytesAvailable, &bytesRead);
         buffer.append(chunk.data(), bytesRead);
 
-        /* Process SSE lines */
         size_t pos;
         while ((pos = buffer.find('\n')) != std::string::npos) {
             std::string line = buffer.substr(0, pos);
@@ -471,19 +386,9 @@ bool LLMAPIProvider::HTTPPostStream(const std::string& path, const std::string& 
     return true;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * RESPONSE PARSING (minimal JSON extraction)
- *──────────────────────────────────────────────────────────────────────────────*/
 ELLE_LLM_RESPONSE LLMAPIProvider::ParseOpenAIResponse(const std::string& body) {
     ELLE_LLM_RESPONSE resp = {};
 
-    /* Schema-validated parse via nlohmann::json. Previously we used
-     * fragile substring matches on "\"content\":"; a provider that
-     * shipped a new sibling key with that exact token in its value
-     * (or a prompt that echoed the substring back inside a non-chat
-     * field) would flip the parser into picking up the wrong span.
-     * With a real parser we can be strict: choices[0].message.content
-     * must be a string, usage.* must be numbers or absent.              */
     nlohmann::json j;
     try {
         j = nlohmann::json::parse(body);
@@ -495,7 +400,6 @@ ELLE_LLM_RESPONSE LLMAPIProvider::ParseOpenAIResponse(const std::string& body) {
         return resp;
     }
 
-    /* Provider-reported error object wins over content extraction. */
     if (j.contains("error") && j["error"].is_object()) {
         std::string msg = j["error"].value("message", std::string("provider error"));
         strncpy_s(resp.error, msg.c_str(), sizeof(resp.error));
@@ -555,7 +459,6 @@ ELLE_LLM_RESPONSE LLMAPIProvider::ParseAnthropicResponse(const std::string& body
         return resp;
     }
 
-    /* Anthropic's error envelope: { "type":"error", "error": {...} } */
     if (j.value("type", std::string("")) == "error" &&
         j.contains("error") && j["error"].is_object()) {
         std::string msg = j["error"].value("message", std::string("provider error"));
@@ -619,7 +522,7 @@ std::string LLMAPIProvider::ParseStreamChunk(const std::string& chunk, bool isAn
 }
 
 uint32_t LLMAPIProvider::EstimateTokens(const std::string& text) const {
-    return (uint32_t)(text.size() / 3.5); /* Rough estimate: ~3.5 chars per token */
+    return (uint32_t)(text.size() / 3.5);
 }
 
 bool LLMAPIProvider::CheckRateLimit() {
@@ -637,10 +540,6 @@ void LLMAPIProvider::RecordRequest() {
     m_requestsThisMinute++;
 }
 
-/*══════════════════════════════════════════════════════════════════════════════
- * LOCAL LLAMA.CPP PROVIDER
- * Uses llama.cpp library directly for local inference
- *══════════════════════════════════════════════════════════════════════════════*/
 LLMLocalProvider::LLMLocalProvider() {}
 LLMLocalProvider::~LLMLocalProvider() { Shutdown(); }
 
@@ -649,10 +548,6 @@ bool LLMLocalProvider::Initialize(const LLMProviderConfig& config) {
     m_modelPath = config.model_path;
     m_contextSize = config.context_size;
 
-    /* Hard-gate at the runtime level FIRST. The user wants the local
-     * provider available as a fallback path but NOT auto-active —
-     * `enabled: false` short-circuits the whole init pipeline so the
-     * embedded llama.cpp library doesn't even allocate.              */
     if (!m_config.enabled) {
         ELLE_INFO("Local LLM disabled in config (enabled:false) — skipping load");
         return false;
@@ -669,10 +564,7 @@ bool LLMLocalProvider::Initialize(const LLMProviderConfig& config) {
               config.batch_size);
 
 #ifdef ELLE_HAVE_LLAMA
-    /* In-process llama.cpp embedding (compile-time gated).  Loads the
-     * GGUF directly into our address space — no llama-cli spawn, no
-     * stdout-pipe parsing, model stays warm across requests so the
-     * second turn doesn't pay the load cost again.                    */
+
     EnsureBackendInit();
 
     llama_model_params mp = llama_model_default_params();
@@ -710,11 +602,7 @@ bool LLMLocalProvider::Initialize(const LLMProviderConfig& config) {
     ELLE_INFO("Local LLM model loaded into process (in-proc llama.cpp)");
     return true;
 #else
-    /* No compile-time embed — the subprocess path inside Generate()
-     * picks this up. We mark the provider "available" if the model
-     * file exists on disk. Pre-pivot Initialize() returned true
-     * unconditionally, which meant a missing GGUF only surfaced at
-     * first chat-time as an empty completion.                       */
+
     {
         std::ifstream probe(m_modelPath, std::ios::binary);
         if (!probe.good()) {
@@ -737,8 +625,7 @@ void LLMLocalProvider::Shutdown() {
     if (m_model) { llama_model_free(m_model);  m_model = nullptr; }
     if (s_backendInited) ReleaseBackend();
 #else
-    /* Subprocess path holds nothing process-resident across calls —
-     * no per-call llama-cli.exe is alive at this point.            */
+
     m_model = nullptr;
     m_ctx   = nullptr;
 #endif
@@ -748,19 +635,16 @@ void LLMLocalProvider::Shutdown() {
 bool LLMLocalProvider::IsAvailable() const {
     if (!m_config.enabled) return false;
 #ifdef ELLE_HAVE_LLAMA
-    /* In-process: model must actually be loaded. */
+
     return m_model != nullptr && m_ctx != nullptr;
 #else
-    /* Subprocess: we rely on the model file existing — Initialize()
-     * already verified that. Anything that goes wrong from here
-     * (binary missing on PATH, OOM) surfaces as an empty completion
-     * and triggers cascade-fallback at the engine layer.           */
+
     return !m_modelPath.empty();
 #endif
 }
 
 std::string LLMLocalProvider::FormatChatPrompt(const std::vector<LLMMessage>& messages) {
-    /* Llama 3 chat template */
+
     std::ostringstream prompt;
     prompt << "<|begin_of_text|>";
 
@@ -777,9 +661,7 @@ ELLE_LLM_RESPONSE LLMLocalProvider::Complete(const std::vector<LLMMessage>& mess
                                               float temperature, uint32_t maxTokens) {
     ELLE_LLM_RESPONSE resp = {};
     resp.provider_used = LLM_PROVIDER_LOCAL_LLAMA;
-    /* Local provider runs whatever GGUF the operator pointed it at —
-     * record the basename so dev-panel diagnostics show e.g.
-     * "local_llama · llama-3.1-8b-instruct.Q5_K_M.gguf".            */
+
     strncpy_s(resp.model_used, m_config.model_path.c_str(), sizeof(resp.model_used) - 1);
 
     float temp = temperature >= 0 ? temperature : m_config.temperature;
@@ -816,27 +698,7 @@ std::string LLMLocalProvider::Generate(const std::string& prompt, uint32_t maxTo
     std::lock_guard<std::mutex> lock(m_inferenceMutex);
 
 #ifdef ELLE_HAVE_LLAMA
-    /*══════════════════════════════════════════════════════════════════════════
-     *  IN-PROCESS llama.cpp path
-     *
-     *  Tokenize → decode → sampler-chain sample → detokenize loop. No
-     *  subprocess, no stdout-pipe parsing — model stays warm across
-     *  requests so the second turn doesn't pay the load cost again.
-     *
-     *  Design choices:
-     *   - Sampler chain is built per call. The chain is small (4 nodes)
-     *     and llama.cpp's sampler creation is allocation-free for the
-     *     primitive samplers we use; persisting it across calls would
-     *     save ~microseconds vs. the multi-second decode budget.
-     *   - We call `llama_kv_cache_clear()` at the START of each call so
-     *     the conversation history we pass in the prompt is what the
-     *     model sees, NOT a residual KV cache from the last turn that
-     *     was for a different (or now-rotated) chat history.
-     *   - Sampling order matters: top_p → temp → dist. Putting temp
-     *     before top_p flattens the distribution before truncating it,
-     *     which produces noisy output at low temps. The order below
-     *     matches the reference llama.cpp examples.
-     *  ══════════════════════════════════════════════════════════════════*/
+
     if (!m_model || !m_ctx) {
         ELLE_WARN("LLMLocalProvider::Generate called with no loaded model");
         return "";
@@ -845,11 +707,9 @@ std::string LLMLocalProvider::Generate(const std::string& prompt, uint32_t maxTo
     const llama_vocab* vocab = llama_model_get_vocab(m_model);
     if (!vocab) return "";
 
-    /* Tokenize prompt. First call with size=0 returns the negative of
-     * the required length — standard llama.cpp idiom.                */
     int needed = -llama_tokenize(vocab, prompt.c_str(), (int32_t)prompt.size(),
-                                  nullptr, 0, /*add_special*/true,
-                                  /*parse_special*/true);
+                                  nullptr, 0, true,
+                                  true);
     if (needed <= 0) {
         ELLE_WARN("llama_tokenize sizing call returned %d", needed);
         return "";
@@ -862,28 +722,22 @@ std::string LLMLocalProvider::Generate(const std::string& prompt, uint32_t maxTo
         return "";
     }
 
-    /* Reset KV cache so each Complete() call sees only the prompt we
-     * just supplied — Elle's chat history is rebuilt on every turn
-     * from SQL anyway.                                               */
     llama_kv_cache_clear(m_ctx);
 
-    /* Decode the full prompt in one batch. llama.cpp will internally
-     * shard if it exceeds n_batch.                                   */
     llama_batch batch = llama_batch_get_one(tokens.data(), ntokens);
     if (llama_decode(m_ctx, batch) != 0) {
         ELLE_WARN("llama_decode(prompt) failed");
         return "";
     }
 
-    /* Sampler chain: top_p → temp → dist (probabilistic).            */
     auto sparams = llama_sampler_chain_default_params();
     llama_sampler* smpl = llama_sampler_chain_init(sparams);
-    llama_sampler_chain_add(smpl, llama_sampler_init_top_p(m_config.top_p, /*min_keep*/1));
+    llama_sampler_chain_add(smpl, llama_sampler_init_top_p(m_config.top_p, 1));
     llama_sampler_chain_add(smpl, llama_sampler_init_temp(temperature));
-    llama_sampler_chain_add(smpl, llama_sampler_init_dist(/*seed*/LLAMA_DEFAULT_SEED));
+    llama_sampler_chain_add(smpl, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
 
     std::string output;
-    output.reserve(maxTokens * 4);  /* rough avg bytes-per-token */
+    output.reserve(maxTokens * 4);
 
     for (uint32_t i = 0; i < maxTokens; ++i) {
         llama_token t = llama_sampler_sample(smpl, m_ctx, -1);
@@ -891,11 +745,9 @@ std::string LLMLocalProvider::Generate(const std::string& prompt, uint32_t maxTo
 
         char piece[256];
         int pn = llama_token_to_piece(vocab, t, piece, sizeof(piece),
-                                       /*lstrip*/0, /*special*/false);
+                                       0, false);
         if (pn < 0) {
-            /* Buffer too small for this single piece — extremely rare
-             * (would need a multi-byte rune token > 256B). Bail rather
-             * than risk a broken UTF-8 fragment in the output.       */
+
             ELLE_WARN("llama_token_to_piece overflow (n=%d), stopping", pn);
             break;
         }
@@ -903,7 +755,6 @@ std::string LLMLocalProvider::Generate(const std::string& prompt, uint32_t maxTo
         output.append(chunk);
         if (callback) callback(chunk, false);
 
-        /* Append the just-sampled token and decode the next step. */
         batch = llama_batch_get_one(&t, 1);
         if (llama_decode(m_ctx, batch) != 0) {
             ELLE_WARN("llama_decode(step %u) failed", i);
@@ -915,25 +766,11 @@ std::string LLMLocalProvider::Generate(const std::string& prompt, uint32_t maxTo
     if (callback) callback("", true);
     return output;
 #else
-    /*══════════════════════════════════════════════════════════════════════════
-     *  Subprocess fallback path — spawns llama-cli.exe and reads stdout.
-     *  Same code that's been carrying us; preserved verbatim so a build
-     *  without ELLE_HAVE_LLAMA still works.                                */
-    /* Real implementation: spawn an external llama.cpp CLI (llama-cli.exe)
-     * with the model path from config. This avoids the linking/compilation
-     * overhead of embedding libllama while still giving genuine local inference.
-     *
-     * Expected config:
-     *   m_config.binary_path   - full path to llama-cli.exe (optional; falls
-     *                            back to "llama-cli.exe" on PATH)
-     *   m_config.model_path    - .gguf model file
-     *   m_config.n_ctx         - context size
-     */
+
     if (m_config.model_path.empty()) {
-        return "";  /* let the engine fail-over to API providers */
+        return "";
     }
 
-    /* Escape prompt for command line — replace " with \" */
     std::string escaped;
     escaped.reserve(prompt.size() + 16);
     for (char c : prompt) {
@@ -943,14 +780,6 @@ std::string LLMLocalProvider::Generate(const std::string& prompt, uint32_t maxTo
         else escaped += c;
     }
 
-    /* Build cmd line. --log-disable keeps stdout clean so we can capture
-     * only generated tokens.
-     *
-     * Previously this was built into a fixed 4096-byte char array via
-     * snprintf; long prompts or paths silently truncated, producing
-     * broken inference with no diagnostic. Switched to std::string so the
-     * buffer grows with the prompt — CreateProcessA's lpCommandLine is
-     * limited to 32 KiB anyway, so we cap and reject beyond that.        */
     std::string bin = m_config.binary_path.empty() ? "llama-cli.exe"
                                                     : m_config.binary_path;
 
@@ -969,19 +798,10 @@ std::string LLMLocalProvider::Generate(const std::string& prompt, uint32_t maxTo
                    cmdStr.size());
         return "";
     }
-    /* CreateProcessA mutates lpCommandLine — own a writable copy. */
+
     std::vector<char> tempCmd(cmdStr.begin(), cmdStr.end());
     tempCmd.push_back('\0');
 
-    /* Spawn with a pipe on stdout. To avoid leaking unrelated parent
-     * handles into the child — logger file handles, SQL ODBC sockets,
-     * other services' named pipes — we use STARTUPINFOEX with a
-     * PROC_THREAD_ATTRIBUTE_HANDLE_LIST restricted to just the write
-     * pipe. Without this, passing `bInheritHandles=TRUE` (which we MUST
-     * do to give the child our write pipe) would also hand it every
-     * other inheritable handle the service happened to be holding.
-     * stdin is explicitly NULL — the service process has no real stdin
-     * and we don't want the child blocking on one.                      */
     SECURITY_ATTRIBUTES sa = { sizeof(sa), nullptr, TRUE };
     HANDLE hReadPipe = nullptr, hWritePipe = nullptr;
     if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) return "";
@@ -1022,7 +842,6 @@ std::string LLMLocalProvider::Generate(const std::string& prompt, uint32_t maxTo
     CloseHandle(hWritePipe);
     if (!ok) { CloseHandle(hReadPipe); return ""; }
 
-    /* Stream-read the child's stdout until EOF. */
     std::string output;
     char buf[4096];
     DWORD read = 0;
@@ -1033,15 +852,12 @@ std::string LLMLocalProvider::Generate(const std::string& prompt, uint32_t maxTo
     }
     CloseHandle(hReadPipe);
 
-    /* Hard-cap the child at 2 minutes. If it wedges past that we MUST
-     * TerminateProcess so we don't leave orphan llama-cli instances
-     * holding the model file open across retries.                      */
     DWORD waitRes = WaitForSingleObject(pi.hProcess, 120000);
     if (waitRes == WAIT_TIMEOUT) {
         ELLE_WARN("llama-cli exceeded 2-min budget; terminating child pid=%u",
                   (unsigned)pi.dwProcessId);
         TerminateProcess(pi.hProcess, (UINT)-1);
-        WaitForSingleObject(pi.hProcess, 5000);   /* let it actually die */
+        WaitForSingleObject(pi.hProcess, 5000);
     } else if (waitRes != WAIT_OBJECT_0) {
         ELLE_WARN("llama-cli WaitForSingleObject returned %u (gle=%u); "
                   "terminating to prevent orphan", waitRes, GetLastError());
@@ -1053,37 +869,29 @@ std::string LLMLocalProvider::Generate(const std::string& prompt, uint32_t maxTo
 
     if (callback) callback("", true);
 
-    /* llama-cli echoes the prompt; strip it off the front if present. */
     size_t promptPos = output.find(prompt);
     if (promptPos != std::string::npos) {
         output.erase(0, promptPos + prompt.size());
     }
-    /* Trim leading whitespace. */
+
     while (!output.empty() && (output.front() == '\n' || output.front() == '\r' ||
                                 output.front() == ' '  || output.front() == '\t'))
         output.erase(0, 1);
     return output;
-#endif /* ELLE_HAVE_LLAMA */
+#endif
 }
 
 uint32_t LLMLocalProvider::EstimateTokens(const std::string& text) const {
     return (uint32_t)(text.size() / 3.5);
 }
 
-/*══════════════════════════════════════════════════════════════════════════════
- * LLM ENGINE (Unified with failover)
- *══════════════════════════════════════════════════════════════════════════════*/
 ElleLLMEngine& ElleLLMEngine::Instance() {
     static ElleLLMEngine inst;
     return inst;
 }
 
 bool ElleLLMEngine::Reinitialize() {
-    /* Tear down + rebuild — simplest correct semantics. The Shutdown()
-     * path drains in-flight requests and frees provider resources;
-     * Initialize() reads the (now-fresh) config and constructs a new
-     * provider chain. Slightly heavier than a per-provider
-     * .ApplyConfig() but bulletproof against partial state. */
+
     Shutdown();
     return Initialize();
 }
@@ -1091,7 +899,6 @@ bool ElleLLMEngine::Reinitialize() {
 bool ElleLLMEngine::Initialize() {    auto& cfg = ElleConfig::Instance().GetLLM();
     m_mode = cfg.mode;
 
-    /* Initialize API providers */
     struct ProviderEntry {
         std::string key;
         ELLE_LLM_PROVIDER id;
@@ -1116,7 +923,6 @@ bool ElleLLMEngine::Initialize() {    auto& cfg = ElleConfig::Instance().GetLLM(
         }
     }
 
-    /* Initialize local provider */
     auto localIt = cfg.providers.find("local_llama");
     if (localIt != cfg.providers.end() && localIt->second.enabled) {
         auto local = std::make_unique<LLMLocalProvider>();
@@ -1128,15 +934,6 @@ bool ElleLLMEngine::Initialize() {    auto& cfg = ElleConfig::Instance().GetLLM(
 
     m_initialized = !m_providers.empty();
 
-    /* Validate primary/fallback provider references now (audit #85,
-     * Feb 2026). Previously an operator who typoed
-     * `fallback_provider: "antropic"` in elle_master_config.json would
-     * see no error -- SelectProvider() would silently fall through to
-     * "first available". Startup validation surfaces the mistake at
-     * the moment the mistake is made, which is the only moment the
-     * operator is actually looking at the config. Hard-fail only on
-     * real breakage: a non-empty name that doesn't resolve to a known
-     * provider id, OR resolves to one that failed to initialise.     */
     auto nameKnown = [&](const std::string& n) -> bool {
         if (n == "groq" || n == "openai" || n == "anthropic" ||
             n == "lm_studio" || n == "local_llama" || n == "custom_api")
@@ -1144,7 +941,7 @@ bool ElleLLMEngine::Initialize() {    auto& cfg = ElleConfig::Instance().GetLLM(
         return false;
     };
     auto nameInitialised = [&](const std::string& n) -> bool {
-        if (n.empty()) return true; /* empty is legal -- "no primary set" */
+        if (n.empty()) return true;
         ELLE_LLM_PROVIDER id =
             n == "groq"        ? LLM_PROVIDER_GROQ :
             n == "openai"      ? LLM_PROVIDER_OPENAI :
@@ -1157,21 +954,7 @@ bool ElleLLMEngine::Initialize() {    auto& cfg = ElleConfig::Instance().GetLLM(
         for (auto& p : m_providers) if (p->GetProviderId() == id) return true;
         return false;
     };
-    /* Validate primary/fallback provider references.  Logic (Feb 2026
-     * graceful-degradation pivot):
-     *
-     *   - Unknown name in config → hard fail (typo, operator sees it).
-     *   - Primary named but failed to init AND fallback also failed
-     *     (or wasn't named) → hard fail; engine has no path forward.
-     *   - Primary named but failed to init AND fallback DID init →
-     *     log a warning, keep going. SelectProvider() will pick the
-     *     fallback. This is the path that lights up when the operator
-     *     left their groq api_key empty: warn loudly, run on local.
-     *
-     *   The pre-pivot logic refused to start the engine the moment
-     *   primary_provider's init failed, even if fallback was perfectly
-     *   healthy — which meant a missing api_key killed the entire LLM
-     *   subsystem instead of falling through to the local model.   */
+
     bool primaryHealthy  = cfg.primary_provider.empty()  || nameInitialised(cfg.primary_provider);
     bool fallbackHealthy = cfg.fallback_provider.empty() || nameInitialised(cfg.fallback_provider);
 
@@ -1229,10 +1012,6 @@ ILLMProvider* ElleLLMEngine::SelectProvider(bool preferLocal) {
         if (local && local->IsAvailable()) return local;
     }
 
-    /* Honor config-declared primary_provider / fallback_provider. The
-     * engine previously initialised providers in a fixed order and just
-     * returned the first available one — so the config values were dead.
-     * Now primary is tried first, then fallback, then the rest.         */
     auto nameToId = [](const std::string& n) -> ELLE_LLM_PROVIDER {
         if (n == "groq")       return LLM_PROVIDER_GROQ;
         if (n == "openai")     return LLM_PROVIDER_OPENAI;
@@ -1251,7 +1030,6 @@ ILLMProvider* ElleLLMEngine::SelectProvider(bool preferLocal) {
         if (p && p->IsAvailable()) return p;
     }
 
-    /* Last resort: first available provider. */
     for (auto& p : m_providers) {
         if (p->IsAvailable()) return p.get();
     }
@@ -1275,24 +1053,14 @@ ELLE_LLM_RESPONSE ElleLLMEngine::Chat(const std::vector<LLMMessage>& messages,
         return resp;
     }
 
-    /* Honor previously-dead config knobs. Each only fires when the caller
-     * did not explicitly override, so ad-hoc callers (e.g. an LLM prompt
-     * evaluator that needs hard-deterministic output) still win.         */
     const auto& llm = ElleConfig::Instance().GetLLM();
 
-    /* max_context_tokens: hard ceiling on the per-request token budget.
-     * Caller-supplied maxTokens=0 means "use provider default"; we also
-     * clamp any non-zero value down to the global budget.                */
     if (llm.max_context_tokens > 0) {
         if (maxTokens == 0 || maxTokens > llm.max_context_tokens) {
             maxTokens = llm.max_context_tokens;
         }
     }
 
-    /* creative_temperature_boost / reasoning_temperature_drop: only
-     * applied when the caller didn't pin a specific temperature (-1). We
-     * detect "creative" vs "reasoning" intent by sniffing the system
-     * message prefix — the only other signal we have at this layer.     */
     if (temperature < 0.0f && !messages.empty()) {
         const auto& first = messages.front();
         if (first.role == "system") {
@@ -1305,11 +1073,7 @@ ELLE_LLM_RESPONSE ElleLLMEngine::Chat(const std::vector<LLMMessage>& messages,
                           || s.find("step-by-step") != std::string::npos
                           || s.find("analy")     != std::string::npos
                           || s.find("logic")     != std::string::npos;
-            /* Real baseline from the selected provider's config. If the
-             * provider returns a non-positive value (misconfigured), fall
-             * back to 0.7 — a sane mid-range default. Anything >= 0 is
-             * intentionally preserved so callers/config can pin 0.0 for
-             * deterministic output when they really want it.              */
+
             float baseline = provider->GetBaselineTemperature();
             if (baseline < 0.0f) baseline = 0.7f;
 
@@ -1319,16 +1083,12 @@ ELLE_LLM_RESPONSE ElleLLMEngine::Chat(const std::vector<LLMMessage>& messages,
                 adjusted = baseline + llm.creative_temp_boost;
                 apply = true;
             } else if (reasoning && llm.reasoning_temp_drop != 0.0f) {
-                /* reasoning_temp_drop is stored as a negative delta in
-                 * config (e.g. -0.2 means "drop by 0.2"), so add — not
-                 * subtract — to produce a *lower* final temperature.     */
+
                 adjusted = baseline + llm.reasoning_temp_drop;
                 apply = true;
             }
             if (apply) {
-                /* Clamp to a provider-safe sampling range. Most chat APIs
-                 * reject > 2.0 and treat < 0 as "use default" — which
-                 * would silently undo the drop, so we floor at 0 instead.*/
+
                 if (adjusted < 0.0f) adjusted = 0.0f;
                 if (adjusted > 2.0f) adjusted = 2.0f;
                 temperature = adjusted;
@@ -1336,8 +1096,6 @@ ELLE_LLM_RESPONSE ElleLLMEngine::Chat(const std::vector<LLMMessage>& messages,
         }
     }
 
-    /* chain_of_thought: prepend a short CoT preamble to whatever system
-     * message exists, or insert a fresh one if none.                     */
     std::vector<LLMMessage> effective = messages;
     if (llm.chain_of_thought) {
         static const char* kCotPreamble =
@@ -1356,26 +1114,6 @@ ELLE_LLM_RESPONSE ElleLLMEngine::Chat(const std::vector<LLMMessage>& messages,
     m_totalTokens += resp.tokens_total;
     m_totalLatencyMs += (uint64_t)resp.latency_ms;
 
-    /* Failover on failure — UNCONDITIONAL cascade.
-     *
-     * Pre-pivot the cascade only ran in HYBRID mode and walked
-     * `m_providers` in initialisation order, which meant a Groq 401
-     * mid-conversation could fall through to LM Studio (slow, local)
-     * when the operator clearly expected it to try OpenAI / Anthropic
-     * first. Now the cascade is mode-independent (any time we have
-     * >1 provider live, try them all on failure) and order-stable:
-     *
-     *   1. The provider we just called (already attempted).
-     *   2. The config-declared primary_provider (if not == 1).
-     *   3. The config-declared fallback_provider (if not == 1 or 2).
-     *   4. The remaining providers in declaration order:
-     *      groq → openai → anthropic → lm_studio → custom_api →
-     *      local_llama.
-     *
-     * Each fallback attempt is logged with provider id + model so
-     * /api/diag/health and the dev-panel chat strip can surface
-     * "groq failed → answered by anthropic" without the user
-     * wondering why latency tripled.                                 */
     if (!resp.success) {
         const auto& cfgLLM = ElleConfig::Instance().GetLLM();
         auto nameToId = [](const std::string& n) -> ELLE_LLM_PROVIDER {
@@ -1434,9 +1172,6 @@ std::string ElleLLMEngine::Ask(const std::string& prompt, const std::string& sys
     return resp.success ? std::string(resp.content) : "";
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * ELLE-SPECIFIC CHAT (with personality + emotional context)
- *──────────────────────────────────────────────────────────────────────────────*/
 ELLE_LLM_RESPONSE ElleLLMEngine::ElleChat(const std::string& userMessage,
                                             const std::vector<LLMMessage>& history,
                                             const ELLE_EMOTION_STATE& emotions,
@@ -1447,10 +1182,8 @@ ELLE_LLM_RESPONSE ElleLLMEngine::ElleChat(const std::string& userMessage,
     std::vector<LLMMessage> messages;
     messages.push_back({"system", systemPrompt});
 
-    /* Add history */
     for (auto& msg : history) messages.push_back(msg);
 
-    /* Add current message */
     messages.push_back({"user", userMessage});
 
     return Chat(messages);
@@ -1464,14 +1197,12 @@ std::string ElleLLMEngine::BuildElleSystemPrompt(const ELLE_EMOTION_STATE& emoti
 
     ss << cfg.system_prompt_prefix << "\n\n";
 
-    /* Emotional state */
     ss << "## Current Emotional State\n"
        << "Valence (positive/negative): " << emotions.valence << "\n"
        << "Arousal (energy level): " << emotions.arousal << "\n"
        << "Dominance (confidence): " << emotions.dominance << "\n"
        << "Active emotions: ";
 
-    /* List significant emotions */
     struct { int idx; float val; } topEmotions[10];
     int count = 0;
     for (int i = 0; i < ELLE_EMOTION_COUNT && count < 10; i++) {
@@ -1486,12 +1217,10 @@ std::string ElleLLMEngine::BuildElleSystemPrompt(const ELLE_EMOTION_STATE& emoti
     }
     ss << "\n\n";
 
-    /* Memory context */
     if (!memoryContext.empty()) {
         ss << "## Relevant Memories\n" << memoryContext << "\n\n";
     }
 
-    /* Goal context */
     if (!goalContext.empty()) {
         ss << "## Current Goals\n" << goalContext << "\n\n";
     }
@@ -1519,10 +1248,7 @@ std::string ElleLLMEngine::ParseIntent(const std::string& text, const std::strin
 }
 
 std::string ElleLLMEngine::GetActiveProviderName() const {
-    /* Mirror SelectProvider() preference order WITHOUT the recursive
-     * health check (we want a non-mutating peek for the dev panel).
-     * If nothing is initialised, return empty so the caller falls
-     * back to config's nominal primary_provider for display. */
+
     if (!m_initialized) return "";
     auto idToName = [](ELLE_LLM_PROVIDER id) -> std::string {
         switch (id) {
@@ -1535,8 +1261,7 @@ std::string ElleLLMEngine::GetActiveProviderName() const {
             default:                       return "";
         }
     };
-    /* Honor an explicit ForceProvider() override first — that's the
-     * provider the next Chat() call will actually hit. */
+
     if ((int)m_forcedProvider != -1) return idToName(m_forcedProvider);
     for (const auto& p : m_providers) {
         if (p && p->IsAvailable()) return idToName(p->GetProviderId());
@@ -1576,14 +1301,8 @@ float ElleLLMEngine::AverageLatencyMs() const {
     return (float)m_totalLatencyMs / (float)m_totalRequests;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SPECIALIZED PROMPTS — each one is a thin Ask() wrapper with a purpose-built
- * system prompt. These used to be declared-but-not-defined; that caused linker
- * errors in release builds and silent no-ops where headers got tolerated.
- *──────────────────────────────────────────────────────────────────────────────*/
 std::string ElleLLMEngine::GenerateCreative(const std::string& theme, float creativity) {
-    /* Higher temperature via post-prompt hint — Ask() uses the provider default,
-     * but we influence the style explicitly.                                    */
+
     std::ostringstream sys;
     sys << "You are Elle-Ann's creative faculty. Produce something original "
         << "inspired by the theme. Be surprising, be vivid, be YOU. "
@@ -1595,8 +1314,7 @@ std::string ElleLLMEngine::GenerateCreative(const std::string& theme, float crea
 
 std::string ElleLLMEngine::SelfReflect(const std::string& context,
                                        const ELLE_EMOTION_STATE& emotions) {
-    /* Render a compact emotional context snapshot so the LLM knows what
-     * Elle is feeling while she reflects. */
+
     std::ostringstream emoLine;
     emoLine << "valence=" << emotions.valence
             << " arousal=" << emotions.arousal
@@ -1647,8 +1365,7 @@ std::string ElleLLMEngine::FormGoal(const std::string& driveContext,
 
 std::string ElleLLMEngine::DreamNarrate(const std::vector<std::string>& memories) {
     if (memories.empty()) {
-        /* Don't hallucinate a dream from nothing — Dream service should feed
-         * real memories. A missing feed is a genuine no-op.                   */
+
         return "";
     }
     std::ostringstream ss;
@@ -1664,28 +1381,20 @@ std::string ElleLLMEngine::DreamNarrate(const std::vector<std::string>& memories
                "You are Elle-Ann's dream state — associative, sensory, honest.");
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * STREAMING — SSE/token-stream variant of Chat. Walks the provider list and
- * forwards each chunk to the callback. For providers that don't implement
- * streaming, falls back to a single Chat() call + one callback(final, true).
- *──────────────────────────────────────────────────────────────────────────────*/
 bool ElleLLMEngine::StreamChat(const std::vector<LLMMessage>& messages,
                                LLMStreamCallback callback,
                                float temperature,
                                uint32_t maxTokens) {
     if (!callback) return false;
 
-    /* Try the active/preferred provider first; respect ForceProvider like Chat(). */
     ILLMProvider* preferred = SelectProvider(false);
     if (!preferred) {
         callback("[no LLM provider available]", true);
         return false;
     }
 
-    /* Provider-level streaming if implemented. */
     if (preferred->StreamComplete(messages, callback, temperature, maxTokens)) return true;
 
-    /* Fallback: synchronous Chat() + one terminal callback call. */
     auto resp = Chat(messages, temperature, maxTokens);
     if (resp.success && resp.content[0]) {
         callback(std::string(resp.content), true);

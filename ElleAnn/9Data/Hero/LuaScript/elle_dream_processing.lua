@@ -1,27 +1,22 @@
--------------------------------------------------------------------------------
--- dream_processing.lua — Dream Cycle Logic
--------------------------------------------------------------------------------
-
 dream = {}
 
 function dream.select_memories_for_processing(memories, count)
     count = count or 10
-    -- Prioritize: emotionally charged, recent, unprocessed
+
     local selected = {}
-    
-    -- Sort by emotional weight if available
+
     if memories then
         table.sort(memories, function(a, b)
             local a_weight = (a.importance or 0.5) + math.abs(a.emotional_valence or 0)
             local b_weight = (b.importance or 0.5) + math.abs(b.emotional_valence or 0)
             return a_weight > b_weight
         end)
-        
+
         for i = 1, math.min(count, #memories) do
             table.insert(selected, memories[i])
         end
     end
-    
+
     return selected
 end
 

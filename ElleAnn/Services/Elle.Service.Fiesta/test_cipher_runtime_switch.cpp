@@ -1,4 +1,3 @@
-/* Drop-in test of Cipher's runtime-switchable backend. */
 #include "/app/ElleAnn/Services/Elle.Service.Fiesta/FiestaCipher.h"
 #include <cassert>
 #include <cstdio>
@@ -9,7 +8,6 @@ int main() {
     using namespace Fiesta;
     int fails = 0;
 
-    /* T1: LCG round-trip (back-compat path). */
     {
         Cipher enc, dec;
         enc.SetKind(CipherKind::LCG); dec.SetKind(CipherKind::LCG);
@@ -22,7 +20,6 @@ int main() {
         if (a != orig) { fails++; std::fprintf(stderr, "T1: LCG roundtrip\n"); }
     }
 
-    /* T2: XOR499 round-trip — both sides set the same kind + seed. */
     {
         Cipher enc, dec;
         enc.SetKind(CipherKind::XOR499); dec.SetKind(CipherKind::XOR499);
@@ -36,7 +33,6 @@ int main() {
         if (a != orig) { fails++; std::fprintf(stderr, "T2: XOR499 roundtrip\n"); }
     }
 
-    /* T3: First byte XOR with seed=0 must be 0x07 (table[0]) for XOR499. */
     {
         Cipher enc;
         enc.SetKind(CipherKind::XOR499);
@@ -47,9 +43,6 @@ int main() {
                             "T3: first byte != 0x07 (got 0x%02X)\n", a[0]); }
     }
 
-    /* T4: switching kinds requires re-Reset() to be safe — verify the
-     *     two states are independent (a Reset() in LCG mode does NOT
-     *     leak into the XOR499 pos counter and vice versa). */
     {
         Cipher c;
         c.SetKind(CipherKind::LCG); c.Reset(0x77);

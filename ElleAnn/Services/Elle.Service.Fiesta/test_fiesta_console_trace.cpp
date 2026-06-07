@@ -1,18 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * test_fiesta_console_trace.cpp — smoke-test the live console trace
- *   helpers from FiestaConsoleTrace.h.
- *
- *   Verifies that:
- *     * Trace functions are callable and side-effect-free when disabled
- *     * Banner / Hooks emit lines when enabled
- *     * Multi-thread call sites don't interleave (mutex serialisation)
- *
- *   Compile (Linux portable):
- *       g++ -std=c++17 -O0 -I . -pthread \
- *           Services/Elle.Service.Fiesta/test_fiesta_console_trace.cpp \
- *           -o /tmp/test_fiesta_console_trace
- *══════════════════════════════════════════════════════════════════════════════*/
-
 #include "FiestaProtoBase.h"
 #include "FiestaProtoTable.h"
 #include "FiestaConsoleTrace.h"
@@ -24,7 +9,6 @@
 int main() {
     std::printf("──── Phase 6 console-trace smoke test ────\n");
 
-    /* Step 1: while disabled, no lines should print. */
     std::printf("Step 1: trace DISABLED — should produce ZERO lines below this.\n");
     Fiesta::Trace::SetEnabled(false);
     Fiesta::Trace::OnRx(0x0306, {0x12, 0x34});
@@ -33,20 +17,18 @@ int main() {
     Fiesta::Trace::OnChat("EllaAnn", "test", "chat");
     std::printf("…done.\n\n");
 
-    /* Step 2: enable + emit one of each kind. */
     std::printf("Step 2: trace ENABLED — should produce 5 coloured lines below.\n");
     Fiesta::Trace::SetEnabled(true);
     Fiesta::Trace::Banner("smoke test");
     std::vector<uint8_t> seed = {0x1F, 0x03};
-    Fiesta::Trace::OnRx(0x0207 /* NC_MISC_SEED_ACK */, seed);
+    Fiesta::Trace::OnRx(0x0207 , seed);
     std::vector<uint8_t> login(272, 0);
-    Fiesta::Trace::OnTx(0x0306 /* NC_USER_LOGIN_REQ */, login);
+    Fiesta::Trace::OnTx(0x0306 , login);
     Fiesta::Trace::OnStateChange("CONNECTING", "LOGIN_AWAIT_LOGIN_ACK");
     Fiesta::Trace::OnChat("Crystal", "hi", "chat");
     Fiesta::Trace::OnMove(0x46C4, 5515, 7466, 5572, 7500, 0x32);
     Fiesta::Trace::OnError("disconnected: socket reset by peer");
 
-    /* Step 3: multi-thread serialisation. */
     std::printf("\nStep 3: 4 threads each emit 5 traces — lines must not interleave.\n");
     std::vector<std::thread> th;
     for (int t = 0; t < 4; ++t) {

@@ -1,42 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * FiestaClient.h — High-level headless game client for ShineEngine.
- *
- *   ────────────────────────────────────────────────────────────────────
- *   3-HOP LOGIN STATE MACHINE (verified from PDB)
- *   ────────────────────────────────────────────────────────────────────
- *     DISCONNECTED
- *           │ Connect(host, port, user, pass)
- *           ▼
- *     LOGIN_CONNECTING  ── socket → Login (9010)
- *           │ recv NC_MISC_SEED_ACK  (cipher keyed)
- *           ▼
- *     LOGIN_VERSION     ── send NC_USER_CLIENT_VERSION_CHECK_REQ
- *           │ recv NC_USER_CLIENT_RIGHTVERSION_CHECK_ACK
- *           ▼
- *     LOGIN_AUTH        ── send NC_USER_LOGIN_REQ (272-byte struct)
- *           │ recv NC_USER_LOGIN_ACK   (world list)
- *           ▼
- *     WORLD_LIST        ── send NC_USER_WORLDSELECT_REQ (1B)
- *           │ recv NC_USER_WORLDSELECT_ACK (WM ip+port+token)
- *           ▼
- *     WM_HANDOFF        ── socket close, open → WM
- *           │ recv NC_MISC_SEED_ACK
- *           ▼
- *     WM_AUTH           ── send NC_USER_WILLLOGIN_REQ (347B w/ token)
- *           │ recv NC_USER_WILLLOGIN_ACK (Zone ip+port+token)
- *           ▼
- *     ZONE_HANDOFF      ── socket close, open → Zone
- *           │ recv NC_MISC_SEED_ACK
- *           ▼
- *     ZONE_AUTH         ── send NC_USER_LOGINWORLD_REQ + NC_MAP_LOGIN_REQ
- *           │ recv NC_MAP_LOGINCOMPLETE_CMD
- *           ▼
- *     IN_GAME ↻
- *
- *   The client owns one `Connection` at a time.  Between hops the
- *   socket closes, the cipher resets, and a new socket opens against
- *   the host:port returned by the previous server.
- *══════════════════════════════════════════════════════════════════════════════*/
 #pragma once
 #ifndef ELLE_FIESTA_CLIENT_H
 #define ELLE_FIESTA_CLIENT_H
@@ -57,15 +18,15 @@ namespace Fiesta {
 
 enum class State {
     DISCONNECTED,
-    LOGIN_CONNECTING,    /* TCP open to Login, waiting for SEED_ACK     */
-    LOGIN_VERSION,       /* version handshake in flight                 */
-    LOGIN_AUTH,          /* user/pass sent, waiting for LOGIN_ACK       */
-    WORLD_LIST,          /* world list received, awaiting select        */
-    WM_HANDOFF,          /* WORLDSELECT_ACK received, reconnecting      */
-    WM_AUTH,             /* WM seed received, WILLLOGIN_REQ sent        */
-    ZONE_HANDOFF,        /* WILLLOGIN_ACK received, reconnecting        */
-    ZONE_AUTH,           /* Zone seed received, MAP_LOGIN_REQ sent      */
-    IN_GAME,             /* MAP_LOGINCOMPLETE_CMD received              */
+    LOGIN_CONNECTING,
+    LOGIN_VERSION,
+    LOGIN_AUTH,
+    WORLD_LIST,
+    WM_HANDOFF,
+    WM_AUTH,
+    ZONE_HANDOFF,
+    ZONE_AUTH,
+    IN_GAME,
 };
 
 inline const char* StateName(State s) {
@@ -85,7 +46,7 @@ inline const char* StateName(State s) {
 }
 
 struct GameEvent {
-    std::string kindJson;   /* full JSON body, ready to ship over IPC */
+    std::string kindJson;
 };
 
 class Client {
@@ -96,7 +57,6 @@ public:
     Client() = default;
     ~Client() { Disconnect("destructor"); }
 
-    /* ── Setup ──────────────────────────────────────────────────── */
     void SetOnEvent(EventCallback cb)         { m_onEvent     = std::move(cb); }
     void SetOnRawPacket(RawPacketCallback cb) { m_onRawPacket = std::move(cb); }
 
@@ -105,18 +65,11 @@ public:
         return m_state;
     }
 
-    /* Override the wide-string version key sent in
-     * NC_USER_CLIENT_VERSION_CHECK_REQ.  Default is the CN2012
-     * key "SDO_FIESTA_NEW_VER_KEY"; private servers may publish
-     * their own key string. */
     void SetVersionKey(const std::string& utf8Key) {
         std::lock_guard<std::mutex> lk(m_mx);
         m_versionKey = utf8Key;
     }
 
-    /** Floating cipher selector — operator-controlled via
-     *  `ElleAnn.fiesta.region` in elle_settings.lua. Must be called
-     *  BEFORE Connect(); switching mid-session is undefined.          */
     void SetCipherKind(CipherKind kind) {
         std::lock_guard<std::mutex> lk(m_mx);
         m_conn.MutableCipher().SetKind(kind);
@@ -126,9 +79,6 @@ public:
         return m_conn.GetCipher().Kind();
     }
 
-    /** Diagnostic snapshot for /api/diag/fiesta — fields are read-only,
-     *  cheap to obtain (atomic loads + a Cipher copy that's a couple of
-     *  POD members), and safe to call from any thread.                */
     struct DiagSnapshot {
         bool       connected;
         std::string cipher_kind;
@@ -151,91 +101,63 @@ public:
         s.pkt_out     = m_conn.PacketsOut();
         s.bytes_in    = m_conn.BytesIn();
         s.bytes_out   = m_conn.BytesOut();
-        s.login_host  = "";   /* set by FiestaService externally */
+        s.login_host  = "";
         s.login_port  = 0;
         return s;
     }
 
-    /* Override the WILLLOGIN_REQ.spawnapps fingerprint string.
-     * CN2012 accepts an empty string for headless clients. */
     void SetSpawnApps(const std::string& s) {
         std::lock_guard<std::mutex> lk(m_mx);
         m_spawnApps = s;
     }
 
-    /* ── Connection lifecycle ──────────────────────────────────── */
     bool Connect(const std::string& loginHost, uint16_t loginPort,
                  const std::string& user, const std::string& pass);
 
     void Disconnect(const std::string& why);
 
-    /** Pick a world from the list received in NC_USER_LOGIN_ACK.
-     *  worldNo is the `worldno` field of the desired WorldInfo entry
-     *  (typically 0 for single-world private servers). */
     bool SelectWorld(uint8_t worldNo);
 
-    /* ── In-game actions ────────────────────────────────────────── */
-    /** Walk / run to (x, y) in u32 fixed-point world coordinates.
-     *  Pass `run=true` for NC_ACT_RUN_REQ, otherwise NC_ACT_WALK_REQ.
-     *  `from` defaults to the last known position (set internally). */
     bool MoveTo(uint32_t toX, uint32_t toY, bool run = true);
-    /** Halt current movement at (x,y). PDB layout: SHINE_XY_TYPE.    */
+
     bool Stop(uint32_t atX, uint32_t atY);
-    /** Cosmetic jump — no payload, no target. */
+
     bool Jump();
-    /** Click an NPC (open dialog tree etc.). Payload = handle:u16.   */
+
     bool NpcClick(uint16_t npcHandle);
 
-    /* Combat — verified Zone-side opcodes (BIN-sourced; payloads
-     * follow the `target:u16` convention shared by every reverse-
-     * engineered ShineEngine build we have available). */
     bool Target(uint16_t targetHandle);
     bool Untarget(uint16_t targetHandle);
     bool Hit(uint16_t targetHandle);
     bool Smash(uint16_t targetHandle);
-    /** Convenience: Target then Hit in one call (the canonical
-     *  "engage in melee" sequence the client emits on left-click). */
+
     bool Attack(uint16_t targetHandle);
-    /** Cast a learned skill on a target.
-     *  Payload: [u16 skillId][u16 targetHandle]. */
+
     bool SkillCast(uint16_t skillId, uint16_t targetHandle);
     bool SkillCastAbort();
-    /** Assist a party member (target whoever they're targeting). */
+
     bool Assist(uint16_t partnerHandle);
 
-    /* Social / chat. */
     bool Chat(const std::string& text);
     bool Shout(const std::string& text);
-    /** Whisper to a named recipient. PDB-V70 layout:
-     *  [char[16] recipient (NUL-pad)][u8 itemLinkDataCount][u8 len][text]. */
+
     bool Whisper(const std::string& recipient, const std::string& text);
-    /** Play an emoticon — id is the emote table index. */
+
     bool Emote(uint16_t emoteId);
 
-    /* Inventory. */
     bool Pickup(uint32_t itemId);
     bool UseItem(uint32_t slot);
 
-    /* Lifecycle helpers. */
     bool Respawn();
-    /** Send NC_USER_NORMALLOGOUT_CMD then close socket cleanly.    */
+
     bool Logout();
-    /** Send a manual heartbeat (NC_MISC_HEARTBEAT_REQ).
-     *  The internal heartbeat thread does this periodically while
-     *  IN_GAME; this method is exposed for tests/manual control. */
+
     bool Heartbeat();
 
-    /** Send a raw packet — escape hatch for protocol exploration. */
     bool SendRaw(uint16_t opcode, const std::vector<uint8_t>& payload);
 
-    /* ── Inspection ─────────────────────────────────────────────── */
-    /** Read-only access to the handle⇆name ring (e.g. for tests
-     *  or for IPC consumers that want to dump the full table).    */
     const BriefInfoRing& Ring() const { return m_briefRing; }
 
-    /** Phase 6b-Alpha: read-only access to the in-process world model.
-     *  Snapshot rendering is thread-safe; pointer-stability guaranteed
-     *  for the lifetime of the Client. */
     const WorldModel& World() const { return m_world; }
     WorldModel&       MutableWorld()      { return m_world; }
 
@@ -245,7 +167,6 @@ private:
     void SetState(State s);
     void WireConnectionCallbacks();
 
-    /* Each hop's outbound entry-point. */
     bool SendVersionCheck();
     bool SendLoginRequest();
     bool SendWorldSelect(uint8_t worldNo);
@@ -253,15 +174,13 @@ private:
     bool SendLoginWorld();
     bool SendMapLogin();
 
-    /* SEED_ACK keys cipher and dispatches the per-hop next-step. */
     void OnSeedAck(const InPacket& pkt);
-    /* LOGIN_ACK contains worldinfo[]; WORLDSELECT_ACK has WM addr+token;
-     * WILLLOGIN_ACK has Zone addr+token; MAP_LOGINCOMPLETE_CMD ends auth. */
+
     void OnLoginAck(const InPacket& pkt);
     void OnWorldSelectAck(const InPacket& pkt);
     void OnWillLoginAck(const InPacket& pkt);
     void OnMapLoginComplete(const InPacket& pkt);
-    /* BRIEFINFO ring updates — handle⇆name maintenance. */
+
     void OnLoginCharacter(const InPacket& pkt);
     void OnBriefInfoDelete(const InPacket& pkt);
     void OnRegenMob(const InPacket& pkt);
@@ -269,54 +188,40 @@ private:
     void OnBriefCharacter(const InPacket& pkt);
     void OnPlayerListAppear(const InPacket& pkt);
     void OnCharBase(const InPacket& pkt);
-    /* Chat dispatch — 🟡 WIP broadcast envelope shape. */
+
     void OnChatLike(const InPacket& pkt);
-    /* Whisper — PDB-V70 layout: [char[16] sender][u8 itemLinkDataCount][u8 len][text]. */
+
     void OnWhisper(const InPacket& pkt);
-    /* Heartbeat thread — sends NC_MISC_HEARTBEAT_REQ on a cadence
-     * while IN_GAME. Started on Connect(), stopped on Disconnect().  */
+
     void HeartbeatLoop();
     void StartHeartbeat();
     void StopHeartbeat();
 
-    /* Reconnect to a new host:port (used between hops).  Drops the
-     * current socket, resets cipher, opens new socket. */
     bool ReconnectTo(const std::string& host, uint16_t port);
 
     mutable std::mutex     m_mx;
     Connection             m_conn;
     State                  m_state = State::DISCONNECTED;
 
-    /* Login credentials cached until first SEED_ACK arrives. */
     std::string            m_user;
     std::string            m_pass;
 
-    /* Token + addresses passed between hops (verbatim from the server). */
-    PROTO_NC_USER_WORLDSELECT_ACK  m_wmHandoff{};   /* hop 1 → hop 2 */
-    PROTO_NC_USER_WILLLOGIN_ACK    m_zoneHandoff{}; /* hop 2 → hop 3 */
+    PROTO_NC_USER_WORLDSELECT_ACK  m_wmHandoff{};
+    PROTO_NC_USER_WILLLOGIN_ACK    m_zoneHandoff{};
 
-    /* Selected character / world. */
     uint8_t                m_selectedWorld = 0;
 
-    /* Last known position for movement deltas. */
     SHINE_XY_TYPE          m_lastPos{0, 0};
 
-    /* Self handle, populated from NC_CHAR_BASE_CMD. */
     uint16_t               m_selfHandle = 0;
 
-    /* Player handle⇆displayName cache (BriefInfoRing). */
     BriefInfoRing          m_briefRing;
 
-    /* Phase 6b-Alpha: in-process world model.  Mutated by the OnXxx
-     * handlers on the RX thread, read lock-free via SnapshotJson()
-     * from any thread (IPC / diag / tests). */
     WorldModel             m_world;
 
-    /* Region-toggle config. */
     std::string            m_versionKey = "SDO_FIESTA_NEW_VER_KEY";
     std::string            m_spawnApps;
 
-    /* Heartbeat thread state. */
     std::thread            m_hbThread;
     std::atomic<bool>      m_hbRunning{false};
 
@@ -324,5 +229,5 @@ private:
     RawPacketCallback      m_onRawPacket;
 };
 
-}  /* namespace Fiesta */
+}
 #endif

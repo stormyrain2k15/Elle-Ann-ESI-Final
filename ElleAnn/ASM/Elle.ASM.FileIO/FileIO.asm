@@ -1,10 +1,3 @@
-;******************************************************************************
-; FileIO.asm — ELLE-ANN ESI v3.0 File I/O DLL (MASM x64)
-;
-; Real Win32 file I/O: read, write, append, delete, exists, size, copy, lock.
-; Uses EXTERN imports from kernel32 (linker resolves via kernel32.lib).
-;******************************************************************************
-
 EXTERN  CreateFileA:PROC
 EXTERN  ReadFile:PROC
 EXTERN  WriteFile:PROC
@@ -31,10 +24,6 @@ INVALID_HANDLE_VALUE         EQU -1
 INVALID_FILE_ATTRIBUTES      EQU -1
 FILE_END                     EQU 2
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_ReadFile — Read file into buffer
-; Parameters: rcx = path, rdx = buf, r8d = max bytes, r9 = ptr DWORD bytesRead
-;──────────────────────────────────────────────────────────────────────────────
 ASM_ReadFile PROC
     push    rbp
     mov     rbp, rsp
@@ -43,12 +32,10 @@ ASM_ReadFile PROC
     push    rdi
     push    rsi
 
-    mov     rsi, rdx                    ; buffer
-    mov     r12d, r8d                   ; max bytes
-    mov     rdi, r9                     ; bytes read out
+    mov     rsi, rdx
+    mov     r12d, r8d
+    mov     rdi, r9
 
-    ; CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, NORMAL, NULL)
-    ; rcx already = path
     mov     edx, GENERIC_READ
     mov     r8d, FILE_SHARE_READ
     xor     r9, r9
@@ -58,9 +45,8 @@ ASM_ReadFile PROC
     call    CreateFileA
     cmp     rax, INVALID_HANDLE_VALUE
     je      rd_fail
-    mov     rbx, rax                    ; hFile
+    mov     rbx, rax
 
-    ; ReadFile(hFile, buf, maxBytes, &bytesRead, NULL)
     mov     rcx, rbx
     mov     rdx, rsi
     mov     r8d, r12d
@@ -85,9 +71,6 @@ rd_done:
     ret
 ASM_ReadFile ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_WriteFile — Create/overwrite
-;──────────────────────────────────────────────────────────────────────────────
 ASM_WriteFile PROC
     push    rbp
     mov     rbp, rsp
@@ -95,8 +78,8 @@ ASM_WriteFile PROC
     push    rbx
     push    rdi
 
-    mov     rdi, rdx                    ; data buf
-    mov     r12d, r8d                   ; num bytes
+    mov     rdi, rdx
+    mov     r12d, r8d
 
     mov     edx, GENERIC_WRITE
     xor     r8, r8
@@ -131,9 +114,6 @@ wr_done:
     ret
 ASM_WriteFile ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_AppendFile — Open-or-create + seek-end + WriteFile
-;──────────────────────────────────────────────────────────────────────────────
 ASM_AppendFile PROC
     push    rbp
     mov     rbp, rsp
@@ -155,7 +135,6 @@ ASM_AppendFile PROC
     je      ap_fail
     mov     rbx, rax
 
-    ; Seek to end: SetFilePointerEx(h, 0, NULL, FILE_END)
     mov     rcx, rbx
     xor     rdx, rdx
     xor     r8, r8
@@ -204,21 +183,15 @@ fe_yes:
     ret
 ASM_FileExists ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_WatchDirectory — Return Win32 change-notification HANDLE
-; Parameters: rcx = directory path, edx = notification flags, r8 = unused
-; Returns:    eax = 1 if handle opened, 0 on failure (handle stored at r8 if ptr non-null)
-;──────────────────────────────────────────────────────────────────────────────
 ASM_WatchDirectory PROC
     push    rbp
     mov     rbp, rsp
     sub     rsp, 30h
     push    rdi
-    mov     rdi, r8                     ; out ptr (may be 0)
+    mov     rdi, r8
 
-    ; FindFirstChangeNotificationA(path, TRUE, flags)
-    mov     r8d, edx                    ; flags in r8d
-    mov     edx, 1                      ; bWatchSubtree = TRUE
+    mov     r8d, edx
+    mov     edx, 1
     call    FindFirstChangeNotificationA
     cmp     rax, INVALID_HANDLE_VALUE
     je      wd_fail
@@ -237,18 +210,15 @@ wd_done:
     ret
 ASM_WatchDirectory ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_LockFile — exclusive CreateFileA(share=0); caller closes with ASM_UnlockFile
-;──────────────────────────────────────────────────────────────────────────────
 ASM_LockFile PROC
     push    rbp
     mov     rbp, rsp
     sub     rsp, 50h
     push    rdi
-    mov     rdi, rdx                    ; out handle ptr
+    mov     rdi, rdx
 
     mov     edx, GENERIC_READ OR GENERIC_WRITE
-    xor     r8, r8                      ; share = 0 (exclusive)
+    xor     r8, r8
     xor     r9, r9
     mov     DWORD PTR [rsp+20h], OPEN_ALWAYS
     mov     DWORD PTR [rsp+28h], FILE_ATTRIBUTE_NORMAL
@@ -276,16 +246,13 @@ ASM_UnlockFile PROC
     ret
 ASM_UnlockFile ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_GetFileSize — Real GetFileSizeEx
-;──────────────────────────────────────────────────────────────────────────────
 ASM_GetFileSize PROC
     push    rbp
     mov     rbp, rsp
     sub     rsp, 50h
     push    rbx
     push    rdi
-    mov     rdi, rdx                    ; size out
+    mov     rdi, rdx
 
     mov     edx, GENERIC_READ
     mov     r8d, FILE_SHARE_READ OR FILE_SHARE_WRITE
@@ -318,12 +285,9 @@ sz_done:
     ret
 ASM_GetFileSize ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_CopyFileFast — Delegate to CopyFileA (kernel already optimizes via MMF)
-;──────────────────────────────────────────────────────────────────────────────
 ASM_CopyFileFast PROC
     sub     rsp, 28h
-    mov     r8d, 0                      ; bFailIfExists = FALSE (overwrite)
+    mov     r8d, 0
     call    CopyFileA
     add     rsp, 28h
     ret

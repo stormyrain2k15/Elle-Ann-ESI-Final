@@ -1,17 +1,3 @@
-/*******************************************************************************
- * test_sql_fallback_ndjson.cpp — Portable unit test for Fallback NDJSON
- *
- * Verifies:
- *   1. AppendJsonEscaped / ParseJsonString round-trip for all tricky chars
- *      (newline, quote, backslash, tab, ctrl-code, embedded null).
- *   2. Full NDJSON line build + parse matches the producer layout:
- *        {"ts":N,"kind":"...","sql":"...","params":["..."]}
- *   3. Multi-line file replay — each line is independently parseable.
- *
- * Compile: g++ -std=c++17 -Wall -Wextra -Werror -o test_fallback
- *            test_sql_fallback_ndjson.cpp
- * Run:     ./test_fallback
- ******************************************************************************/
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -20,10 +6,6 @@
 #include <vector>
 #include <sstream>
 
-/* Duplicated from ElleSQLFallback.cpp intentionally — the point of the
- * test is to validate the producer/consumer contract from an external
- * caller's perspective.  If you change the private helpers, mirror the
- * changes here and see which tests break.                                */
 static void AppendJsonEscaped(std::string& out, const std::string& in) {
     out.push_back('"');
     for (unsigned char c : in) {
@@ -95,7 +77,7 @@ static bool ParseJsonString(const std::string& src, size_t& pos, std::string& ou
         }
     }
     if (pos >= src.size()) return false;
-    ++pos; /* closing quote */
+    ++pos;
     return true;
 }
 
@@ -159,7 +141,7 @@ static int g_fails = 0;
 } while(0)
 
 int main() {
-    /* Test 1: simple happy path. */
+
     {
         Line in { 1739000000000ULL, "Exec", "UPDATE x SET y=1", {} };
         Line out;
@@ -169,7 +151,6 @@ int main() {
         CHECK(out.params.empty(), "simple params");
     }
 
-    /* Test 2: every escape class. */
     {
         std::string tricky = "he said \"hi\"\nand then\\backslash\ttab\r\b\f end";
         Line in { 1ULL, "QueryParams", tricky, {tricky, "plain"} };
@@ -181,7 +162,6 @@ int main() {
         CHECK(out.params[1] == "plain", "tricky param[1]");
     }
 
-    /* Test 3: low-ASCII + embedded NUL-equivalent via control chars. */
     {
         std::string ctrl;
         ctrl.push_back('\x01');
@@ -195,7 +175,6 @@ int main() {
         CHECK(out.params[0] == ctrl, "ctrl param roundtrip");
     }
 
-    /* Test 4: multi-line file split. */
     {
         std::string a = Encode({1ULL, "Exec", "A", {}});
         std::string b = Encode({2ULL, "Exec", "B", {}});
@@ -212,7 +191,6 @@ int main() {
         CHECK(Decode(lines[1], lb) && lb.sql == "B", "line 1");
     }
 
-    /* Test 5: empty params array edge. */
     {
         Line in { 7ULL, "Exec", "TRUNCATE TABLE t", {} };
         Line out;
@@ -222,19 +200,17 @@ int main() {
         CHECK(out.params.empty(), "empty params empty");
     }
 
-    /* Test 6: malformed line rejected (no kind field). */
     {
         std::string bad = "{\"ts\":1,\"sql\":\"X\",\"params\":[]}";
         Line out;
         CHECK(!Decode(bad, out), "missing kind rejected");
     }
 
-    /* Test 7: SQL with newline inside is preserved. */
     {
         Line in { 8ULL, "Exec", "SELECT 1\n  FROM dual", {} };
         Line out;
         std::string enc = Encode(in);
-        /* Must NOT contain a real newline — they must be escaped.  */
+
         CHECK(enc.find('\n') == std::string::npos, "no raw newline in encoded");
         CHECK(Decode(enc, out), "newline-sql decode");
         CHECK(out.sql == "SELECT 1\n  FROM dual", "newline-sql roundtrip");

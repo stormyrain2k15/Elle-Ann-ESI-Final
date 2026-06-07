@@ -1,6 +1,3 @@
-/*******************************************************************************
- * ElleSQLFallback.cpp — Offline SQL Queue (Fiesta-style SQLLogs)
- ******************************************************************************/
 #include "ElleSQLFallback.h"
 #include "ElleLogger.h"
 #include "ElleSQLConn.h"
@@ -62,8 +59,6 @@ void ElleSQLFallback::Initialize(bool enabled) {
     m_dir = dir.string();
     m_enabled.store(true, std::memory_order_release);
 
-    /* Worker is spawned lazily by the first Enqueue() so a pool that
-     * never drops a connection has zero background threads.          */
 }
 
 void ElleSQLFallback::Shutdown() {
@@ -75,10 +70,6 @@ void ElleSQLFallback::Shutdown() {
     m_enabled.store(false, std::memory_order_release);
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * JSON string escaping — minimal, purpose-built for our NDJSON lines.
- * Keeps SQL param values round-trip safe across newlines/quotes/unicode.
- *──────────────────────────────────────────────────────────────────────────────*/
 static void AppendJsonEscaped(std::string& out, const std::string& in) {
     out.push_back('"');
     for (unsigned char c : in) {
@@ -132,8 +123,7 @@ static bool ParseJsonString(const std::string& src, size_t& pos, std::string& ou
                         else return false;
                         cp = (cp << 4) | d;
                     }
-                    /* Emit as UTF-8 (no surrogate handling — producer never
-                     * emits \u above 0x7F so this path is write-safe).     */
+
                     if (cp < 0x80) out.push_back((char)cp);
                     else if (cp < 0x800) {
                         out.push_back((char)(0xC0 | (cp >> 6)));
@@ -152,7 +142,7 @@ static bool ParseJsonString(const std::string& src, size_t& pos, std::string& ou
         }
     }
     if (pos >= src.size()) return false;
-    ++pos; /* closing quote */
+    ++pos;
     return true;
 }
 
@@ -160,7 +150,6 @@ bool ElleSQLFallback::Enqueue(Kind kind, const std::string& sqlOrProc,
                               const std::vector<std::string>& params) {
     if (!m_enabled.load(std::memory_order_acquire)) return false;
 
-    /* Build the NDJSON line. */
     std::string line;
     line.reserve(64 + sqlOrProc.size());
     line += "{\"ts\":";
@@ -186,7 +175,6 @@ bool ElleSQLFallback::Enqueue(Kind kind, const std::string& sqlOrProc,
     }
     line += "]}\n";
 
-    /* Append under the single file mutex. */
     {
         std::lock_guard<std::mutex> lk(m_fileMutex);
         fs::path path = fs::path(m_dir) / (TodayYmd() + ".txt");
@@ -203,7 +191,6 @@ bool ElleSQLFallback::Enqueue(Kind kind, const std::string& sqlOrProc,
         }
     }
 
-    /* Lazy-start the drain worker. */
     bool expected = false;
     if (m_running.compare_exchange_strong(expected, true,
                                           std::memory_order_acq_rel)) {
@@ -232,9 +219,6 @@ void ElleSQLFallback::WorkerLoop() {
         if (!m_running.load(std::memory_order_acquire)) break;
         m_pendingWork.store(false, std::memory_order_release);
 
-        /* Don't waste cycles if the pool is clearly down — Ping a cheap
-         * "SELECT 1" via the pool and only continue if it succeeds. This
-         * also avoids spamming ODBC connect attempts during a long outage. */
         SQLResultSet probe = ElleSQLPool::Instance().Query("SELECT 1");
         if (!probe.success) continue;
 
@@ -246,8 +230,7 @@ void ElleSQLFallback::WorkerLoop() {
 }
 
 bool ElleSQLFallback::ReplayLine(const std::string& jsonLine, std::string& outErr) {
-    /* Tiny JSON field extractor — tailored to the exact producer format.
-     * Avoids pulling in nlohmann::json for a single use. */
+
     size_t p = jsonLine.find("\"kind\":");
     if (p == std::string::npos) { outErr = "missing kind"; return false; }
     p += 7;
@@ -276,9 +259,6 @@ bool ElleSQLFallback::ReplayLine(const std::string& jsonLine, std::string& outEr
         }
     }
 
-    /* Replay. Exec and QueryParams share the pool entry point; CallProc
-     * goes through the dedicated proc path so stored-proc-bound params
-     * keep their transport semantics. */
     auto& pool = ElleSQLPool::Instance();
     if (kind == "CallProc") {
         auto rs = pool.CallProc(sql, params);
@@ -290,7 +270,7 @@ bool ElleSQLFallback::ReplayLine(const std::string& jsonLine, std::string& outEr
         if (!rs.success) { outErr = "QueryParams failed: " + rs.error; return false; }
         return true;
     }
-    /* Exec: fire-and-forget, ignore result rows. */
+
     if (!pool.Exec(sql)) { outErr = "Exec failed"; return false; }
     return true;
 }
@@ -309,11 +289,11 @@ uint32_t ElleSQLFallback::DrainNow() {
             if (p.extension() == ".txt") files.push_back(p);
         }
     }
-    std::sort(files.begin(), files.end());  /* oldest day first */
+    std::sort(files.begin(), files.end());
 
     uint32_t replayed = 0;
     for (const auto& path : files) {
-        /* Read all lines, partition into drained/retained. */
+
         std::vector<std::string> lines;
         {
             std::lock_guard<std::mutex> lk(m_fileMutex);
@@ -338,10 +318,9 @@ uint32_t ElleSQLFallback::DrainNow() {
             if (ReplayLine(line, err)) {
                 replayed++;
             } else {
-                /* Replay failed — pool presumably died mid-drain. Retain
-                 * this and all subsequent lines (ordering matters).      */
+
                 retained.push_back(line);
-                /* Return early: do not try to drain more, pool is down. */
+
                 auto it = std::find(lines.begin(), lines.end(), line);
                 if (it != lines.end()) {
                     for (auto jt = it + 1; jt != lines.end(); ++jt)
@@ -351,7 +330,6 @@ uint32_t ElleSQLFallback::DrainNow() {
             }
         }
 
-        /* Rewrite the file with just the retained lines, atomically. */
         std::lock_guard<std::mutex> lk(m_fileMutex);
         if (retained.empty()) {
             std::error_code ec;
@@ -367,13 +345,12 @@ uint32_t ElleSQLFallback::DrainNow() {
             }
             std::error_code ec;
             fs::rename(tmp, path, ec);
-            /* If rename failed (Windows sometimes fails across devices),
-             * fall back to copy+delete. */
+
             if (ec) {
                 fs::copy_file(tmp, path, fs::copy_options::overwrite_existing, ec);
                 fs::remove(tmp, ec);
             }
-            /* Some retained — pool is still down; stop draining other files. */
+
             break;
         }
     }

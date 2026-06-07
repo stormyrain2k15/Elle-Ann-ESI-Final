@@ -1,12 +1,3 @@
-/*******************************************************************************
- * ActionExecutor.cpp — Action Lifecycle, Trust-Gated Execution
- *
- * Manages the full lifecycle: Queue → Lock → Trust Check → Execute → Report
- *
- * Every executor below calls real Win32 / real ASM DLL exports. No fake
- * successes. If a DLL is absent or an export is missing, we return a genuine
- * failure with a diagnostic message — do NOT claim the action worked.
- ******************************************************************************/
 #include "../../Shared/ElleTypes.h"
 #include "../../Shared/ElleServiceBase.h"
 #include "../../Shared/ElleLogger.h"
@@ -25,21 +16,12 @@
 #include <memory>
 #include <unordered_map>
 
-/*──────────────────────────────────────────────────────────────────────────────
- * IPC shim — ActionExecutor is a helper class (not the service). Route to
- * whatever service is currently running via ElleServiceBase::Current().
- *──────────────────────────────────────────────────────────────────────────────*/
 static bool SendIPC(ELLE_SERVICE_ID target, ElleIPCMessage& msg) {
     auto* svc = ElleServiceBase::Current();
     if (!svc) return false;
     return svc->GetIPCHub().Send(target, msg);
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * ASM DLL exported function signatures (also in ElleTypes.h, but we resolve
- * them dynamically here so a missing DLL produces a graceful failure instead
- * of preventing the Action service from starting).
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef int  (__stdcall *fn_ReadFile_t)   (const char* path, void* buffer, DWORD maxBytes, DWORD* bytesRead);
 typedef int  (__stdcall *fn_WriteFile_t)  (const char* path, const void* buffer, DWORD numBytes);
 typedef int  (__stdcall *fn_AppendFile_t) (const char* path, const void* buffer, DWORD numBytes);
@@ -59,15 +41,10 @@ typedef int  (__stdcall *fn_CPUAffinity_t)(DWORD processorMask);
 typedef int  (__stdcall *fn_PowerStatus_t)(DWORD* batteryPct, DWORD* isCharging);
 typedef int  (__stdcall *fn_CPUID_t)      (DWORD leaf, DWORD* eax, DWORD* ebx, DWORD* ecx, DWORD* edx);
 
-/*──────────────────────────────────────────────────────────────────────────────
- * ACTION EXECUTOR
- *──────────────────────────────────────────────────────────────────────────────*/
 class ActionExecutor {
 public:
     bool Initialize() {
-        /* Load DLLs — don't abort if one is missing; log which and keep going.
-         * The per-action executors will check for their specific function
-         * pointers and return a real failure if the one they need is absent.   */
+
         m_hHardware = LoadLibraryA("Elle.ASM.Hardware.dll");
         m_hProcess  = LoadLibraryA("Elle.ASM.Process.dll");
         m_hFileIO   = LoadLibraryA("Elle.ASM.FileIO.dll");
@@ -78,7 +55,6 @@ public:
         if (!m_hProcess)  ELLE_WARN("Elle.ASM.Process.dll missing — process ops will return 'dll_not_loaded'");
         if (!m_hFileIO)   ELLE_WARN("Elle.ASM.FileIO.dll missing — file ops will return 'dll_not_loaded'");
 
-        /* Resolve exports lazily via GetProcAddress — one snapshot at boot. */
         if (m_hFileIO) {
             p_ReadFile    = (fn_ReadFile_t)   GetProcAddress(m_hFileIO, "ASM_ReadFile");
             p_WriteFile   = (fn_WriteFile_t)  GetProcAddress(m_hFileIO, "ASM_WriteFile");
@@ -93,8 +69,7 @@ public:
             p_EnumProc    = (fn_EnumProc_t)   GetProcAddress(m_hProcess, "ASM_EnumProcesses");
             p_ProcName    = (fn_ProcName_t)   GetProcAddress(m_hProcess, "ASM_GetProcessName");
             p_ProcRunning = (fn_ProcRunning_t)GetProcAddress(m_hProcess, "ASM_IsProcessRunning");
-            /* NOTE: ASM_SetProcessPriority intentionally lives in Hardware.dll,
-             * not Process.dll — resolve it in the hardware block below. */
+
         }
         if (m_hHardware) {
             p_CPUUsage    = (fn_CPUUsage_t)   GetProcAddress(m_hHardware, "ASM_GetCPUUsage");
@@ -129,7 +104,6 @@ public:
     ExecutionResult Execute(const ELLE_ACTION_RECORD& action, const ELLE_TRUST_STATE& trust) {
         ExecutionResult result = {false, "", 0, 0};
 
-        /* Trust gate check */
         ELLE_TRUST_LEVEL required = (ELLE_TRUST_LEVEL)action.required_trust;
         ELLE_TRUST_LEVEL current  = (ELLE_TRUST_LEVEL)trust.level;
         if (current < required) {
@@ -163,7 +137,7 @@ public:
             case ACTION_SET_GOAL:
             case ACTION_ABANDON_GOAL:    result = ExecuteGoalOp(action);         break;
             case ACTION_DREAM_CYCLE: {
-                /* Trigger Dream service's consolidation pass via IPC. */
+
                 auto msg = ElleIPCMessage::Create(IPC_DREAM_TRIGGER, SVC_ACTION, SVC_DREAM);
                 bool ok = SendIPC(SVC_DREAM, msg);
                 result.success = ok;
@@ -173,18 +147,7 @@ public:
             }
             case ACTION_EXECUTE_CODE:
             case ACTION_CUSTOM: {
-                /* Generic "do this" path. No arbitrary code execution is
-                 * permitted without a registered backend handler — that
-                 * would be a gaping security hole. Instead we:
-                 *   1) Persist the custom-action request to
-                 *      ElleCore.dbo.custom_action_requests so a future
-                 *      pluggable backend (or the user) can review it.
-                 *   2) Return a clear, honest failure with a reason so
-                 *      the caller knows it wasn't silently swallowed.
-                 * NO-STUB policy: we don't fake success. Previously
-                 * Cognitive mapped INTENT_EXECUTE_ACTION to an
-                 * ACTION_EXECUTE_CODE case that didn't exist at all —
-                 * now the route terminates in an honest logged failure.  */
+
                 ElleSQLPool::Instance().Exec(
                     "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
                     "  JOIN sys.schemas s ON s.schema_id = t.schema_id "
@@ -235,7 +198,6 @@ private:
     HMODULE m_hMemory   = nullptr;
     HMODULE m_hCrypto   = nullptr;
 
-    /* FileIO exports */
     fn_ReadFile_t    p_ReadFile    = nullptr;
     fn_WriteFile_t   p_WriteFile   = nullptr;
     fn_AppendFile_t  p_AppendFile  = nullptr;
@@ -243,40 +205,22 @@ private:
     fn_FileExists_t  p_FileExists  = nullptr;
     fn_GetFileSize_t p_GetFileSize = nullptr;
 
-    /* Process exports */
     fn_LaunchProc_t  p_LaunchProc  = nullptr;
     fn_KillProc_t    p_KillProc    = nullptr;
     fn_EnumProc_t    p_EnumProc    = nullptr;
     fn_ProcName_t    p_ProcName    = nullptr;
     fn_ProcRunning_t p_ProcRunning = nullptr;
 
-    /* Hardware exports */
     fn_CPUUsage_t    p_CPUUsage    = nullptr;
     fn_MemInfo_t     p_MemInfo     = nullptr;
     fn_CPUAffinity_t p_CPUAffinity = nullptr;
     fn_PowerStatus_t p_PowerStatus = nullptr;
     fn_CPUID_t       p_CPUID       = nullptr;
 
-    /*──────────────────────────────────────────────────────────────────────
-     * FILE WATCH REGISTRY
-     *
-     * One background thread per watched path. Uses ReadDirectoryChangesW
-     * against the parent directory (with a name filter for single-file
-     * watches) and broadcasts JSON frames over IPC_WORLD_EVENT so HTTPServer
-     * can forward them to every connected WS client:
-     *
-     *     { "event":"file_change",
-     *       "path":  "<watched path>",
-     *       "changed":"<absolute path that changed>",
-     *       "kind":  "created" | "modified" | "deleted" | "renamed" }
-     *
-     * Shutdown() cancels pending I/O (CancelIoEx) and joins every thread,
-     * so the registry is safe to tear down while the service exits.
-     *──────────────────────────────────────────────────────────────────────*/
     struct WatchEntry {
-        std::string         path;      /* original requested path (file or dir) */
-        std::string         dirPath;   /* directory actually opened              */
-        std::string         fileName;  /* basename filter, empty if dir-watch    */
+        std::string         path;
+        std::string         dirPath;
+        std::string         fileName;
         HANDLE              hDir = INVALID_HANDLE_VALUE;
         std::atomic<bool>   cancel{false};
         std::thread         worker;
@@ -332,41 +276,35 @@ private:
                              FILE_NOTIFY_CHANGE_SIZE      |
                              FILE_NOTIFY_CHANGE_CREATION;
 
-        /* Buffer must be DWORD-aligned; 64 KiB covers hundreds of events. */
         std::vector<BYTE> buffer(64 * 1024);
 
         while (!w->cancel.load()) {
             DWORD bytesReturned = 0;
             BOOL ok = ReadDirectoryChangesW(
                 w->hDir, buffer.data(), (DWORD)buffer.size(),
-                /*watchSubtree*/ FALSE, filter,
-                &bytesReturned, /*overlapped*/ nullptr, /*completion*/ nullptr);
+                 FALSE, filter,
+                &bytesReturned,  nullptr,  nullptr);
 
             if (w->cancel.load()) break;
             if (!ok || bytesReturned == 0) {
-                /* ERROR_NOTIFY_ENUM_DIR means too many changes — just retry.
-                 * ERROR_OPERATION_ABORTED means CancelIoEx fired.              */
+
                 DWORD err = GetLastError();
                 if (err == ERROR_OPERATION_ABORTED) break;
                 if (err == ERROR_NOTIFY_ENUM_DIR) continue;
                 ELLE_WARN("FileWatcher ReadDirectoryChangesW err=%lu path=%s",
                           err, w->path.c_str());
-                /* Back off before retry — but stay interruptible. Raw
-                 * Sleep(500) delayed watcher cancellation by a full
-                 * half-second after the error.                         */
+
                 ElleWait::PollingSleepUntilSet(500, w->cancel, 50);
                 if (w->cancel.load()) break;
                 continue;
             }
 
-            /* Walk the FILE_NOTIFY_INFORMATION linked list. */
             BYTE* p = buffer.data();
             for (;;) {
                 auto* info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(p);
                 std::string changedName = Utf16LeToUtf8(
                     info->FileName, info->FileNameLength / sizeof(WCHAR));
 
-                /* If we were asked to watch a single file, filter on basename. */
                 bool relevant = w->fileName.empty() ||
                                 _stricmp(changedName.c_str(), w->fileName.c_str()) == 0;
 
@@ -376,9 +314,6 @@ private:
                         full += "\\";
                     full += changedName;
 
-                    /* Build frame with nlohmann::json — paths contain
-                     * backslashes and can contain quotes; manual escaping
-                     * risked shipping malformed JSON. */
                     nlohmann::json j;
                     j["event"]   = "file_change";
                     j["path"]    = w->path;
@@ -403,16 +338,10 @@ private:
         }
     }
 
-    /* Watch start result. The previous contract was a bool-plus-errOut
-     * string which was ambiguous in one specific case: "already watching"
-     * set errOut to a human message AND returned true (idempotent
-     * success). Callers had no way to tell "already" from "freshly started"
-     * and had to ignore errOut on success — which caused one site to log
-     * "watch start succeeded: already watching" as an error.              */
     enum class StartWatchResult {
-        Started           = 0,  /* new watcher thread launched */
-        AlreadyWatching   = 1,  /* idempotent — no new thread, no error */
-        Failed            = 2   /* errOut populated with concrete reason */
+        Started           = 0,
+        AlreadyWatching   = 1,
+        Failed            = 2
     };
 
     StartWatchResult StartWatch(const std::string& requested, std::string& errOut) {
@@ -473,11 +402,8 @@ private:
         return {false, msg, TRUST_FAILURE_DELTA, code};
     }
 
-    /*──────────────────────────────────────────────────────────────────────*/
     ExecutionResult ExecuteMessage(const ELLE_ACTION_RECORD& action) {
-        /* Broadcast the message via IPC to HTTP so WebSocket subscribers get it.
-         * Build the envelope with nlohmann so arbitrary user/elle content
-         * can't malform the JSON frame or inject fields. */
+
         nlohmann::json j;
         j["event"]   = "message";
         j["payload"] = std::string(action.parameters);
@@ -488,12 +414,8 @@ private:
         return {true, std::string(action.parameters), TRUST_SUCCESS_DELTA, 0};
     }
 
-    /*──────────────────────────────────────────────────────────────────────*/
     ExecutionResult ExecuteHardwareCommand(const ELLE_ACTION_RECORD& action) {
-        /* Hardware commands (vibrate/flash/notify) target the Android device —
-         * persist as a pending hardware action row that the phone polls
-         * through /api/ai/hardware/actions/pending, AND broadcast a WS frame
-         * for devices that are currently online.                              */
+
         std::string cmd = action.command;
         std::string payload = action.parameters;
 
@@ -503,7 +425,7 @@ private:
             "VALUES (?, ?, 'pending', ?);",
             { cmd, payload, std::to_string(ELLE_MS_NOW()) });
         if (!ok.success) {
-            /* Table may not exist yet — create on demand so the endpoint works. */
+
             ElleSQLPool::Instance().Exec(
                 "IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'hardware_actions') "
                 "CREATE TABLE ElleCore.dbo.hardware_actions ("
@@ -522,7 +444,6 @@ private:
             if (!ok.success) return Fail("Failed to queue hardware action: " + ok.error);
         }
 
-        /* Push to WebSocket subscribers via HTTP service. Safe JSON build. */
         nlohmann::json jw;
         jw["event"]   = "hardware";
         jw["command"] = cmd;
@@ -534,9 +455,8 @@ private:
         return {true, "Hardware command queued: " + cmd, TRUST_SUCCESS_DELTA, 0};
     }
 
-    /*──────────────────────────────────────────────────────────────────────*/
     ExecutionResult ExecuteRemember(const ELLE_ACTION_RECORD& action) {
-        /* Ask Memory service to store the content in LTM via IPC. */
+
         auto msg = ElleIPCMessage::Create(IPC_MEMORY_STORE, SVC_ACTION, SVC_MEMORY);
         msg.SetStringPayload(action.parameters);
         bool sent = SendIPC(SVC_MEMORY, msg);
@@ -545,12 +465,9 @@ private:
                 TRUST_SUCCESS_DELTA, 0};
     }
 
-    /*──────────────────────────────────────────────────────────────────────*/
     ExecutionResult ExecuteFileOp(const ELLE_ACTION_RECORD& action) {
         if (!m_hFileIO) return Fail("Elle.ASM.FileIO.dll not loaded", 0x1200);
 
-        /* parameters carries the path; for WRITE_FILE the payload lives in
-         * command after a ' | ' delimiter (matches existing queue convention). */
         std::string path = action.parameters;
         std::string data;
         std::string cmdStr = action.command;
@@ -565,7 +482,7 @@ private:
                 int rc = p_ReadFile(path.c_str(), buf.data(), (DWORD)buf.size(), &bytesRead);
                 if (rc == 0) return Fail("ASM_ReadFile failed rc=0 path=" + path, 0x1202);
                 std::string contents(buf.data(), bytesRead);
-                /* Truncate to something readable for the result JSON. */
+
                 if (contents.size() > 4096) contents = contents.substr(0, 4096) + "…[truncated]";
                 return {true, contents, TRUST_SUCCESS_DELTA, 0};
             }
@@ -586,10 +503,7 @@ private:
                 if (!p_FileExists) return Fail("ASM_FileExists export missing", 0x1207);
                 if (p_FileExists(path.c_str()) == 0)
                     return Fail("Path does not exist: " + path, 0x1208);
-                /* Real file-change watcher — spawn a ReadDirectoryChangesW
-                 * thread that broadcasts an IPC_WORLD_EVENT frame on every
-                 * modification. Idempotent: same path returns "already
-                 * watching". See FileWatchRegistry below.                 */
+
                 std::string err;
                 auto r = StartWatch(path, err);
                 if (r == StartWatchResult::Failed)
@@ -605,7 +519,6 @@ private:
         }
     }
 
-    /*──────────────────────────────────────────────────────────────────────*/
     ExecutionResult ExecuteProcessOp(const ELLE_ACTION_RECORD& action) {
         if (!m_hProcess) return Fail("Elle.ASM.Process.dll not loaded", 0x1300);
 
@@ -620,9 +533,7 @@ private:
             }
             case ACTION_KILL_PROCESS: {
                 if (!p_KillProc) return Fail("ASM_KillProcess export missing", 0x1303);
-                /* Strict PID parse — atoi silently returns 0 for garbage
-                 * like "abc" or "-1abc", which would then trip the
-                 * pid == 0 check and give no useful diagnostic.           */
+
                 char* end = nullptr;
                 unsigned long parsed = strtoul(action.parameters, &end, 10);
                 if (!end || end == action.parameters || *end != '\0' ||
@@ -663,7 +574,6 @@ private:
         }
     }
 
-    /*──────────────────────────────────────────────────────────────────────*/
     ExecutionResult ExecuteHardwareQuery(const ELLE_ACTION_RECORD& action) {
         if (!m_hHardware) return Fail("Elle.ASM.Hardware.dll not loaded", 0x1400);
 
@@ -675,7 +585,6 @@ private:
             return {true, "CPU affinity set to mask 0x" + std::to_string(mask), TRUST_SUCCESS_DELTA, 0};
         }
 
-        /* QUERY_HARDWARE: assemble a real snapshot. */
         if (!p_CPUUsage || !p_MemInfo)
             return Fail("Hardware query exports missing", 0x1403);
 
@@ -695,16 +604,8 @@ private:
         return {true, ss.str(), TRUST_SUCCESS_DELTA, 0};
     }
 
-    /*──────────────────────────────────────────────────────────────────────*/
     ExecutionResult ExecuteSelfModify(const ELLE_ACTION_RECORD& action) {
-        /* TRUST LEVEL 3 ONLY — write a new/updated Lua behavioral script to disk.
-         * The Lua host (Elle.Service.LuaBehavioral) reloads scripts when its
-         * file-watcher fires, so this bridge is genuinely modifying behaviour.
-         *
-         * parameters format: "<script_name>.lua | <lua source>" (same ' | ' split
-         * convention used elsewhere). Writes into cfg.lua.scripts_directory —
-         * the SAME key LuaHost reads from, so self-modify + IPC_CONFIG_RELOAD
-         * actually affects live behaviour.                                   */
+
         std::string raw = action.parameters;
         auto sep = raw.find(" | ");
         if (sep == std::string::npos)
@@ -713,19 +614,16 @@ private:
         std::string src  = raw.substr(sep + 3);
         if (name.empty() || src.empty())
             return Fail("SELF_MODIFY name or source empty", 0x1501);
-        /* Reject path traversal. */
+
         if (name.find("..") != std::string::npos || name.find('/') != std::string::npos ||
             name.find('\\') != std::string::npos)
             return Fail("SELF_MODIFY script name invalid (no paths)", 0x1502);
 
-        /* IMPORTANT — must match LuaHost's key verbatim or the file lands in
-         * a directory the host never scans. See LuaHost.cpp::LoadAllScripts. */
         std::string dir = ElleConfig::Instance().GetString(
             "lua.scripts_directory", "Lua\\Elle.Lua.Behavioral\\scripts");
         if (dir.empty()) dir = "Lua\\Elle.Lua.Behavioral\\scripts";
         std::string path = dir + "\\" + name;
 
-        /* Back up the old version so we can audit/revert. */
         if (p_FileExists && p_ReadFile && p_FileExists(path.c_str())) {
             std::vector<char> old(262144, 0);
             DWORD got = 0;
@@ -739,14 +637,13 @@ private:
             int rc = p_WriteFile(path.c_str(), src.c_str(), (DWORD)src.size());
             if (rc == 0) return Fail("ASM_WriteFile failed writing Lua script " + path, 0x1503);
         } else {
-            /* Last-resort fallback — use CRT fstream if FileIO DLL absent.    */
+
             std::ofstream out(path, std::ios::binary | std::ios::trunc);
             if (!out) return Fail("Cannot open " + path + " for write", 0x1504);
             out.write(src.data(), (std::streamsize)src.size());
             if (!out) return Fail("Write error on " + path, 0x1505);
         }
 
-        /* Nudge the Lua service to reload. */
         auto reload = ElleIPCMessage::Create(IPC_CONFIG_RELOAD, SVC_ACTION, SVC_LUA_BEHAVIORAL);
         reload.SetStringPayload(name);
         SendIPC(SVC_LUA_BEHAVIORAL, reload);
@@ -756,19 +653,13 @@ private:
                 TRUST_SUCCESS_DELTA, 0};
     }
 
-    /*──────────────────────────────────────────────────────────────────────*/
     ExecutionResult ExecuteGoalOp(const ELLE_ACTION_RECORD& action) {
-        /* Forward to the Goal service as a proper ELLE_GOAL_RECORD struct —
-         * GoalEngine handles IPC_GOAL_UPDATE via msg.GetPayload(goal) and
-         * previously the string envelope we sent was parsed as raw bytes of
-         * a binary struct, so every goal op was silently corrupted.        */
+
         ELLE_GOAL_RECORD goal{};
-        /* Map action ACTION_TYPE → goal description: action.command holds the
-         * verb (create/complete/abandon/update), action.parameters holds the
-         * human-readable description and/or success criteria.              */
+
         strncpy_s(goal.description, action.parameters, ELLE_MAX_MSG - 1);
         strncpy_s(goal.success_criteria, action.command, ELLE_MAX_MSG - 1);
-        goal.status       = 0;   /* active */
+        goal.status       = 0;
         goal.priority     = GOAL_MEDIUM;
         goal.progress     = 0.0f;
         goal.motivation   = 0.7f;
@@ -784,9 +675,6 @@ private:
     }
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * ACTION SERVICE
- *──────────────────────────────────────────────────────────────────────────────*/
 class ElleActionService : public ElleServiceBase {
 public:
     ElleActionService()
@@ -808,11 +696,7 @@ protected:
     }
 
     void OnTick() override {
-        /* Action polling is owned by SVC_QUEUE_WORKER. We receive each
-         * pending row as IPC_ACTION_REQUEST and execute it in OnMessage.
-         * Previously we also polled here AND OnMessage re-submitted the
-         * action via ElleDB::SubmitAction — together producing duplicate
-         * executions, re-enqueue loops, and status rows that never closed. */
+
     }
 
     void OnMessage(const ElleIPCMessage& msg, ELLE_SERVICE_ID sender) override {
@@ -832,14 +716,6 @@ protected:
         }
     }
 
-    /*──────────────────────────────────────────────────────────────────────
-     * Execute a single queued action end-to-end:
-     *   lock SQL row → executor runs real Win32/ASM ops → update status →
-     *   fold trust delta into the trust state (SQL + broadcast).
-     * This was previously inline in OnTick; extracted so the IPC-driven
-     * path and the recovery path (if we ever re-enable polling as a
-     * fallback) can share it.
-     *──────────────────────────────────────────────────────────────────────*/
     void ExecuteAction(ELLE_ACTION_RECORD& action) {
         ElleDB::UpdateActionStatus(action.id, ACTION_LOCKED);
         auto result = m_executor.Execute(action, m_trust);

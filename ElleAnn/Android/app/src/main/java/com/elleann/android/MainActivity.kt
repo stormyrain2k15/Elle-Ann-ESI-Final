@@ -10,10 +10,6 @@ import com.elleann.android.data.AppContainerExtended
 import com.elleann.android.navigation.ElleNavHost
 import com.elleann.android.ui.theme.ElleAnnTheme
 
-/**
- * MainActivity — NO_AUTH mode.
- * Login page and pairing state logic removed Feb 2026.
- */
 class MainActivity : ComponentActivity() {
 
     private lateinit var containerExtended: AppContainerExtended
@@ -28,12 +24,10 @@ class MainActivity : ComponentActivity() {
             context       = this,
             baseContainer = app.container,
             onReauthRequired = {
-                // No-op in no_auth mode
+
             },
         )
 
-        // Always init WebSocket on start. Bails gracefully (no throw)
-        // if no host has been paired yet — see ElleWebSocket.openConnection.
         containerExtended.initWebSocket()
 
         setContent {
@@ -41,9 +35,7 @@ class MainActivity : ComponentActivity() {
                 ElleNavHost(
                     container         = app.container,
                     containerExtended = containerExtended,
-                    /* Personal AI — always treated as paired. The default
-                     * host (158.62.137.73:8000) is hardcoded in
-                     * AppContainerExtended; pair flow is not a gate. */
+
                     isPaired          = true,
                     onPaired          = { },
                     onUnpair          = { },

@@ -26,13 +26,6 @@ import androidx.compose.ui.unit.sp
 import com.elleann.android.R
 import com.elleann.android.ui.theme.*
 
-/**
- * IsyaBottomNav — custom bottom navigation bar matching the Fiesta/Isya aesthetic.
- * Replaces Material3 NavigationBar. Uses isya_tab_active/inactive textures for
- * the active indicator strip.
- *
- * Replaces NavigationBar + NavigationBarItem.
- */
 data class IsyaNavItem(
     val label: String,
     val icon: ImageVector,
@@ -51,7 +44,7 @@ fun IsyaBottomNav(
             .fillMaxWidth()
             .background(IsyaNight)
     ) {
-        // Top gold border line (1px) — matches Fiesta panel border style
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -95,7 +88,7 @@ private fun IsyaNavTab(
             .padding(vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // Active indicator — gold underline at top of tab (Fiesta style: indicator above not below)
+
         if (active) {
             Box(
                 modifier = Modifier
@@ -129,11 +122,6 @@ private fun IsyaNavTab(
     }
 }
 
-/**
- * IsyaTopBar — custom top bar with gold bottom border and teal accent.
- * Replaces Material3 TopAppBar.
- *
- */
 @Composable
 fun IsyaTopBar(
     title: @Composable () -> Unit,
@@ -166,19 +154,14 @@ fun IsyaTopBar(
                     Row(content = actions)
                 }
             }
-            // Gold bottom border
+
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(IsyaGold))
-            // Teal accent line
+
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(IsyaMagic.copy(alpha = 0.4f)))
         }
     }
 }
 
-/**
- * IsyaSearchBar — custom search field using the isya_input_field texture style.
- * Replaces OutlinedTextField for search purposes.
- *
- */
 @Composable
 fun IsyaSearchBar(
     value: String,
@@ -213,11 +196,6 @@ fun IsyaSearchBar(
     )
 }
 
-/**
- * IsyaScreenFrame — outer frame for a screen using corner ornaments from MainInterface.tga.
- * Wraps screen content with Fiesta-style border corners at screen edges.
- *
- */
 @Composable
 fun IsyaScreenFrame(
     modifier: Modifier = Modifier,
@@ -230,28 +208,26 @@ fun IsyaScreenFrame(
     ) {
         content()
 
-        // Corner ornaments from extracted TGA texture — overlaid at screen corners
         val cornerSize = 28.dp
 
-        // Top-left
         Image(
             painter = painterResource(R.drawable.isya_corner_0),
             contentDescription = null,
             modifier = Modifier.size(cornerSize).align(Alignment.TopStart),
         )
-        // Top-right
+
         Image(
             painter = painterResource(R.drawable.isya_corner_1),
             contentDescription = null,
             modifier = Modifier.size(cornerSize).align(Alignment.TopEnd),
         )
-        // Bottom-left
+
         Image(
             painter = painterResource(R.drawable.isya_corner_3),
             contentDescription = null,
             modifier = Modifier.size(cornerSize).align(Alignment.BottomStart),
         )
-        // Bottom-right
+
         Image(
             painter = painterResource(R.drawable.isya_corner_2),
             contentDescription = null,
@@ -260,11 +236,6 @@ fun IsyaScreenFrame(
     }
 }
 
-/**
- * IsyaTabStrip — horizontal tab row using isya_tab_active/inactive images.
- * Replaces Material3 TabRow.
- *
- */
 @Composable
 fun IsyaTabStrip(
     tabs: List<String>,
@@ -317,10 +288,6 @@ fun IsyaTabStrip(
     }
 }
 
-/**
- * IsyaHudRow — compact status/info row in Fiesta HUD style.
- * Used in top bar subtitle area and status strips.
- */
 @Composable
 fun IsyaHudRow(
     modifier: Modifier = Modifier,

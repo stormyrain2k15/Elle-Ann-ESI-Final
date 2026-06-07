@@ -1,9 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * test_lua_scalar_reader.cpp — Validates the stopgap Lua scalar reader
- *   against the canonical patterns shipped in elle_settings.lua.
- *
- *   Compile: g++ -std=c++17 -Wall -Wextra -Werror -o tlsr test_lua_scalar_reader.cpp
- *══════════════════════════════════════════════════════════════════════════════*/
 #include "/app/ElleAnn/Shared/ElleLuaScalarReader.h"
 #include "/app/ElleAnn/Shared/ElleLuaScalarReader.cpp"
 
@@ -22,7 +16,7 @@ static void writeFile(const std::string& path, const std::string& body) {
 }
 
 int main() {
-    /* T1 — happy path against a canonical-shaped fixture. */
+
     {
         const char* fixture = R"LUA(
             -- inline comment
@@ -42,7 +36,6 @@ int main() {
         CHECK(r.GetInt   ("headless_tick_hz")     == 50,          "T1: tick_hz");
     }
 
-    /* T2 — block comment hides shadowed values, last assignment wins. */
     {
         const char* fixture = R"LUA(
             ElleAnn.fiesta.region = "usa"
@@ -58,7 +51,6 @@ int main() {
               "T2: last write wins, comments stripped");
     }
 
-    /* T3 — missing key returns default. */
     {
         ElleLuaScalarReader r("/tmp/_tlsr2.lua");
         CHECK(r.GetString("nonexistent.key", "fallback") == "fallback",
@@ -67,15 +59,12 @@ int main() {
               "T3: missing int → default");
     }
 
-    /* T4 — non-existent file. */
     {
         ElleLuaScalarReader r("/tmp/_does_not_exist.lua");
         CHECK(!r.IsLoaded(),                              "T4: !IsLoaded");
         CHECK(r.GetString("anything", "x") == "x",        "T4: returns default");
     }
 
-    /* T5 — partial-match guard: `ElleAnn.fiesta.region_mode` must NOT
-     *      match a `region` lookup. */
     {
         const char* fixture = R"LUA(
             ElleAnn.fiesta.region_mode = "trap"
@@ -89,7 +78,6 @@ int main() {
               "T5b: region_mode exact match");
     }
 
-    /* T6 — helper-function calls are rejected for ints (`seconds(5)`). */
     {
         const char* fixture = R"LUA(
             ElleAnn.x = seconds(5)

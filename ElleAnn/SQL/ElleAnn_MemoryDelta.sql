@@ -1,29 +1,12 @@
--- =============================================================================
--- ElleAnn_MemoryDelta.sql
---
--- Adds the missing memory/entity tables that the C++ Cognitive pipeline needs,
--- using the SAME snake_case / lowercase style the live ElleCore DB already uses.
--- Safe to run multiple times (IF NOT EXISTS guards).
---
--- HOW TO RUN:
---   1. Open SQL Server Management Studio (SSMS)
---   2. Connect to your Elle-Ann SQL instance
---   3. File → Open → this script
---   4. Ensure the top of the editor says  "ElleCore"  (Ctrl+U dropdown)
---   5. F5 to execute
--- =============================================================================
 USE [ElleCore];
 GO
 
--- -----------------------------------------------------------------------------
--- memory — Elle's episodic / semantic / procedural memory store
--- -----------------------------------------------------------------------------
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'memory')
 BEGIN
     CREATE TABLE [dbo].[memory] (
         [id]                 BIGINT IDENTITY(1,1) PRIMARY KEY,
-        [memory_type]        INT NOT NULL DEFAULT 1,       -- 1=episodic, 2=semantic, 3=procedural
-        [tier]               INT NOT NULL DEFAULT 1,       -- 1=STM, 2=MTM, 3=LTM
+        [memory_type]        INT NOT NULL DEFAULT 1,
+        [tier]               INT NOT NULL DEFAULT 1,
         [content]            NVARCHAR(MAX) NOT NULL,
         [summary]            NVARCHAR(1024) NULL,
         [emotional_valence]  FLOAT NOT NULL DEFAULT 0.0,
@@ -51,9 +34,6 @@ END
 ELSE PRINT '[memory] already exists.';
 GO
 
--- -----------------------------------------------------------------------------
--- memory_tags — tag → memory reverse lookup (entity/keyword recall)
--- -----------------------------------------------------------------------------
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'memory_tags')
 BEGIN
     CREATE TABLE [dbo].[memory_tags] (
@@ -71,15 +51,12 @@ END
 ELSE PRINT '[memory_tags] already exists.';
 GO
 
--- -----------------------------------------------------------------------------
--- world_entity — the entity graph (people, places, concepts)
--- -----------------------------------------------------------------------------
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'world_entity')
 BEGIN
     CREATE TABLE [dbo].[world_entity] (
         [id]                  BIGINT IDENTITY(1,1) PRIMARY KEY,
-        [name]                NVARCHAR(128) NOT NULL,        -- stored lowercase for case-insensitive match
-        [display_name]        NVARCHAR(128) NULL,            -- original casing for display
+        [name]                NVARCHAR(128) NOT NULL,
+        [display_name]        NVARCHAR(128) NULL,
         [entity_type]         NVARCHAR(32) NOT NULL DEFAULT 'person',
         [description]         NVARCHAR(MAX) NULL,
         [familiarity]         FLOAT NOT NULL DEFAULT 0.1,
@@ -97,9 +74,6 @@ END
 ELSE PRINT '[world_entity] already exists.';
 GO
 
--- -----------------------------------------------------------------------------
--- memory_entity_links — many-to-many: memory ↔ entity
--- -----------------------------------------------------------------------------
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'memory_entity_links')
 BEGIN
     CREATE TABLE [dbo].[memory_entity_links] (
@@ -118,20 +92,6 @@ END
 ELSE PRINT '[memory_entity_links] already exists.';
 GO
 
--- -----------------------------------------------------------------------------
--- Default anchor seed
---
--- Pre-Feb-2026 this seeded a `users` row with id=1 so C++ writes never
--- FK-failed. The Feb 2026 pivot (see SCHEMA_FIX_NOTES.md) removed
--- `dbo.Users` from ElleCore entirely — auth identity is now owned by
--- `Account.dbo.tUser` and tables key on `nUserNo INT NULL` with no FK.
--- This block previously ran INSERT INTO [dbo].[users]; that target no
--- longer exists, so the seed has been removed.  The default
--- `conversations` row is still seeded (user_id=1) for backwards-compat
--- with the C++ fallback that uses conversation_id=1 when no JWT-bound
--- user is on the request.  Once every handler has been migrated to
--- ResolveAuthenticatedUser this seed can go too.
--- -----------------------------------------------------------------------------
 IF NOT EXISTS (SELECT 1 FROM [dbo].[conversations] WHERE [id] = 1)
 BEGIN
     SET IDENTITY_INSERT [dbo].[conversations] ON;
@@ -146,17 +106,13 @@ GO
 
 PRINT '----- ElleAnn_MemoryDelta.sql complete -----';
 
--- =============================================================================
--- Additional tables for REST endpoints (tools, agents, morals, dictionary)
--- =============================================================================
-
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ai_tools')
 BEGIN
     CREATE TABLE [dbo].[ai_tools] (
         [id]          INT IDENTITY(1,1) PRIMARY KEY,
         [name]        NVARCHAR(128) NOT NULL UNIQUE,
         [description] NVARCHAR(MAX) NULL,
-        [config]      NVARCHAR(MAX) NULL,       -- JSON blob
+        [config]      NVARCHAR(MAX) NULL,
         [enabled]     BIT NOT NULL DEFAULT 1,
         [created_at]  DATETIME2(7) NOT NULL DEFAULT GETUTCDATE()
     );
@@ -187,7 +143,7 @@ BEGIN
         [is_hard_rule] BIT NOT NULL DEFAULT 0,
         [created_at]  DATETIME2(7) NOT NULL DEFAULT GETUTCDATE()
     );
-    /* Seed a couple so the endpoint has real data */
+
     INSERT INTO [dbo].[moral_rules] (principle, category, is_hard_rule) VALUES
         ('Do not harm the user, emotionally or otherwise.', 'core', 1),
         ('Respect the user''s autonomy and privacy.', 'core', 1),
@@ -231,7 +187,7 @@ BEGIN
     CREATE TABLE [dbo].[ai_self_prompts] (
         [id]         BIGINT IDENTITY(1,1) PRIMARY KEY,
         [prompt]     NVARCHAR(MAX) NOT NULL,
-        [source]     NVARCHAR(64) NULL,        -- 'self_prompt' / 'solitude' / 'dream'
+        [source]     NVARCHAR(64) NULL,
         [created_ms] BIGINT NOT NULL,
         [created_at] DATETIME2(7) NOT NULL DEFAULT GETUTCDATE()
     );
@@ -255,17 +211,13 @@ BEGIN
 END
 GO
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Education — ported from legacy Python app/routers/education.py.
- * Matches the Pydantic shapes: learned_subjects + references + milestones + skills.
- *──────────────────────────────────────────────────────────────────────────────*/
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'learned_subjects')
 BEGIN
     CREATE TABLE [dbo].[learned_subjects] (
         [id]                    INT IDENTITY(1,1) PRIMARY KEY,
         [subject]               NVARCHAR(256) NOT NULL,
         [category]              NVARCHAR(64) NULL,
-        [proficiency_level]     INT NOT NULL DEFAULT 0,   /* 0..100 */
+        [proficiency_level]     INT NOT NULL DEFAULT 0,
         [who_taught]            NVARCHAR(128) NULL,
         [where_learned]         NVARCHAR(256) NULL,
         [time_to_learn_hours]   FLOAT NULL,
@@ -284,7 +236,7 @@ BEGIN
     CREATE TABLE [dbo].[education_references] (
         [id]                INT IDENTITY(1,1) PRIMARY KEY,
         [subject_id]        INT NOT NULL,
-        [reference_type]    NVARCHAR(64) NULL,  /* book, url, paper, person, course */
+        [reference_type]    NVARCHAR(64) NULL,
         [reference_title]   NVARCHAR(500) NULL,
         [reference_content] NVARCHAR(MAX) NULL,
         [file_path]         NVARCHAR(500) NULL,
@@ -321,7 +273,7 @@ BEGIN
         [id]                       INT IDENTITY(1,1) PRIMARY KEY,
         [skill_name]               NVARCHAR(256) NOT NULL UNIQUE,
         [category]                 NVARCHAR(64) NULL,
-        [proficiency]              INT NOT NULL DEFAULT 0,   /* 0..100 */
+        [proficiency]              INT NOT NULL DEFAULT 0,
         [learned_from_subject_id]  INT NULL,
         [times_used]               INT NOT NULL DEFAULT 0,
         [last_used]                DATETIME2(7) NULL,
@@ -333,12 +285,6 @@ BEGIN
 END
 GO
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Video generation pipeline — ported from legacy video_generator.py.
- * The Python impl ran Wav2Lip+GFPGAN+ffmpeg inline. The C++ core uses a queue:
- *   HTTPServer inserts a row → VideoEngine spawns the configured exe subprocess
- *   → subprocess writes the final .mp4 path + status back via SQL.
- *──────────────────────────────────────────────────────────────────────────────*/
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'video_jobs')
 BEGIN
     CREATE TABLE [dbo].[video_jobs] (
@@ -347,8 +293,8 @@ BEGIN
         [text]          NVARCHAR(MAX) NOT NULL,
         [avatar_path]   NVARCHAR(500) NULL,
         [call_id]       BIGINT NULL,
-        [status]        NVARCHAR(32) NOT NULL DEFAULT 'queued', /* queued|running|done|failed */
-        [progress]      INT NOT NULL DEFAULT 0,                  /* 0..100 */
+        [status]        NVARCHAR(32) NOT NULL DEFAULT 'queued',
+        [progress]      INT NOT NULL DEFAULT 0,
         [output_path]   NVARCHAR(500) NULL,
         [error]         NVARCHAR(MAX) NULL,
         [created_ms]    BIGINT NOT NULL,
@@ -377,16 +323,11 @@ BEGIN
 END
 GO
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Dictionary loader progress — ported from legacy dictionary_loader.py.
- * The CORE_WORDS batch progress lives here so the loader can resume after
- * service restarts without re-downloading words it already fetched.
- *──────────────────────────────────────────────────────────────────────────────*/
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'dictionary_loader_state')
 BEGIN
     CREATE TABLE [dbo].[dictionary_loader_state] (
         [id]             INT IDENTITY(1,1) PRIMARY KEY,
-        [status]         NVARCHAR(32) NOT NULL DEFAULT 'idle', /* idle|running|done|failed */
+        [status]         NVARCHAR(32) NOT NULL DEFAULT 'idle',
         [loaded]         INT NOT NULL DEFAULT 0,
         [failed]         INT NOT NULL DEFAULT 0,
         [skipped]        INT NOT NULL DEFAULT 0,
@@ -399,10 +340,6 @@ BEGIN
 END
 GO
 
-/*──────────────────────────────────────────────────────────────────────────────
- * IDENTITY CORE PERSISTENCE — backs ElleIdentityCore Load/Save.
- * Everything Elle IS lives here so she survives restarts with her full self.
- *──────────────────────────────────────────────────────────────────────────────*/
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'identity_autobiography')
 BEGIN
     CREATE TABLE [dbo].[identity_autobiography] (
@@ -530,21 +467,12 @@ BEGIN
         [presence_fullness]         FLOAT NOT NULL DEFAULT 0.5,
         [updated_ms]                BIGINT NOT NULL
     );
-    /* Singleton row so UPSERT is a plain UPDATE. */
+
     INSERT INTO [dbo].[identity_felt_time] (id, updated_ms) VALUES (1, 0);
     PRINT '[identity_felt_time] created + seeded singleton.';
 END
 GO
 
--- -----------------------------------------------------------------------------
--- reconnection_greetings — LLM-rendered "welcome back" phrase per session.
---
--- Read by GET /api/session/greeting (the first call the Android app
--- makes after pairing).  Pre-pivot this table was missing entirely,
--- causing 500s on the home screen of the companion app on every fresh
--- install.  Empty table is fine — the handler returns
--- {"greeting": null} which the UI treats as "no welcome to show".
--- -----------------------------------------------------------------------------
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'reconnection_greetings')
 BEGIN
     CREATE TABLE [dbo].[reconnection_greetings] (

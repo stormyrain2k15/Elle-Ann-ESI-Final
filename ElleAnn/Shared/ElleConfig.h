@@ -1,10 +1,3 @@
-/*******************************************************************************
- * ElleConfig.h — Central Configuration Loader
- * 
- * Parses elle_master_config.json and provides typed access to all settings.
- * Singleton pattern — one config instance shared across the process.
- * Supports hot-reload via file watch.
- ******************************************************************************/
 #pragma once
 #ifndef ELLE_CONFIG_H
 #define ELLE_CONFIG_H
@@ -16,7 +9,6 @@
 #include <vector>
 #include <functional>
 
-/* Minimal JSON value types for our embedded parser (no external deps) */
 enum class JsonType { Null, Bool, Int, Float, String, Array, Object };
 
 struct JsonValue {
@@ -39,9 +31,6 @@ struct JsonValue {
     bool has(const std::string& key) const;
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * LLM Provider Config
- *──────────────────────────────────────────────────────────────────────────────*/
 struct LLMProviderConfig {
     bool        enabled = false;
     std::string api_url;
@@ -54,9 +43,9 @@ struct LLMProviderConfig {
     float       presence_penalty = 0.0f;
     uint32_t    timeout_ms = 30000;
     uint32_t    rate_limit_rpm = 60;
-    /* Local-specific */
+
     std::string model_path;
-    std::string binary_path;           /* path to llama-cli.exe; blank=PATH */
+    std::string binary_path;
     uint32_t    context_size = 8192;
     uint32_t    gpu_layers = 0;
     uint32_t    threads = 4;
@@ -68,11 +57,7 @@ struct LLMProviderConfig {
 
 struct LLMConfig {
     ELLE_LLM_MODE mode = LLM_MODE_HYBRID;
-    /* Named provider IDs ("groq", "openai", "anthropic", "lm_studio",
-     * "local_llama", "custom_api"). Stored as string (not the enum) so
-     * the JSON config is the source of truth and no enum<->string table
-     * round-trip is needed at load time. ElleLLMEngine::SelectProvider
-     * resolves these names to providers at call time.                    */
+
     std::string primary_provider  = "groq";
     std::string fallback_provider = "local_llama";
     bool        stream = true;
@@ -85,9 +70,6 @@ struct LLMConfig {
     std::unordered_map<std::string, LLMProviderConfig> providers;
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Emotion Trigger Config
- *──────────────────────────────────────────────────────────────────────────────*/
 struct EmotionTriggerConfig {
     std::string pattern;
     std::string emotion;
@@ -107,9 +89,6 @@ struct EmotionConfig {
     std::vector<EmotionTriggerConfig> triggers;
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Service Config
- *──────────────────────────────────────────────────────────────────────────────*/
 struct ServiceConfig {
     uint32_t    iocp_threads = 4;
     uint32_t    heartbeat_ms = 5000;
@@ -151,10 +130,7 @@ struct MemoryConfig {
 };
 
 struct HTTPConfig {
-    /* Bind default: 0.0.0.0 so the service is reachable from outside the
-     * LAN when the host is placed in a DMZ / port-forwarded. Operators
-     * can still override via http_server.bind_address in config.
-     */
+
     std::string bind_address = "0.0.0.0";
     uint32_t    port = 8000;
     std::string ws_path = "/command";
@@ -163,21 +139,14 @@ struct HTTPConfig {
     std::string jwt_secret;
     uint32_t    jwt_expiry_hours = 24;
 
-    /* CORS + rate-limiting knobs consumed by HTTPServer. cors_origins
-     * is stored as a comma-separated string to keep parsing simple —
-     * "*" (or a blank list) means allow-all; otherwise only the first
-     * matching origin is emitted in Access-Control-Allow-Origin.        */
     bool        cors_enabled = true;
     std::string cors_origins = "http://localhost:3000";
-    uint32_t    rate_limit_rpm = 0;           /* 0 = disabled */
+    uint32_t    rate_limit_rpm = 0;
     uint32_t    max_concurrent_connections = 256;
-    uint32_t    max_ws_frame_bytes = 1 * 1024 * 1024;  /* 1 MiB default */
-    uint32_t    max_upload_bytes   = 10 * 1024 * 1024; /* 10 MiB default */
+    uint32_t    max_ws_frame_bytes = 1 * 1024 * 1024;
+    uint32_t    max_upload_bytes   = 10 * 1024 * 1024;
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * MASTER CONFIG CLASS
- *──────────────────────────────────────────────────────────────────────────────*/
 class ElleConfig {
 public:
     static ElleConfig& Instance();
@@ -185,29 +154,15 @@ public:
     bool Load(const std::string& configPath);
     bool LoadFromServerInfo(const std::string& serverInfoPath);
 
-    /** Install minimal in-memory defaults so a service can start even
-     *  when no config file is reachable. Used by ElleServiceBase as the
-     *  graceful-fallback path; matches no_auth=1 / bind=0.0.0.0 testing
-     *  defaults so the operator can hit /api/diag/health and recover.  */
     void LoadDefaults();
 
-    /** Best-effort layer of additional JSON keys on top of the current
-     *  in-memory config tree. Used to combine a per-service ServerInfo
-     *  identity load with the master `elle_master_config.json` runtime
-     *  keys. Missing or malformed source files are no-ops (returns false
-     *  but does not clobber the existing tree).                         */
     bool LayerJsonOver(const std::string& jsonPath);
 
-    /** Serialise the in-memory config tree to JSON, with sensitive
-     *  fields (api_key, password, jwt_secret, admin_key, sql passwords)
-     *  redacted.  Used by /api/diag/effective-config so the operator
-     *  can confirm what was actually loaded without secret exposure.   */
     std::string DumpJsonRedacted() const;
     bool Reload();
-    
+
     void RegisterReloadCallback(std::function<void()> cb);
 
-    /* Typed accessors */
     const LLMConfig&     GetLLM()      const { return m_llm; }
     const EmotionConfig& GetEmotion()  const { return m_emotion; }
     const ServiceConfig& GetService()  const { return m_service; }
@@ -215,7 +170,6 @@ public:
     const MemoryConfig&  GetMemory()   const { return m_memory; }
     const HTTPConfig&    GetHTTP()     const { return m_http; }
 
-    /* Generic access for Lua scripts */
     std::string GetString(const std::string& path, const std::string& def = "") const;
     int64_t     GetInt(const std::string& path, int64_t def = 0) const;
     double      GetFloat(const std::string& path, double def = 0.0) const;
@@ -236,7 +190,7 @@ private:
     std::string     m_configPath;
     JsonValue       m_root;
     mutable std::mutex m_mutex;
-    
+
     LLMConfig       m_llm;
     EmotionConfig   m_emotion;
     ServiceConfig   m_service;
@@ -247,4 +201,4 @@ private:
     std::vector<std::function<void()>> m_reloadCallbacks;
 };
 
-#endif /* ELLE_CONFIG_H */
+#endif

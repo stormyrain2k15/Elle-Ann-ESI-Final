@@ -19,7 +19,6 @@ import com.elleann.android.navigation.ElleRoutes
 import com.elleann.android.ui.components.*
 import com.elleann.android.ui.theme.*
 
-// ─── Shared settings scaffold ─────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsScaffold(title: String, onBack: () -> Unit, content: @Composable (PaddingValues) -> Unit) {
@@ -38,9 +37,6 @@ private fun SettingsScaffold(title: String, onBack: () -> Unit, content: @Compos
     )
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// SETTINGS HUB
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun SettingsScreen(
     containerExtended: AppContainerExtended,
@@ -55,7 +51,7 @@ fun SettingsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // Connection info
+
             item {
                 IsyaPanel(title = "CONNECTION") {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -101,9 +97,6 @@ private fun SettingsNavItem(label: String, subtitle: String, icon: androidx.comp
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// ADMIN KEY SETTINGS
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun AdminKeySettingsScreen(adminKeyStore: AdminKeyStore, onBack: () -> Unit) {
     var key by remember { mutableStateOf(adminKeyStore.getKey()) }
@@ -150,9 +143,6 @@ fun AdminKeySettingsScreen(adminKeyStore: AdminKeyStore, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// COLOR CODE SETTINGS
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun ColorCodeSettingsScreen(onBack: () -> Unit) {
     SettingsScaffold("ColorCode", onBack) { padding ->
@@ -183,9 +173,6 @@ fun ColorCodeSettingsScreen(onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// APPEARANCE
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun AppearanceScreen(onBack: () -> Unit) {
     SettingsScaffold("Appearance", onBack) { padding ->
@@ -197,9 +184,6 @@ fun AppearanceScreen(onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// NOTIFICATIONS
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun NotificationsScreen(onBack: () -> Unit) {
     SettingsScaffold("Notifications", onBack) { padding ->
@@ -209,9 +193,6 @@ fun NotificationsScreen(onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// ABOUT
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun SettingsAboutScreen(onBack: () -> Unit) {
     SettingsScaffold("About", onBack) { padding ->

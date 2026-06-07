@@ -31,7 +31,6 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
-// ─── Shared section scaffold ──────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SectionScaffold(
@@ -54,9 +53,6 @@ private fun SectionScaffold(
     )
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 1. GOALS SECTION
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun GoalsSection(container: AppContainerExtended, onBack: () -> Unit) {
     var goals by remember { mutableStateOf<List<Goal>>(emptyList()) }
@@ -104,9 +100,6 @@ fun GoalsSection(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 2. THOUGHTS SECTION (Self-prompts)
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun ThoughtsSection(container: AppContainerExtended, onBack: () -> Unit) {
     var prompts by remember { mutableStateOf<List<SelfPrompt>>(emptyList()) }
@@ -169,9 +162,6 @@ private fun ThoughtCard(prompt: SelfPrompt) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 3. PRIVATE INNER LIFE (Apache — Named Pipes SQL on server side)
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun PrivateInnerLifeSection(container: AppContainerExtended, onBack: () -> Unit) {
     var thoughts by remember { mutableStateOf<List<PrivateThought>>(emptyList()) }
@@ -224,9 +214,6 @@ fun PrivateInnerLifeSection(container: AppContainerExtended, onBack: () -> Unit)
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 4. AUTOBIOGRAPHY (Apache — Named Pipes SQL)
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun AutobiographySection(container: AppContainerExtended, onBack: () -> Unit) {
     var entries by remember { mutableStateOf<List<AutobiographyEntry>>(emptyList()) }
@@ -261,9 +248,6 @@ fun AutobiographySection(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 5. IDENTITY (Apache — traits + snapshots + growth log + preferences)
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun IdentitySection(container: AppContainerExtended, onBack: () -> Unit) {
     var traits by remember { mutableStateOf<List<IdentityTrait>>(emptyList()) }
@@ -348,9 +332,6 @@ fun IdentitySection(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 6. FELT TIME (Apache — Named Pipes SQL singleton)
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun FeltTimeSection(container: AppContainerExtended, onBack: () -> Unit) {
     var ft by remember { mutableStateOf<FeltTime?>(null) }
@@ -398,9 +379,6 @@ private fun FeltTimeRow(label: String, value: String) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 7. CONSENT LOG (Apache — Named Pipes SQL)
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun ConsentLogSection(container: AppContainerExtended, onBack: () -> Unit) {
     var log by remember { mutableStateOf<List<ConsentLogEntry>>(emptyList()) }
@@ -443,9 +421,6 @@ fun ConsentLogSection(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 8. OBSERVATORY — 102 emotion dimensions live
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun ObservatorySection(container: AppContainerExtended, webSocket: ElleWebSocket, onBack: () -> Unit) {
     var dims by remember { mutableStateOf<List<EmotionDimension>>(emptyList()) }
@@ -456,11 +431,10 @@ fun ObservatorySection(container: AppContainerExtended, webSocket: ElleWebSocket
         loading = false
     }
 
-    // Live updates from WebSocket
     LaunchedEffect(Unit) {
         webSocket.events.collect { event ->
             if (event is WsEvent.EmotionUpdate) {
-                // Refresh dimensions on emotion broadcast
+
                 runCatching { container.extendedApi.getEmotionDimensions() }.onSuccess { dims = it.dimensions }
             }
         }
@@ -485,9 +459,6 @@ fun ObservatorySection(container: AppContainerExtended, webSocket: ElleWebSocket
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 9. PATTERNS
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun PatternsSection(container: AppContainerExtended, onBack: () -> Unit) {
     var patterns by remember { mutableStateOf<List<EmotionalPattern>>(emptyList()) }
@@ -516,9 +487,6 @@ fun PatternsSection(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 10. LEARNING (subjects + skills)
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun LearningSection(
     container: AppContainerExtended,
@@ -547,7 +515,7 @@ fun LearningSection(
                 LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(subjects, key = { it.id }) { sub ->
                         Surface(shape = RoundedCornerShape(10.dp), color = IsyaDusk, modifier = Modifier.fillMaxWidth().let { m ->
-                            m // clickable handled by onSubjectDetail
+                            m
                         }) {
                             Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Column(modifier = Modifier.weight(1f)) {
@@ -616,9 +584,6 @@ fun SubjectDetailSection(subjectId: Int, container: AppContainerExtended, onBack
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 11. CAPABILITIES
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun CapabilitiesSection(container: AppContainerExtended, onBack: () -> Unit) {
     var tools by remember { mutableStateOf<List<AiTool>>(emptyList()) }
@@ -664,9 +629,6 @@ fun CapabilitiesSection(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 12. ETHICS
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun EthicsSection(container: AppContainerExtended, onBack: () -> Unit) {
     var rules by remember { mutableStateOf<List<MoralRule>>(emptyList()) }
@@ -701,9 +663,6 @@ fun EthicsSection(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 13. AUTONOMY
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun AutonomySection(container: AppContainerExtended, onBack: () -> Unit) {
     var status by remember { mutableStateOf<AutonomyStatus?>(null) }
@@ -743,9 +702,6 @@ fun AutonomySection(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 14. SELF IMAGE
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun SelfImageSection(container: AppContainerExtended, onBack: () -> Unit) {
     var selfImage by remember { mutableStateOf<SelfImageResponse?>(null) }
@@ -771,9 +727,6 @@ fun SelfImageSection(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 15. X-CHRONICLE (AUTH_USER — pairing is the gate)
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun XChronicleSection(container: AppContainerExtended, webSocket: ElleWebSocket, onBack: () -> Unit) {
     var xState by remember { mutableStateOf<XState?>(null) }
@@ -793,7 +746,6 @@ fun XChronicleSection(container: AppContainerExtended, webSocket: ElleWebSocket,
         loading = false
     }
 
-    // Live hormone ticks from WebSocket
     var liveHormones by remember { mutableStateOf<XHormones?>(null) }
     LaunchedEffect(Unit) {
         webSocket.events.collect { event ->

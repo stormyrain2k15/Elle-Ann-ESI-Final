@@ -4,17 +4,6 @@ import android.util.Log
 import okhttp3.Interceptor
 import okhttp3.Response
 
-/**
- * RedactingLoggingInterceptor — logs request line and response code only.
- *
- * Never logs:
- *   - Authorization header values (contains JWT)
- *   - x-admin-key header values (admin secret)
- *   - Cookie / Set-Cookie headers
- *   - Response body (contains chat content, memory data, private thoughts)
- *
- * Only active in debug builds. Silent in release.
- */
 class RedactingLoggingInterceptor : Interceptor {
 
     private val REDACTED_HEADERS = setOf(

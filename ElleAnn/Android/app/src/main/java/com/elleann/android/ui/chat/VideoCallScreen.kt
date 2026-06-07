@@ -26,7 +26,6 @@ import com.elleann.android.ui.theme.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
-// ─── State ───────────────────────────────────────────────────────────────────
 data class VideoCallState(
     val callId: Long       = 0L,
     val jobId: String?     = null,
@@ -36,7 +35,6 @@ data class VideoCallState(
     val error: String?     = null,
 )
 
-// ─── ViewModel ───────────────────────────────────────────────────────────────
 class VideoCallViewModel(
     private val callId: Long,
     private val container: AppContainerExtended,
@@ -50,7 +48,7 @@ class VideoCallViewModel(
 
     private fun startCall() {
         viewModelScope.launch {
-            // Queue video generation job for this call
+
             runCatching {
                 container.extendedApi.generateVideo(
                     com.elleann.android.data.models.GenerateVideoRequest(
@@ -67,10 +65,9 @@ class VideoCallViewModel(
         }
     }
 
-    /** Poll video job status until done or failed */
     private fun pollVideoJob(jobId: String) {
         viewModelScope.launch {
-            repeat(60) { // max 60 × 2s = 2 min timeout
+            repeat(60) {
                 delay(2_000)
                 runCatching { container.extendedApi.getVideoStatus(jobId) }
                     .onSuccess { job ->
@@ -88,7 +85,7 @@ class VideoCallViewModel(
                         }
                     }
             }
-            // Timeout
+
             if (_state.value.videoUrl == null) {
                 _state.update { it.copy(error = "Video generation timed out", loading = false) }
             }
@@ -103,7 +100,6 @@ class VideoCallViewModel(
     }
 }
 
-// ─── Screen ──────────────────────────────────────────────────────────────────
 @Composable
 fun VideoCallScreen(
     callId: Long,
@@ -145,7 +141,7 @@ fun VideoCallScreen(
             }
 
             state.videoUrl != null -> {
-                // Video WebView — loads mp4 from /api/video/file/{job_id}
+
                 Column(modifier = Modifier.fillMaxSize()) {
                     AndroidView(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -161,13 +157,13 @@ fun VideoCallScreen(
                         },
                         update   = { it.loadUrl(state.videoUrl!!) }
                     )
-                    // Controls bar
+
                     Surface(color = IsyaHeader) {
                         Row(
                             modifier              = Modifier.fillMaxWidth().padding(16.dp),
                             horizontalArrangement = Arrangement.Center,
                         ) {
-                            // End call
+
                             IconButton(
                                 onClick  = { vm.endCall(onBack) },
                                 modifier = Modifier

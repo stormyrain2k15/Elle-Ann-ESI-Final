@@ -27,10 +27,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-// ─── Pairing modes ───────────────────────────────────────────────────────────
 enum class PairMode { SIGN_IN, PAIR_CODE }
 
-// ─── ViewModel ───────────────────────────────────────────────────────────────
 data class PairState(
     val mode:     PairMode = PairMode.SIGN_IN,
     val host:     String   = "",
@@ -53,9 +51,7 @@ class PairViewModel(
             host = prefill?.host ?: "",
             port = prefill?.port?.toString() ?: "8000",
             code = prefill?.code ?: "",
-            /* If a pair-code was scanned from the QR, default to that
-             * mode so the scan-to-finish path stays one tap. Otherwise
-             * Sign-In is the canonical Feb 2026 path. */
+
             mode = if (!prefill?.code.isNullOrBlank()) PairMode.PAIR_CODE else PairMode.SIGN_IN,
         )
     )
@@ -68,12 +64,6 @@ class PairViewModel(
     fun onUsername(v: String) = _state.update { it.copy(username = v, error = null) }
     fun onPassword(v: String) = _state.update { it.copy(password = v, error = null) }
 
-    /** Submit the pair/login request. The body shape depends on [state.mode]:
-     *   - SIGN_IN   → { game_user, game_pass, device_id, device_name }
-     *   - PAIR_CODE → { code, device_id, device_name }
-     *
-     *  Both hit POST /api/auth/pair — the backend distinguishes by which
-     *  fields are populated.                                               */
     fun submit(deviceId: String, onSuccess: () -> Unit) {
         val s = _state.value
         val port = s.port.toIntOrNull() ?: run {
@@ -101,13 +91,7 @@ class PairViewModel(
             _state.update { it.copy(loading = true, error = null) }
             runCatching {
                 val api = container.apiFor(s.host, port)
-                /* Feb 2026 pivot: only one auth path now — username/password
-                 * straight through to usp_GetLogin.  The pair-code mode is
-                 * retired and the server returns 410 Gone for /api/auth/pair,
-                 * so both UI modes funnel into /api/auth/login here.  For
-                 * users coming in via the PAIR_CODE mode we treat the code
-                 * as the username — the backend will 401 it, which is the
-                 * right signal that pair codes are dead.                   */
+
                 val body = com.elleann.android.data.models.LoginRequest(
                     username   = if (s.mode == PairMode.SIGN_IN) s.username else s.code,
                     password   = s.password,
@@ -127,8 +111,7 @@ class PairViewModel(
                 _state.update { it.copy(loading = false, success = true) }
                 onSuccess()
             }.onFailure { e ->
-                /* Surface HTTP error body when Retrofit packed one —
-                 * otherwise the user sees "HTTP 401" with no context. */
+
                 val msg = when (e) {
                     is retrofit2.HttpException -> {
                         val raw = runCatching { e.response()?.errorBody()?.string() }.getOrNull()
@@ -142,7 +125,6 @@ class PairViewModel(
     }
 }
 
-// ─── Screen ───────────────────────────────────────────────────────────────────
 @Composable
 fun PairScreen(
     container: AppContainer,
@@ -160,8 +142,7 @@ fun PairScreen(
     )
     val state by vm.state.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
-    /* Stable per-install device id. ANDROID_ID is tied to (user, signing key,
-     * device) — exactly what PairedDevices wants as its primary key.       */
+
     val deviceId = remember {
         @Suppress("HardwareIds")
         android.provider.Settings.Secure.getString(
@@ -203,13 +184,12 @@ fun PairScreen(
 
             IsyaPanel(title = "CONNECT TO SERVER", flowingBorder = true) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    // Mode selector
+
                     ModeSwitch(
                         current = state.mode,
                         onChange = vm::onMode,
                     )
 
-                    // Server coords (both modes)
                     IsyaInputField(
                         value         = state.host,
                         onValueChange = vm::onHost,

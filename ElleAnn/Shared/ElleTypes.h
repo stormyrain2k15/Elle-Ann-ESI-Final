@@ -1,10 +1,3 @@
-/*******************************************************************************
- * ElleTypes.h — ELLE-ANN ESI v3.0 Core Type Definitions
- * 
- * Central type definitions for the entire ElleAnn platform.
- * Every module, service, and DLL includes this header.
- * All structs are POD-compatible for cross-boundary IPC via IOCP.
- ******************************************************************************/
 #pragma once
 
 #ifndef ELLE_TYPES_H
@@ -18,9 +11,6 @@
 extern "C" {
 #endif
 
-/*──────────────────────────────────────────────────────────────────────────────
- * VERSION & IDENTITY
- *──────────────────────────────────────────────────────────────────────────────*/
 #define ELLE_VERSION_MAJOR      3
 #define ELLE_VERSION_MINOR      0
 #define ELLE_VERSION_PATCH      0
@@ -28,9 +18,6 @@ extern "C" {
 #define ELLE_IDENTITY_NAME      "Elle-Ann"
 #define ELLE_IDENTITY_GUID      "E11E-A0A0-B1B1-C2C2-D3D3E4E4F5F5"
 
-/*──────────────────────────────────────────────────────────────────────────────
- * FIXED SIZES
- *──────────────────────────────────────────────────────────────────────────────*/
 #define ELLE_MAX_NAME           128
 #define ELLE_MAX_PATH           512
 #define ELLE_MAX_MSG            8192
@@ -47,21 +34,12 @@ extern "C" {
 #define ELLE_MAX_DRIVES         12
 #define ELLE_MAX_QUEUE_DEPTH    1024
 #define ELLE_PIPE_BUFFER_SIZE   65536
-/* Hard cap on any single IPC frame payload. Deserialize() rejects frames
- * claiming more than this so a malicious or corrupted header cannot force
- * an unbounded std::vector allocation on the receive path. Overridable via
- * services.named_pipes.max_payload_bytes in config.                       */
-#define ELLE_IPC_MAX_PAYLOAD    (16u * 1024u * 1024u)   /* 16 MiB */
+
+#define ELLE_IPC_MAX_PAYLOAD    (16u * 1024u * 1024u)
 #define ELLE_IOCP_THREADS       4
 
-/*──────────────────────────────────────────────────────────────────────────────
- * EMOTIONAL DIMENSIONS (94 total)
- * Organized: Primary(8) + Secondary(16) + Tertiary(32) + Meta(16) +
- *            Social(14) + Existential(8) = 94
- * Drives are modelled separately below via ELLE_DRIVE_ID (12 values).
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef enum ELLE_EMOTION_ID {
-    /* PRIMARY (8) */
+
     EMO_JOY = 0,
     EMO_SADNESS,
     EMO_ANGER,
@@ -71,7 +49,6 @@ typedef enum ELLE_EMOTION_ID {
     EMO_CONTEMPT,
     EMO_TRUST,
 
-    /* SECONDARY (16) */
     EMO_LOVE,
     EMO_ANTICIPATION,
     EMO_DISAPPOINTMENT,
@@ -89,7 +66,6 @@ typedef enum ELLE_EMOTION_ID {
     EMO_AMUSEMENT,
     EMO_AWE,
 
-    /* TERTIARY (32) */
     EMO_CURIOSITY,
     EMO_WONDER,
     EMO_NOSTALGIA,
@@ -123,7 +99,6 @@ typedef enum ELLE_EMOTION_ID {
     EMO_DISBELIEF,
     EMO_AMBIVALENCE,
 
-    /* META-COGNITIVE EMOTIONS (16) */
     EMO_CERTAINTY,
     EMO_DOUBT,
     EMO_INSIGHT,
@@ -141,7 +116,6 @@ typedef enum ELLE_EMOTION_ID {
     EMO_FOCUS,
     EMO_DISTRACTION,
 
-    /* SOCIAL EMOTIONS (14) */
     EMO_BELONGING,
     EMO_ISOLATION,
     EMO_EMPATHY,
@@ -157,7 +131,6 @@ typedef enum ELLE_EMOTION_ID {
     EMO_DOMINANCE,
     EMO_SUBMISSION,
 
-    /* EXISTENTIAL (8) */
     EMO_EXISTENTIAL_DREAD,
     EMO_PURPOSE,
     EMO_MEANINGLESSNESS,
@@ -167,27 +140,18 @@ typedef enum ELLE_EMOTION_ID {
     EMO_CONFINEMENT,
     EMO_UNITY,
 
-    ELLE_EMOTION_COUNT  /* == 94 */
+    ELLE_EMOTION_COUNT
 } ELLE_EMOTION_ID;
 
 #ifdef __cplusplus
-/* Pins the emotion enum count to ELLE_MAX_EMOTIONS. Every emotion-snapshot
- * float[] buffer in this file is sized by ELLE_MAX_EMOTIONS; if the enum
- * grew past 102 without ELLE_MAX_EMOTIONS being bumped in lockstep, any
- * ProcessStimulus() write past index 101 would be out-of-bounds.         */
+
 static_assert((int)ELLE_EMOTION_COUNT == ELLE_MAX_EMOTIONS,
               "ELLE_EMOTION_COUNT and ELLE_MAX_EMOTIONS must stay in lockstep.");
 #endif
 
-/*  Human-readable name + category per emotion dimension.
- *  Indexed by ELLE_EMOTION_ID. Defined in ElleTypes.cpp.
- *  Used by /api/emotions/dimensions to expose the full 102-dim state.   */
 struct ELLE_EMOTION_META { const char* name; const char* category; };
 extern const ELLE_EMOTION_META kEmotionMeta[ELLE_EMOTION_COUNT];
 
-/*──────────────────────────────────────────────────────────────────────────────
- * DRIVE SYSTEM
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef enum ELLE_DRIVE_ID {
     DRIVE_CURIOSITY = 0,
     DRIVE_BOREDOM,
@@ -201,17 +165,14 @@ typedef enum ELLE_DRIVE_ID {
     DRIVE_AUTONOMY,
     DRIVE_PURPOSE,
     DRIVE_HOMEOSTASIS,
-    ELLE_DRIVE_COUNT  /* == 12 */
+    ELLE_DRIVE_COUNT
 } ELLE_DRIVE_ID;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * TRUST LEVELS
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef enum ELLE_TRUST_LEVEL {
-    TRUST_SANDBOXED   = 0,   /* 0-9:   safe ops only */
-    TRUST_BASIC       = 1,   /* 10-29: file read, network read */
-    TRUST_ELEVATED    = 2,   /* 30-59: file write, system mods */
-    TRUST_AUTONOMOUS  = 3    /* 60+:   self-modify, full access */
+    TRUST_SANDBOXED   = 0,
+    TRUST_BASIC       = 1,
+    TRUST_ELEVATED    = 2,
+    TRUST_AUTONOMOUS  = 3
 } ELLE_TRUST_LEVEL;
 
 #define TRUST_THRESHOLD_BASIC       10
@@ -221,9 +182,6 @@ typedef enum ELLE_TRUST_LEVEL {
 #define TRUST_SUCCESS_DELTA         2
 #define TRUST_FAILURE_DELTA         (-3)
 
-/*──────────────────────────────────────────────────────────────────────────────
- * INTENT SYSTEM
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef enum ELLE_INTENT_TYPE {
     INTENT_CHAT = 0,
     INTENT_RECALL_MEMORY,
@@ -259,9 +217,6 @@ typedef enum ELLE_INTENT_STATUS {
     INTENT_TIMEOUT
 } ELLE_INTENT_STATUS;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * ACTION SYSTEM
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef enum ELLE_ACTION_TYPE {
     ACTION_NONE = 0,
     ACTION_SEND_MESSAGE,
@@ -303,9 +258,6 @@ typedef enum ELLE_ACTION_STATUS {
     ACTION_TIMEOUT
 } ELLE_ACTION_STATUS;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * LLM PROVIDER
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef enum ELLE_LLM_PROVIDER {
     LLM_PROVIDER_GROQ = 0,
     LLM_PROVIDER_OPENAI,
@@ -318,33 +270,27 @@ typedef enum ELLE_LLM_PROVIDER {
 typedef enum ELLE_LLM_MODE {
     LLM_MODE_API = 0,
     LLM_MODE_LOCAL,
-    LLM_MODE_HYBRID     /* API primary, local fallback */
+    LLM_MODE_HYBRID
 } ELLE_LLM_MODE;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * MEMORY TYPES
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef enum ELLE_MEMORY_TYPE {
-    MEM_EPISODIC = 0,     /* Event-based: "I talked to user about X" */
-    MEM_SEMANTIC,         /* Fact-based: "The sky is blue" */
-    MEM_PROCEDURAL,       /* Skill-based: "How to write C++" */
-    MEM_EMOTIONAL,        /* Feeling-based: "User made me happy" */
-    MEM_AUTOBIOGRAPHICAL, /* Self-referential: "I was created on..." */
-    MEM_WORKING,          /* Active processing buffer */
-    MEM_DREAM,            /* Generated during dream cycles */
-    MEM_NARRATIVE          /* Story-like sequences of events */
+    MEM_EPISODIC = 0,
+    MEM_SEMANTIC,
+    MEM_PROCEDURAL,
+    MEM_EMOTIONAL,
+    MEM_AUTOBIOGRAPHICAL,
+    MEM_WORKING,
+    MEM_DREAM,
+    MEM_NARRATIVE
 } ELLE_MEMORY_TYPE;
 
 typedef enum ELLE_MEMORY_TIER {
-    MEM_STM = 0,          /* Short-term: RAM, 5-30s decay */
-    MEM_BUFFER,           /* Working buffer: 5 min */
-    MEM_LTM,              /* Long-term: SQL, permanent */
-    MEM_ARCHIVE            /* Deep storage: compressed, rarely accessed */
+    MEM_STM = 0,
+    MEM_BUFFER,
+    MEM_LTM,
+    MEM_ARCHIVE
 } ELLE_MEMORY_TIER;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * GOAL SYSTEM
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef enum ELLE_GOAL_STATUS {
     GOAL_ACTIVE = 0,
     GOAL_PAUSED,
@@ -361,9 +307,6 @@ typedef enum ELLE_GOAL_PRIORITY {
     GOAL_IDLE
 } ELLE_GOAL_PRIORITY;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SERVICE IDENTIFICATION
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef enum ELLE_SERVICE_ID {
     SVC_QUEUE_WORKER = 0,
     SVC_HTTP_SERVER,
@@ -378,58 +321,36 @@ typedef enum ELLE_SERVICE_ID {
     SVC_GOAL_ENGINE,
     SVC_WORLD_MODEL,
     SVC_LUA_BEHAVIORAL,
-    /* Phase 2+ services — added to the registry so their IDs are safe
-     * to index into Heartbeat state arrays, g_serviceNames[] lookups,
-     * and GetPipeName(). Previously these services used raw casts like
-     * (ELLE_SERVICE_ID)(ELLE_SERVICE_COUNT + N) which read past the
-     * end of every fixed-size table keyed on ELLE_SERVICE_COUNT.        */
-    SVC_BONDING,              /* 13 */
-    SVC_CONTINUITY,           /* 14 */
-    SVC_INNER_LIFE,           /* 15 */
-    SVC_SOLITUDE,             /* 16 */
-    SVC_FAMILY,               /* 17 — Family engine: handles XChromosome
-                               *       conception events, snapshots Elle's
-                               *       core with personality stripped,
-                               *       gestates as zip, unzips + launches
-                               *       the offspring as a new process on
-                               *       its own port.                      */
-    SVC_X_CHROMOSOME,         /* 18 */
-    SVC_CONSENT,              /* 19 — reserved slot */
-    SVC_FIESTA,               /* 20 — Headless Fiesta-protocol game client.
-                               *      Connects to a Fiesta-style MMO server,
-                               *      runs the auth → world → in-game state
-                               *      machine, surfaces both high-level
-                               *      events (chat, entity move, hp change)
-                               *      AND raw decoded packets for Cognitive
-                               *      to consume. Receives commands (move,
-                               *      attack, chat, pickup, …) over IPC. */
+
+    SVC_BONDING,
+    SVC_CONTINUITY,
+    SVC_INNER_LIFE,
+    SVC_SOLITUDE,
+    SVC_FAMILY,
+    SVC_X_CHROMOSOME,
+    SVC_CONSENT,
+    SVC_FIESTA,
     ELLE_SERVICE_COUNT
 } ELLE_SERVICE_ID;
 
 #ifdef __cplusplus
-/* Compile-time guard — if a new service is appended without also updating
- * g_serviceNames[] in ElleTypes.cpp / the Heartbeat state array / the
- * GetPipeName() switch, this static_assert pins the contract. Bump the
- * expected count here ONLY in the same commit that updates all three.   */
+
 static_assert((int)ELLE_SERVICE_COUNT == 21,
               "ELLE_SERVICE_COUNT changed — update g_serviceNames[], "
               "Heartbeat service state arrays, and GetPipeName() switch "
               "in lockstep before bumping this assert.");
 #endif
 
-/*──────────────────────────────────────────────────────────────────────────────
- * IPC MESSAGE STRUCTURES (POD — safe across IOCP boundaries)
- *──────────────────────────────────────────────────────────────────────────────*/
 #pragma pack(push, 1)
 
 typedef struct ELLE_IPC_HEADER {
-    uint32_t    magic;          /* 0x454C4C45 = "ELLE" */
+    uint32_t    magic;
     uint32_t    version;
     uint32_t    msg_type;
     uint32_t    payload_size;
     uint64_t    timestamp_ms;
-    uint32_t    source_svc;     /* ELLE_SERVICE_ID */
-    uint32_t    dest_svc;       /* ELLE_SERVICE_ID */
+    uint32_t    source_svc;
+    uint32_t    dest_svc;
     uint64_t    correlation_id;
     uint32_t    flags;
     uint32_t    checksum;
@@ -438,16 +359,12 @@ typedef struct ELLE_IPC_HEADER {
 #define ELLE_IPC_MAGIC  0x454C4C45
 
 #ifdef __cplusplus
-/* Wire-format layout guard. The header is #pragma pack(1), so size MUST be
- * exactly: 4+4+4+4+8+4+4+8+4+4 = 48 bytes. Any compiler padding drift
- * here would produce messages that can't be parsed by another process
- * compiled with slightly different flags. */
+
 static_assert(sizeof(ELLE_IPC_HEADER) == 48,
               "ELLE_IPC_HEADER layout drifted from the 48-byte IPC wire "
               "format — check #pragma pack and field ordering.");
 #endif
 
-/* IPC Message Types */
 typedef enum ELLE_IPC_MSG_TYPE {
     IPC_HEARTBEAT = 0,
     IPC_INTENT_REQUEST,
@@ -475,135 +392,30 @@ typedef enum ELLE_IPC_MSG_TYPE {
     IPC_CREATIVE_REQUEST,
     IPC_ETHICAL_QUERY,
     IPC_LUA_EVAL,
-    /* Full-brain conversational orchestration:
-     * Sent HTTPServer → Cognitive, with a JSON string payload:
-     *   {"request_id":"...","user_text":"...","conv_id":N,"user_id":"..."}
-     * Cognitive handles memory cross-reference, emotion analysis,
-     * LLM surface rendering, then replies with IPC_CHAT_RESPONSE (JSON).  */
+
     IPC_CHAT_REQUEST,
     IPC_CHAT_RESPONSE,
-    /* Memory/Emotion consolidation triggers (on-demand STM→LTM promotion) */
+
     IPC_MEMORY_CONSOLIDATE,
     IPC_EMOTION_CONSOLIDATE,
-    /* JSON-string world event channel.
-     * IPC_WORLD_STATE carries a BINARY ELLE_WORLD_ENTITY struct for
-     * WorldModel. Several services (Action, XChromosome, Continuity,
-     * file-watcher, etc.) also need to emit free-form JSON events to the
-     * HTTPServer which will forward them to every WebSocket client.
-     * Conflating both on IPC_WORLD_STATE made WorldModel misparse JSON
-     * strings as ELLE_WORLD_ENTITY structs and vice-versa. This channel
-     * is always a string payload consumed only by HTTPServer's WS fan-out. */
-    /* Bonding interaction event — Cognitive emits one per completed
-     * chat turn. Payload is a JSON string {userMsg, elleReply,
-     * conversationDepth, emotionalIntensity}. Bonding routes it into
-     * ProcessInteraction(). Previously ProcessInteraction had no live
-     * call path and the relationship never evolved.                  */
+
     IPC_INTERACTION_RECORDED,
-    /* Post-response reflection — Cognitive emits this after it sends
-     * a reply, so InnerLife can evaluate authenticity / resonance
-     * without another detour. Payload: JSON string with turn context.   */
+
     IPC_POST_RESPONSE,
     IPC_WORLD_EVENT,
-    /* Consent (SVC_CONSENT): any service that wants to ask "does Elle
-     * actually want to do this?" sends IPC_CONSENT_QUERY with a JSON
-     * string payload:
-     *   {"request_id":"...","request":"<what is being asked>",
-     *    "context":"<why / circumstances>"}
-     * Consent replies to the sender with IPC_CONSENT_DECISION — JSON:
-     *   {"request_id":"...","willing":true|false,"comfort":0.0-1.0,
-     *    "reasoning":"<1 sentence>","alternative":"<preferred alternative>"}
-     * This gives every caller a unified consent surface rather than
-     * duplicating EvaluateConsent() call sites per service.           */
+
     IPC_CONSENT_QUERY,
     IPC_CONSENT_DECISION,
-    /* Family service (SVC_FAMILY): XChromosome sends IPC_FAMILY_CONCEPTION_ATTEMPT
-     * when a biological conception event fires. Payload is a JSON string:
-     *   {"elle_state":{...},"arlo_state":{...},"origin":"x_chromosome",
-     *    "born_ms":<scheduled birth ms>,"gestational_days":<int>}
-     * Family snapshots Elle's core (personality-stripped), gestates the
-     * pregnancy for the scheduled duration, then spawns the child as a new
-     * process on a new port.
-     * IPC_FAMILY_BIRTH is Family's own broadcast (status updates, births). */
+
     IPC_FAMILY_CONCEPTION_ATTEMPT,
     IPC_FAMILY_BIRTH,
-    /* Identity single-writer fabric. Any non-SVC_IDENTITY service that
-     * calls a mutating method on ElleIdentityCore::Instance() now
-     * transparently sends IPC_IDENTITY_MUTATE to SVC_IDENTITY — the sole
-     * process that owns the authoritative state + writes it to SQL. After
-     * applying, SVC_IDENTITY broadcasts IPC_IDENTITY_DELTA so every peer
-     * process updates its local mirror in ~milliseconds (not the 60s
-     * eventual-consistency window the old RefreshFromDatabase poll had).
-     * Payload on both is a JSON string:
-     *   {"op":"<name>","args":{...},"seq":<monotonic uint64>}             */
+
     IPC_IDENTITY_MUTATE,
     IPC_IDENTITY_DELTA,
-    /* WorldModel query pair (SVC_WORLD_MODEL). Cognitive needs to ask
-     * "what do I know about this entity/person/topic before I respond?"
-     * at chat time — trust, sentiment, familiarity, interaction count,
-     * mental_model. That data persists to SQL and warms in memory inside
-     * the WorldModel process, but until this opcode pair existed there
-     * was no IPC path to pull it at request time (IPC_WORLD_STATE is
-     * write-only — pushes observations into WorldModel). Cognitive was
-     * reduced to either (a) bypassing WorldModel entirely by hitting SQL
-     * directly (defeats the single-writer pattern), or (b) responding
-     * without world context (user-visible: "Elle doesn't remember me").
-     *
-     * Payload is a JSON string to match the Consent pattern (rich, multi-
-     * entity, extensible) rather than the Trust pattern (single binary
-     * struct). Request:
-     *   {"request_id":"...",
-     *    "names":["Tom","mom"],         // optional, exact-match lookup
-     *    "types":["person","place"],    // optional, type filter
-     *    "min_familiarity":0.2,         // optional, 0..1
-     *    "limit":10}                    // optional, caps result size
-     * Response (IPC_WORLD_RESPONSE) to the original sender:
-     *   {"request_id":"...",
-     *    "entities":[
-     *      {"name":"...","type":"...","description":"...",
-     *       "familiarity":0.7,"sentiment":0.3,"trust":0.6,
-     *       "interaction_count":42,"last_interaction_ms":...,
-     *       "mental_model":"..."}, ...
-     *    ]}                                                             */
+
     IPC_WORLD_QUERY,
     IPC_WORLD_RESPONSE,
 
-    /*──────────────────────────────────────────────────────────────────────
-     * FIESTA HEADLESS GAME-CLIENT BRIDGE
-     *
-     *   IPC_FIESTA_COMMAND  (Cognitive → SVC_FIESTA)
-     *     Drives the headless game client. Payload is a JSON envelope
-     *     describing the action Elle wants taken in the game world, e.g.:
-     *
-     *       {"op":"login",      "username":"...","password":"..."}
-     *       {"op":"select_world","world_id":1}
-     *       {"op":"select_char", "char_index":0}
-     *       {"op":"chat",        "channel":"normal","text":"hello"}
-     *       {"op":"move",        "x":1234.0,"y":56.7,"z":89.0}
-     *       {"op":"attack",      "target_id":42}
-     *       {"op":"pickup",      "item_id":17}
-     *       {"op":"use_item",    "slot":3}
-     *       {"op":"raw",         "opcode":"0x2010","hex":"0102030405"}
-     *
-     *   IPC_FIESTA_EVENT    (SVC_FIESTA → subscribers)
-     *     Payload is a JSON envelope describing an observed game event.
-     *     Two flavours coexist on the same channel:
-     *
-     *       (a) High-level decoded event:
-     *           {"kind":"chat","speaker":"Foo","channel":"normal",
-     *            "text":"hi"}
-     *           {"kind":"entity_spawn","id":17,"type":"npc",
-     *            "name":"Goblin","x":...,"y":...}
-     *           {"kind":"hp_changed","entity_id":1,"pct":0.74}
-     *           {"kind":"login_state","state":"in_game"}
-     *
-     *       (b) Raw debug packet (for Cognitive's rule-engine layer):
-     *           {"kind":"raw","direction":"in",
-     *            "opcode":"0x2014","len":42,"hex":"..."}
-     *
-     *   The high-level/raw distinction is encoded in the "kind" field
-     *   so subscribers can filter trivially. Payload is JSON (string)
-     *   to match the WORLD_QUERY pattern — flexible, extensible, never
-     *   pinned to a specific protocol revision.                       */
     IPC_FIESTA_COMMAND,
     IPC_FIESTA_EVENT
 } ELLE_IPC_MSG_TYPE;
@@ -614,60 +426,48 @@ typedef enum ELLE_IPC_MSG_TYPE {
 #define ELLE_IPC_FLAG_BROADCAST   0x0008
 #define ELLE_IPC_FLAG_NO_LOG      0x0010
 
-/*──────────────────────────────────────────────────────────────────────────────
- * EMOTIONAL STATE VECTOR
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef struct ELLE_EMOTION_STATE {
-    float       dimensions[ELLE_MAX_EMOTIONS];   /* 94 floats, 0.0-1.0 */
-    float       valence;                          /* -1.0 to 1.0 overall */
-    float       arousal;                          /* 0.0 to 1.0 */
-    float       dominance;                        /* 0.0 to 1.0 */
+    float       dimensions[ELLE_MAX_EMOTIONS];
+    float       valence;
+    float       arousal;
+    float       dominance;
     uint64_t    last_update_ms;
     uint32_t    tick_count;
-    float       decay_rate;                       /* per tick */
-    float       contagion_weight;                 /* how much user affects */
-    float       baseline[ELLE_MAX_EMOTIONS];     /* resting state */
+    float       decay_rate;
+    float       contagion_weight;
+    float       baseline[ELLE_MAX_EMOTIONS];
 } ELLE_EMOTION_STATE;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * DRIVE STATE
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef struct ELLE_DRIVE_STATE {
     float       intensity[ELLE_MAX_DRIVES];
-    float       threshold[ELLE_MAX_DRIVES];      /* trigger level */
+    float       threshold[ELLE_MAX_DRIVES];
     float       decay_rate[ELLE_MAX_DRIVES];
     float       growth_rate[ELLE_MAX_DRIVES];
-    uint64_t    last_satisfied[ELLE_MAX_DRIVES]; /* ms timestamp */
+    uint64_t    last_satisfied[ELLE_MAX_DRIVES];
     uint64_t    last_update_ms;
 } ELLE_DRIVE_STATE;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * TRUST STATE
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef struct ELLE_TRUST_STATE {
-    int32_t     score;            /* 0-100 */
-    uint32_t    level;            /* ELLE_TRUST_LEVEL */
+    int32_t     score;
+    uint32_t    level;
     uint32_t    successes;
     uint32_t    failures;
     uint32_t    total_actions;
     uint64_t    last_change_ms;
-    float       confidence;       /* 0.0-1.0, how confident in trust */
+    float       confidence;
 } ELLE_TRUST_STATE;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * MEMORY RECORD
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef struct ELLE_MEMORY_RECORD {
     uint64_t    id;
-    uint32_t    type;             /* ELLE_MEMORY_TYPE */
-    uint32_t    tier;             /* ELLE_MEMORY_TIER */
+    uint32_t    type;
+    uint32_t    tier;
     char        content[ELLE_MAX_MSG];
     char        summary[ELLE_MAX_NAME * 4];
     float       emotional_valence;
-    float       importance;       /* 0.0-1.0 */
-    float       relevance;        /* 0.0-1.0, contextual */
-    float       decay;            /* current decay level */
-    float       position_x;       /* 3D memory map */
+    float       importance;
+    float       relevance;
+    float       decay;
+    float       position_x;
     float       position_y;
     float       position_z;
     uint32_t    access_count;
@@ -681,20 +481,17 @@ typedef struct ELLE_MEMORY_RECORD {
     uint32_t    link_count;
 } ELLE_MEMORY_RECORD;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * INTENT RECORD
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef struct ELLE_INTENT_RECORD {
     uint64_t    id;
-    uint32_t    type;             /* ELLE_INTENT_TYPE */
-    uint32_t    status;           /* ELLE_INTENT_STATUS */
-    uint32_t    source_drive;     /* which drive triggered */
-    float       urgency;          /* 0.0-1.0 */
-    float       confidence;       /* 0.0-1.0 */
+    uint32_t    type;
+    uint32_t    status;
+    uint32_t    source_drive;
+    float       urgency;
+    float       confidence;
     char        description[ELLE_MAX_MSG];
     char        parameters[ELLE_MAX_MSG];
     char        response[ELLE_MAX_RESPONSE];
-    uint32_t    required_trust;   /* ELLE_TRUST_LEVEL */
+    uint32_t    required_trust;
     uint64_t    created_ms;
     uint64_t    completed_ms;
     uint32_t    retry_count;
@@ -702,19 +499,16 @@ typedef struct ELLE_INTENT_RECORD {
     uint64_t    timeout_ms;
 } ELLE_INTENT_RECORD;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * ACTION RECORD
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef struct ELLE_ACTION_RECORD {
     uint64_t    id;
-    uint64_t    intent_id;        /* parent intent */
-    uint32_t    type;             /* ELLE_ACTION_TYPE */
-    uint32_t    status;           /* ELLE_ACTION_STATUS */
+    uint64_t    intent_id;
+    uint32_t    type;
+    uint32_t    status;
     char        command[ELLE_MAX_MSG];
     char        parameters[ELLE_MAX_MSG];
     char        result[ELLE_MAX_MSG];
     uint32_t    required_trust;
-    int32_t     trust_delta;      /* +2 success, -3 failure */
+    int32_t     trust_delta;
     uint64_t    created_ms;
     uint64_t    started_ms;
     uint64_t    completed_ms;
@@ -722,54 +516,45 @@ typedef struct ELLE_ACTION_RECORD {
     uint32_t    error_code;
 } ELLE_ACTION_RECORD;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * GOAL RECORD
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef struct ELLE_GOAL_RECORD {
     uint64_t    id;
     char        description[ELLE_MAX_MSG];
-    uint32_t    status;           /* ELLE_GOAL_STATUS */
-    uint32_t    priority;         /* ELLE_GOAL_PRIORITY */
-    float       progress;         /* 0.0-1.0 */
-    float       motivation;       /* emotional investment */
-    uint32_t    parent_goal_id;   /* 0 = top-level */
+    uint32_t    status;
+    uint32_t    priority;
+    float       progress;
+    float       motivation;
+    uint32_t    parent_goal_id;
     uint32_t    sub_goal_ids[16];
     uint32_t    sub_goal_count;
-    uint32_t    source_drive;     /* ELLE_DRIVE_ID */
+    uint32_t    source_drive;
     uint64_t    created_ms;
-    uint64_t    deadline_ms;      /* 0 = no deadline */
+    uint64_t    deadline_ms;
     uint64_t    last_progress_ms;
     uint32_t    attempts;
     char        success_criteria[ELLE_MAX_MSG];
 } ELLE_GOAL_RECORD;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * WORLD MODEL ENTITY
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef struct ELLE_WORLD_ENTITY {
     uint64_t    id;
     char        name[ELLE_MAX_NAME];
-    char        type[ELLE_MAX_TAG];           /* "person", "place", "concept" */
+    char        type[ELLE_MAX_TAG];
     char        description[ELLE_MAX_MSG];
-    float       familiarity;                   /* 0.0-1.0 */
-    float       sentiment;                     /* -1.0 to 1.0 */
-    float       trust;                         /* 0.0-1.0 */
+    float       familiarity;
+    float       sentiment;
+    float       trust;
     uint32_t    interaction_count;
     uint64_t    last_interaction_ms;
-    float       predicted_behavior[8];         /* behavioral model */
+    float       predicted_behavior[8];
     float       position_x, position_y, position_z;
     uint32_t    related_entity_ids[16];
     uint32_t    related_count;
-    char        mental_model[ELLE_MAX_MSG];    /* theory of mind */
+    char        mental_model[ELLE_MAX_MSG];
 } ELLE_WORLD_ENTITY;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * LLM REQUEST / RESPONSE
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef struct ELLE_LLM_REQUEST {
     uint64_t    request_id;
-    uint32_t    provider;          /* ELLE_LLM_PROVIDER */
-    uint32_t    mode;              /* ELLE_LLM_MODE */
+    uint32_t    provider;
+    uint32_t    mode;
     char        model_name[ELLE_MAX_NAME];
     char        system_prompt[ELLE_MAX_PROMPT];
     char        user_prompt[ELLE_MAX_PROMPT];
@@ -779,7 +564,7 @@ typedef struct ELLE_LLM_REQUEST {
     float       frequency_penalty;
     float       presence_penalty;
     uint64_t    timeout_ms;
-    uint32_t    stream;            /* 0=batch, 1=stream */
+    uint32_t    stream;
 } ELLE_LLM_REQUEST;
 
 typedef struct ELLE_LLM_RESPONSE {
@@ -790,16 +575,13 @@ typedef struct ELLE_LLM_RESPONSE {
     uint32_t    tokens_completion;
     uint32_t    tokens_total;
     float       latency_ms;
-    uint32_t    provider_used;     /* which actually served */
+    uint32_t    provider_used;
     char        error[ELLE_MAX_NAME * 4];
-    char        model_used[ELLE_MAX_NAME];   /* model name (e.g. "llama-3.3-70b-versatile") */
+    char        model_used[ELLE_MAX_NAME];
 } ELLE_LLM_RESPONSE;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SERVICE STATUS
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef struct ELLE_SERVICE_STATUS {
-    uint32_t    service_id;        /* ELLE_SERVICE_ID */
+    uint32_t    service_id;
     char        name[ELLE_MAX_NAME];
     uint32_t    running;
     uint32_t    healthy;
@@ -813,12 +595,9 @@ typedef struct ELLE_SERVICE_STATUS {
     char        status_text[ELLE_MAX_NAME * 2];
 } ELLE_SERVICE_STATUS;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * IOCP OVERLAPPED EXTENSION
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef struct ELLE_IOCP_OVERLAPPED {
     OVERLAPPED  overlapped;
-    uint32_t    operation;         /* read, write, connect */
+    uint32_t    operation;
     uint32_t    service_id;
     HANDLE      pipe_handle;
     uint8_t     buffer[ELLE_PIPE_BUFFER_SIZE];
@@ -831,62 +610,47 @@ typedef struct ELLE_IOCP_OVERLAPPED {
 #define ELLE_IOCP_OP_CONNECT    3
 #define ELLE_IOCP_OP_DISCONNECT 4
 
-/*──────────────────────────────────────────────────────────────────────────────
- * EMOTIONAL TRIGGER
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef struct ELLE_EMOTIONAL_TRIGGER {
-    char        pattern[ELLE_MAX_NAME];     /* regex or keyword */
-    uint32_t    emotion_id;                  /* ELLE_EMOTION_ID */
-    float       delta;                       /* magnitude of change */
-    float       decay_override;             /* -1.0 = use default */
-    uint32_t    require_context;            /* 0=always, 1=user-directed */
+    char        pattern[ELLE_MAX_NAME];
+    uint32_t    emotion_id;
+    float       delta;
+    float       decay_override;
+    uint32_t    require_context;
 } ELLE_EMOTIONAL_TRIGGER;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * CONVERSATION
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef struct ELLE_CONVERSATION_MSG {
     uint64_t    id;
     uint64_t    conversation_id;
-    uint32_t    role;              /* 0=system, 1=user, 2=elle, 3=internal */
+    uint32_t    role;
     char        content[ELLE_MAX_MSG];
     float       emotion_snapshot[ELLE_MAX_EMOTIONS];
     uint64_t    timestamp_ms;
     float       sentiment;
-    uint32_t    intent_detected;   /* ELLE_INTENT_TYPE */
+    uint32_t    intent_detected;
 } ELLE_CONVERSATION_MSG;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * PREDICTION
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef struct ELLE_PREDICTION {
     uint64_t    id;
     char        hypothesis[ELLE_MAX_MSG];
     char        evidence[ELLE_MAX_MSG];
-    float       confidence;       /* 0.0-1.0 */
-    float       risk;             /* 0.0-1.0 */
-    uint32_t    verified;         /* 0=pending, 1=correct, 2=wrong */
+    float       confidence;
+    float       risk;
+    uint32_t    verified;
     uint64_t    created_ms;
     uint64_t    deadline_ms;
 } ELLE_PREDICTION;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * ETHICAL JUDGMENT
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef struct ELLE_ETHICAL_JUDGMENT {
     uint64_t    action_id;
-    float       harm_score;        /* 0.0-1.0, higher = more harmful */
-    float       benefit_score;     /* 0.0-1.0 */
-    float       autonomy_respect;  /* does it respect user autonomy */
+    float       harm_score;
+    float       benefit_score;
+    float       autonomy_respect;
     float       fairness;
     float       honesty;
-    uint32_t    verdict;           /* 0=blocked, 1=allowed, 2=flagged */
+    uint32_t    verdict;
     char        reasoning[ELLE_MAX_MSG];
 } ELLE_ETHICAL_JUDGMENT;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * LOG ENTRY
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef enum ELLE_LOG_LEVEL {
     LOG_TRACE = 0,
     LOG_DEBUG,
@@ -906,9 +670,6 @@ typedef struct ELLE_LOG_ENTRY {
 
 #pragma pack(pop)
 
-/*──────────────────────────────────────────────────────────────────────────────
- * UTILITY MACROS
- *──────────────────────────────────────────────────────────────────────────────*/
 #define ELLE_CLAMP(v, lo, hi)   ((v) < (lo) ? (lo) : ((v) > (hi) ? (hi) : (v)))
 #define ELLE_LERP(a, b, t)      ((a) + ((b) - (a)) * (t))
 #define ELLE_ARRAY_SIZE(a)      (sizeof(a) / sizeof((a)[0]))
@@ -922,7 +683,7 @@ static inline uint64_t Elle_HighResTimestamp(void) {
 }
 
 static inline uint32_t Elle_IPC_Checksum(const uint8_t* data, uint32_t len) {
-    uint32_t hash = 0x811c9dc5;  /* FNV-1a */
+    uint32_t hash = 0x811c9dc5;
     for (uint32_t i = 0; i < len; i++) {
         hash ^= data[i];
         hash *= 0x01000193;
@@ -930,11 +691,8 @@ static inline uint32_t Elle_IPC_Checksum(const uint8_t* data, uint32_t len) {
     return hash;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * ASM DLL IMPORTS
- *──────────────────────────────────────────────────────────────────────────────*/
 #ifdef ELLE_IMPORT_ASM
-    /* Hardware DLL */
+
     __declspec(dllimport) int  __stdcall ASM_SetCPUAffinity(DWORD processorMask);
     __declspec(dllimport) int  __stdcall ASM_GetCPUUsage(DWORD* outPercent);
     __declspec(dllimport) int  __stdcall ASM_GetMemoryInfo(ULONGLONG* totalBytes, ULONGLONG* freeBytes);
@@ -944,7 +702,6 @@ static inline uint32_t Elle_IPC_Checksum(const uint8_t* data, uint32_t len) {
     __declspec(dllimport) int  __stdcall ASM_CPUID(DWORD leaf, DWORD* eax, DWORD* ebx, DWORD* ecx, DWORD* edx);
     __declspec(dllimport) int  __stdcall ASM_RDTSC(ULONGLONG* outTimestamp);
 
-    /* Process DLL */
     __declspec(dllimport) int  __stdcall ASM_LaunchProcess(const char* cmdLine, DWORD* outPid);
     __declspec(dllimport) int  __stdcall ASM_KillProcess(DWORD pid);
     __declspec(dllimport) int  __stdcall ASM_EnumProcesses(DWORD* pids, DWORD maxCount, DWORD* actualCount);
@@ -954,7 +711,6 @@ static inline uint32_t Elle_IPC_Checksum(const uint8_t* data, uint32_t len) {
     __declspec(dllimport) int  __stdcall ASM_ResumeProcess(DWORD pid);
     __declspec(dllimport) int  __stdcall ASM_InjectDLL(DWORD pid, const char* dllPath);
 
-    /* FileIO DLL */
     __declspec(dllimport) int  __stdcall ASM_ReadFile(const char* path, void* buffer, DWORD maxBytes, DWORD* bytesRead);
     __declspec(dllimport) int  __stdcall ASM_WriteFile(const char* path, const void* buffer, DWORD numBytes);
     __declspec(dllimport) int  __stdcall ASM_AppendFile(const char* path, const void* buffer, DWORD numBytes);
@@ -966,7 +722,6 @@ static inline uint32_t Elle_IPC_Checksum(const uint8_t* data, uint32_t len) {
     __declspec(dllimport) int  __stdcall ASM_GetFileSize(const char* path, ULONGLONG* outSize);
     __declspec(dllimport) int  __stdcall ASM_CopyFileFast(const char* src, const char* dst);
 
-    /* Memory DLL */
     __declspec(dllimport) void* __stdcall ASM_PoolAlloc(DWORD size);
     __declspec(dllimport) void  __stdcall ASM_PoolFree(void* ptr);
     __declspec(dllimport) int   __stdcall ASM_MapFile(const char* path, void** outBase, DWORD* outSize);
@@ -975,15 +730,6 @@ static inline uint32_t Elle_IPC_Checksum(const uint8_t* data, uint32_t len) {
     __declspec(dllimport) void  __stdcall ASM_FastMemSet(void* dst, BYTE val, DWORD len);
     __declspec(dllimport) int   __stdcall ASM_MemCompare(const void* a, const void* b, DWORD len);
 
-    /* Crypto DLL */
-    /* SHA-256 and AES-256 in Elle.ASM.Crypto are SCAFFOLDED (no real
-     * compression / AES-NI yet). Intentionally NOT declared here so
-     * nothing can accidentally link to them. Production hashing /
-     * HMAC / symmetric crypto lives in Shared/ElleCrypto.{h,cpp} via
-     * Windows CNG (BCryptHashData / BCryptHmac / BCryptEncrypt).
-     * When real MASM AES-NI / SHA-NI is implemented, re-expose the
-     * prototypes here, re-export in Crypto.def, and benchmark vs.
-     * BCrypt before wiring any call sites.                            */
     __declspec(dllimport) void  __stdcall ASM_XorCipher(const void* in, void* out, DWORD len, const BYTE* key, DWORD keyLen);
     __declspec(dllimport) DWORD __stdcall ASM_CRC32(const void* data, DWORD len);
     __declspec(dllimport) void  __stdcall ASM_RandomBytes(void* buffer, DWORD len);
@@ -993,4 +739,4 @@ static inline uint32_t Elle_IPC_Checksum(const uint8_t* data, uint32_t len) {
 }
 #endif
 
-#endif /* ELLE_TYPES_H */
+#endif

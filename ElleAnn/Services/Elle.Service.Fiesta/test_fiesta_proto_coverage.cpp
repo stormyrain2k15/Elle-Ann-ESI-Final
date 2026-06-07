@@ -1,31 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * test_fiesta_proto_coverage.cpp — Phase 6a coverage / drift report.
- *
- *   Loads `Generated/FiestaWireFixtures.inc` (auto-generated from the
- *   2026-02-05 wire captures) and walks every event against
- *   `FiestaProtoTable.h`'s authoritative dispatch table.
- *
- *   For each (port, direction, opcode, payload_len) it reports:
- *
- *     ✓ FIXED       opcode ↔ struct sizeof matches payload_len
- *     ↔ HEAD+TAIL   struct exists but variable-length tail follows
- *     ▢ OPAQUE      struct exists with sizeof=0 (just NETCOMMAND)
- *     ✗ UNKNOWN     opcode has no PDB struct yet — backlog item
- *
- *   This is a HONEST report — it does not assert anything must succeed.
- *   The goal is to drive Phase 6a hand-coding by surfacing exactly
- *   which opcodes need work.
- *
- *   Compile (Linux portable harness):
- *       g++ -std=c++17 -I . -I ../../Debug/_winstub \\
- *           ../../Debug/_winstub/dummy.cpp \\
- *           Services/Elle.Service.Fiesta/test_fiesta_proto_coverage.cpp \\
- *           -o /tmp/fiesta_proto_coverage
- *
- *   Compile (Windows / MSBuild):  add to Elle.Service.Fiesta.vcxproj
- *   under <ItemGroup Label="Tests"> — produces a console exe.
- *══════════════════════════════════════════════════════════════════════════════*/
-
 #include "FiestaProtoBase.h"
 #include "FiestaProtoTable.h"
 
@@ -36,10 +8,6 @@
 #include <set>
 #include <string>
 
-/*══════════════════════════════════════════════════════════════════════════════
- * Pull in the wire-capture fixtures.  Each row expands to a constexpr
- * record we walk in main().
- *══════════════════════════════════════════════════════════════════════════════*/
 #include "Generated/FiestaWireFixtures.inc"
 
 #ifndef FIESTA_WIRE_FIXTURES
@@ -49,7 +17,7 @@ regen via python3 _re_artifacts/pdb/gen_proto_table.py"
 
 struct WireEvent {
     int          port;
-    const char*  direction;     /* "Inbound" / "Outbound" */
+    const char*  direction;
     uint16_t     opcode;
     std::size_t  payload_len;
     const char*  payload_hex;
@@ -69,11 +37,6 @@ static constexpr WireEvent kWireFixtures[] = {
 static constexpr std::size_t kWireFixtureCount =
     sizeof(kWireFixtures) / sizeof(kWireFixtures[0]);
 
-
-/*══════════════════════════════════════════════════════════════════════════════
- * Walk the fixtures and emit a per-opcode coverage report.
- *══════════════════════════════════════════════════════════════════════════════*/
-
 static const char* DecoderTag(Fiesta::Decoder d) {
     switch (d) {
         case Fiesta::Decoder::Fixed:       return "FIXED";
@@ -85,7 +48,7 @@ static const char* DecoderTag(Fiesta::Decoder d) {
 }
 
 int main() {
-    /* Aggregate by opcode → (struct_name, decoder, observed_lengths). */
+
     struct Aggregate {
         const Fiesta::OpcodeMeta* meta = nullptr;
         std::set<std::size_t>     lens;
@@ -134,8 +97,7 @@ int main() {
             verdict = "UNKNOWN — no PDB struct";
             n_unknown++;
         } else {
-            /* Use the smallest observed length to classify; usually
-             * fixed-len ops are constant across captures. */
+
             std::size_t representative = *a.lens.begin();
             Fiesta::Decoder d = Fiesta::ClassifyDecoder(op, representative);
             char buf[160];

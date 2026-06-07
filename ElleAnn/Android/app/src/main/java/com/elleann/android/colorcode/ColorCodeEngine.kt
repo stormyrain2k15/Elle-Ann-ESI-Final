@@ -4,17 +4,13 @@ import androidx.compose.ui.graphics.Color
 import com.elleann.android.ui.theme.*
 import com.elleann.android.ui.theme.IsyaNight as ThemeIsyaNight
 
-// ─── ColorCode Mode ───────────────────────────────────────────────────────────
-
 enum class ColorCodeMode {
-    OFF,          // Standard text rendering
-    GRAMMAR,      // Auto-color by grammatical role
-    SEMANTIC,     // Color by emotional/semantic weight
-    MANUAL,       // User taps words to assign color
-    CYCLING,      // Each word cycles through palette
+    OFF,
+    GRAMMAR,
+    SEMANTIC,
+    MANUAL,
+    CYCLING,
 }
-
-// ─── ColorCode Theme ─────────────────────────────────────────────────────────
 
 data class ColorCodeTheme(
     val id: String,
@@ -40,14 +36,11 @@ object ColorCodeThemes {
     fun byId(id: String): ColorCodeTheme = all.find { it.id == id } ?: Default
 }
 
-// ─── Grammatical role ─────────────────────────────────────────────────────────
-
 enum class GrammarRole {
     NOUN, VERB, ADJECTIVE, ADVERB, PRONOUN, CONJUNCTION,
     EMOTIONAL, SELF_REFERENCE, DEFAULT
 }
 
-/** A single word token with its assigned color */
 data class ColoredToken(
     val word: String,
     val color: Color,
@@ -55,25 +48,8 @@ data class ColoredToken(
     val isWhitespace: Boolean = false,
 )
 
-// ─── ColorCode Engine ─────────────────────────────────────────────────────────
-
-/**
- * ColorCodeEngine — tokenizes text and assigns colors by grammatical role,
- * semantic weight, or user-defined mappings.
- *
- * Grammar analysis uses keyword sets rather than a full NLP parser for
- * performance on mobile. The engine is fast enough for real-time chat rendering.
- *
- * Crystal's original ColorCode system:
- * - Per-word color cycling
- * - Irlen-optimized backgrounds
- * - Grammar-based semantic color coding
- * - TTS with word highlighting
- * - Multiple themes
- */
 object ColorCodeEngine {
 
-    // ── Grammar color map ─────────────────────────────────────────────────────
     private val grammarColors: Map<GrammarRole, Color> = mapOf(
         GrammarRole.NOUN          to CCNoun,
         GrammarRole.VERB          to CCVerb,
@@ -86,14 +62,12 @@ object ColorCodeEngine {
         GrammarRole.DEFAULT       to Color(0xFFE8E8F0),
     )
 
-    // ── Cycling palette ───────────────────────────────────────────────────────
     private val cyclingPalette = listOf(
         CCNoun, CCVerb, CCAdjective, CCAdverb,
         CCPronoun, CCEmotional, CCSelfReference, IsyaMagic,
         IsyaGold, ElleViolet,
     )
 
-    // ── Word sets for grammar classification ──────────────────────────────────
     private val PRONOUNS = setOf(
         "i", "me", "my", "mine", "myself",
         "you", "your", "yours", "yourself",
@@ -157,18 +131,11 @@ object ColorCodeEngine {
         "trust", "doubt", "belief", "faith", "dream", "wish",
     )
 
-    // Self-reference words Elle uses when speaking about herself
     private val ELLE_SELF_REFS = setOf(
         "elle", "i", "myself", "elle-ann", "elleann",
         "my", "me", "mine", "i'm", "i've", "i'll", "i'd",
     )
 
-    // ── Public API ────────────────────────────────────────────────────────────
-
-    /**
-     * Tokenize text and assign colors based on [mode].
-     * Returns a list of [ColoredToken]s ready for rendering.
-     */
     fun tokenize(
         text: String,
         mode: ColorCodeMode,
@@ -205,13 +172,11 @@ object ColorCodeEngine {
         return tokens
     }
 
-    /** Get color for a single word in grammar mode */
     fun grammarColor(word: String): Color {
         val role = classifyWord(word)
         return grammarColors[role] ?: Color(0xFFE8E8F0)
     }
 
-    /** Get color for a single word in semantic mode */
     fun semanticColor(word: String): Color {
         val lower = word.lowercase().trimEnd('.', ',', '!', '?', ';', ':')
         return when {
@@ -226,7 +191,6 @@ object ColorCodeEngine {
         }
     }
 
-    /** Classify a word into its grammatical role */
     fun classifyWord(word: String): GrammarRole {
         val lower = word.lowercase().trimEnd('.', ',', '!', '?', ';', ':')
         return when {
@@ -243,14 +207,12 @@ object ColorCodeEngine {
             lower.endsWith("ly") -> GrammarRole.ADVERB
             lower.endsWith("ful") || lower.endsWith("less") || lower.endsWith("ous") ->
                 GrammarRole.ADJECTIVE
-            else -> GrammarRole.NOUN // Default assumption: it's a noun
+            else -> GrammarRole.NOUN
         }
     }
 
-    /** Get the next color in cycling palette */
     fun cycleColor(index: Int): Color = cyclingPalette[index % cyclingPalette.size]
 
-    /** All available grammar colors for legend display */
     val grammarLegend: List<Pair<String, Color>> = listOf(
         "Noun"             to CCNoun,
         "Verb"             to CCVerb,

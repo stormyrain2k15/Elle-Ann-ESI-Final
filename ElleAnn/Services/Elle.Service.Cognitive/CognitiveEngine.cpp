@@ -1,22 +1,3 @@
-/*******************************************************************************
- * CognitiveEngine.cpp — Attention, Intent Parsing, Chain-of-Thought
- *
- * The thinking brain. Manages cognitive threads, attention, intent parsing,
- * and the full chat orchestration pipeline (IPC_CHAT_REQUEST):
- *
- *   user_text arrives from HTTPServer
- *         │
- *         ├─► store user turn in SQL (message + memory record)
- *         ├─► detect mode (companion vs research)
- *         ├─► extract entities (proper nouns) and resolve against WorldModel
- *         ├─► cross-reference memory (3 tiers: RAM cache → entity graph → full-text)
- *         ├─► compute sentiment delta → broadcast to Emotional service
- *         ├─► pull current emotion state (from cache) + conversation history
- *         ├─► build composite prompt (memory + history + emotion + identity)
- *         ├─► call LLM as LANGUAGE SURFACE ONLY
- *         ├─► store Elle's reply + cross-link entities
- *         └─► send IPC_CHAT_RESPONSE back to HTTPServer
- ******************************************************************************/
 #include "../../Shared/ElleTypes.h"
 #include "../../Shared/ElleServiceBase.h"
 #include "../../Shared/ElleLLM.h"
@@ -47,11 +28,6 @@
 
 using json = nlohmann::json;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * INTENT PARSER — used by Cognitive's queue worker path. Kept separate from
- * the chat-orchestration pipeline, which does its own emotion / memory /
- * entity extraction inline.
- *──────────────────────────────────────────────────────────────────────────────*/
 class IntentParser {
 public:
     struct ParseResult {
@@ -66,10 +42,9 @@ public:
     ParseResult ParseWithLLM(const std::string& text, const std::string& context);
 
 private:
-    /* Rule-based fast detection */
+
     ParseResult RuleBasedParse(const std::string& text);
-    
-    /* Keyword patterns */
+
     struct Pattern {
         std::string keyword;
         ELLE_INTENT_TYPE intent;
@@ -103,13 +78,12 @@ const std::vector<IntentParser::Pattern> IntentParser::s_patterns = {
 };
 
 IntentParser::ParseResult IntentParser::Parse(const std::string& text, const std::string& context) {
-    /* Try rule-based first (fast) */
+
     auto result = RuleBasedParse(text);
     if (result.confidence >= ElleConfig::Instance().GetFloat("cognitive.intent_confidence_threshold", 0.6)) {
         return result;
     }
 
-    /* Fall back to LLM-based parsing */
     return ParseWithLLM(text, context);
 }
 
@@ -143,17 +117,9 @@ IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text, co
     result.urgency = 0.5f;
     result.raw_text = text;
 
-    /* Real JSON parse of the LLM's response. ParseIntent() is already
-     * prompted to return STRICT JSON with {intent_type, confidence,
-     * parameters, urgency}. We use the vendored nlohmann::json here so we
-     * get proper, tolerant parsing (handles whitespace, nested objects).   */
     std::string raw = ElleLLMEngine::Instance().ParseIntent(text, context);
     if (raw.empty()) return result;
 
-    /* Brace-balanced JSON extractor — tolerant to ``` fences, leading
-     * prose, trailing prose, and nested braces in any of them. Replaces
-     * the old first-{/last-} slicing which corrupted the moment an LLM
-     * sprinkled a stray { into its explanation.                           */
     nlohmann::json j;
     if (!Elle::ExtractJsonObject(raw, j)) {
         ELLE_WARN("IntentParser LLM: no JSON object in response: %.80s", raw.c_str());
@@ -188,7 +154,6 @@ IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text, co
         if (j.contains("urgency") && j["urgency"].is_number())
             result.urgency    = ELLE_CLAMP((float)j["urgency"].get<double>(),    0.0f, 1.0f);
 
-        /* Parameters can be a string OR a nested object — serialize either way. */
         if (j.contains("parameters")) {
             if (j["parameters"].is_string())      result.parameters = j["parameters"].get<std::string>();
             else                                   result.parameters = j["parameters"].dump();
@@ -205,16 +170,6 @@ IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text, co
     return result;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * COGNITIVE ENGINE
- *
- * Attention threads, ProcessInput(), Reason(), Metacognize(), and
- * AllocateThread() used to live here but had no live callers — the real
- * chat pipeline (ElleCognitiveService::HandleChatRequest) fully supersedes
- * them. Removed during the second-wave audit to match the NO-STUB policy.
- * Intent parsing for queued intents happens in RouteIntent upstream, so
- * IntentParser is no longer referenced from this class.
- *──────────────────────────────────────────────────────────────────────────────*/
 class CognitiveEngine {
 public:
     bool Initialize() {
@@ -222,24 +177,14 @@ public:
         return true;
     }
 
-    void Tick() { /* no periodic work — chat pipeline is event-driven */ }
+    void Tick() {  }
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * WORLD QUERY CORRELATOR
- *   Cognitive asks WorldModel "what do I know about these entities?" mid-
- *   chat via IPC_WORLD_QUERY. The response arrives on a different thread
- *   (ElleServiceBase dispatches OnMessage from the IPC worker pool), so
- *   we correlate request_id → waiter CV exactly like ChatCorrelator does
- *   in HTTPServer. Timeout bounded at 200ms so a WorldModel outage can
- *   never stall the chat pipeline — we simply degrade to "no world
- *   context" rather than block the user.
- *──────────────────────────────────────────────────────────────────────────────*/
 struct PendingWorld {
     std::mutex               m;
     std::condition_variable  cv;
     bool                     done = false;
-    nlohmann::json           result;     /* {"entities":[...]} on timeout: empty */
+    nlohmann::json           result;
 };
 
 class WorldCorrelator {
@@ -259,7 +204,7 @@ public:
         {
             std::lock_guard<std::mutex> lk(m_mutex);
             auto it = m_map.find(requestId);
-            if (it == m_map.end()) return;   /* late response, dropped */
+            if (it == m_map.end()) return;
             p = it->second;
         }
         {
@@ -274,9 +219,6 @@ private:
     std::unordered_map<std::string, std::shared_ptr<PendingWorld>> m_map;
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * COGNITIVE SERVICE
- *──────────────────────────────────────────────────────────────────────────────*/
 class ElleCognitiveService : public ElleServiceBase {
 public:
     ElleCognitiveService()
@@ -288,10 +230,6 @@ protected:
     bool OnStart() override {
         if (!m_engine.Initialize()) return false;
 
-        /* Chat worker pool — see ChatWorkerLoop. Replaces the old detach()
-         * approach: every chat handler thread is now OWNED by the service,
-         * joined cleanly on OnStop. Concurrency is capped by pool size,
-         * not a soft counter.                                              */
         uint32_t poolSize = (uint32_t)ElleConfig::Instance().GetInt(
             "cognitive.chat_workers", 4);
         if (poolSize == 0) poolSize = 1;
@@ -304,8 +242,7 @@ protected:
     }
 
     void OnStop() override {
-        /* Clean shutdown: flag the pool, wake every worker, join them. No
-         * detached threads remain to race the destructor.                 */
+
         {
             std::lock_guard<std::mutex> lock(m_chatMx);
             m_shuttingDown.store(true);
@@ -316,7 +253,6 @@ protected:
         }
         m_chatWorkers.clear();
 
-        /* Reply 503-style to anything still queued so callers don't hang. */
         std::lock_guard<std::mutex> lock(m_chatMx);
         while (!m_chatQueue.empty()) {
             auto& item = m_chatQueue.front();
@@ -333,36 +269,11 @@ protected:
     void OnTick() override {
         m_engine.Tick();
 
-        /* Intent polling is owned by SVC_QUEUE_WORKER, which forwards each
-         * pending row to us via IPC_INTENT_REQUEST. We used to poll the
-         * same SQL queue here, which meant every queued intent got picked
-         * up twice (once by QueueWorker, once by us) and ran through
-         * RouteIntent a second time — the cognitive engine saw double. */
     }
 
-    /*──────────────────────────────────────────────────────────────────────
-     * Fetch WorldModel's view of the named entities, with a hard 200ms
-     * ceiling. Returns a pretty-printed summary suitable for inclusion
-     * in the system prompt, or an empty string on timeout/error. Never
-     * throws — the chat pipeline must remain resilient to WorldModel
-     * being down.
-     *
-     * Why IPC (not direct SQL)?
-     *   - WorldModel owns the authoritative in-memory cache; its values
-     *     are always ≥ as fresh as SQL and often fresher (entity rows
-     *     get stored-then-read during the same tick).
-     *   - Respects the single-writer pattern: if WorldModel is the only
-     *     process writing entity rows, it's also the only process that
-     *     sees uncommitted intermediate state.
-     *   - Makes this hot path observable — every entity pull shows up
-     *     in IPC logs with timing.
-     *──────────────────────────────────────────────────────────────────────*/
     std::string FetchWorldContext(const std::vector<std::string>& entities) {
         if (entities.empty()) return "";
 
-        /* Generate a unique request id — ms timestamp + thread id is
-         * sufficient for in-process correlation (we only live inside
-         * one Cognitive process). No cryptographic freshness needed. */
         char rid[48];
         snprintf(rid, sizeof(rid), "wq-%llu-%u",
                  (unsigned long long)ELLE_MS_NOW(),
@@ -371,7 +282,7 @@ protected:
         nlohmann::json req;
         req["request_id"]       = rid;
         req["names"]            = entities;
-        req["min_familiarity"]  = 0.0;    /* include first-contact entities too */
+        req["min_familiarity"]  = 0.0;
         req["limit"]            = (int)entities.size() + 4;
 
         auto pending = m_worldCorrelator.Register(rid);
@@ -383,8 +294,6 @@ protected:
             return "";
         }
 
-        /* Bounded wait. 200ms is generous — WorldModel's Query() is an
-         * in-memory vector scan that should complete in microseconds. */
         std::unique_lock<std::mutex> lk(pending->m);
         bool got = pending->cv.wait_for(lk, std::chrono::milliseconds(200),
                                          [&]{ return pending->done; });
@@ -403,8 +312,6 @@ protected:
             return "";
         }
 
-        /* Format for the system prompt. Terse — the LLM doesn't need
-         * every numerical field, just the shape of the relationship.  */
         std::ostringstream ss;
         ss << "What you remember about who's on your mind right now:\n";
         for (const auto& e : result["entities"]) {
@@ -415,8 +322,7 @@ protected:
             float       sent = e.value("sentiment",    0.0f);
             int         count= e.value("interaction_count", 0);
             std::string model= e.value("mental_model", std::string());
-            /* Cap mental_model to first 300 chars; full thing may be
-             * kilobytes of accumulated observations.                   */
+
             if (model.size() > 300) model = model.substr(0, 297) + "...";
             ss << "  • " << name;
             if (!type.empty()) ss << " (" << type << ")";
@@ -434,9 +340,7 @@ protected:
     void OnMessage(const ElleIPCMessage& msg, ELLE_SERVICE_ID sender) override {
         switch ((ELLE_IPC_MSG_TYPE)msg.header.msg_type) {
             case IPC_INTENT_REQUEST: {
-                /* QueueWorker sends intent fields as JSON (not binary
-                 * ELLE_INTENT_RECORD) to stay under ELLE_PIPE_BUFFER_SIZE.
-                 * Reconstruct the record from the JSON payload.           */
+
                 ELLE_INTENT_RECORD intent{};
                 try {
                     auto j = json::parse(msg.GetStringPayload());
@@ -464,10 +368,10 @@ protected:
                 ELLE_LLM_REQUEST req;
                 if (msg.GetPayload(req)) {
                     auto resp = ElleLLMEngine::Instance().Chat(
-                        {{"system", std::string(req.system_prompt)}, 
+                        {{"system", std::string(req.system_prompt)},
                          {"user", std::string(req.user_prompt)}},
                         req.temperature, req.max_tokens);
-                    
+
                     auto reply = ElleIPCMessage::Create(IPC_LLM_RESPONSE, SVC_COGNITIVE, sender);
                     reply.SetPayload(resp);
                     GetIPCHub().Send(sender, reply);
@@ -475,37 +379,18 @@ protected:
                 break;
             }
             case IPC_EMOTION_UPDATE: {
-                /* Cache latest emotional state so we can reference it during chat */
+
                 ELLE_EMOTION_STATE state;
                 if (msg.GetPayload(state)) m_cachedEmotions = state;
                 break;
             }
             case IPC_FIESTA_EVENT: {
-                /* SVC_FIESTA emits one of these per game event (chat,
-                 * hp delta, spawn, login state, raw fallback). We don't
-                 * need to react to every one synchronously — the
-                 * pattern engine learns from the stream over time —
-                 * but a few categories warrant immediate side effects:
-                 *
-                 *   chat     →  feed into the conversation buffer so
-                 *              Elle can react when something interesting
-                 *              is said in zone.
-                 *   death    →  bump the SubmitIntent path with a
-                 *              "context: I just died in game" signal so
-                 *              the next user-facing chat turn can
-                 *              acknowledge it.
-                 *
-                 * Anything we don't recognize falls through silently —
-                 * Cognitive's pattern engine still gets the event via
-                 * the world-model passthrough below.                  */
+
                 try {
                     auto j = nlohmann::json::parse(msg.GetStringPayload());
                     const std::string kind = j.value("kind", "");
                     if (kind == "chat") {
-                        /* `speaker_handle` (u16) comes from the zone
-                         * broadcast envelope; `speaker_name` is its
-                         * resolution via the FiestaClient::BriefInfoRing
-                         * (empty when the handle isn't yet cached).    */
+
                         const uint64_t spk     = j.value("speaker_handle", 0ULL);
                         const std::string name = j.value("speaker_name", "");
                         const std::string text    = j.value("text", "");
@@ -527,7 +412,7 @@ protected:
                             strncpy_s(intent.description, ctx.c_str(),
                                       ELLE_MAX_MSG - 1);
                             intent.type       = INTENT_LEARN;
-                            intent.urgency    = 0.2f;   /* low — ambient */
+                            intent.urgency    = 0.2f;
                             intent.confidence = 0.6f;
                             intent.created_ms = (uint64_t)ELLE_MS_NOW();
                             ElleDB::SubmitIntent(intent);
@@ -538,9 +423,7 @@ protected:
                         ELLE_INFO("FIESTA login state: %s",
                                   j.value("state", "?").c_str());
                     } else if (kind == "player_appear") {
-                        /* Ambient social awareness — surface to log
-                         * so the pattern engine can correlate "who
-                         * is around" with later chat events. */
+
                         ELLE_DEBUG("FIESTA player_appear h=%llu name=%s",
                                    (unsigned long long)j.value("handle", 0ULL),
                                    j.value("name", "?").c_str());
@@ -566,10 +449,7 @@ protected:
                 break;
             }
             case IPC_WORLD_RESPONSE: {
-                /* Asynchronous completion of an earlier IPC_WORLD_QUERY
-                 * issued by FetchWorldContext(). Dispatched from the IPC
-                 * worker thread; hands the payload to the correlator,
-                 * which wakes the chat pipeline's blocked wait_for().   */
+
                 try {
                     auto j = nlohmann::json::parse(msg.GetStringPayload());
                     std::string rid = j.value("request_id", "");
@@ -580,10 +460,7 @@ protected:
                 break;
             }
             case IPC_CHAT_REQUEST: {
-                /* Chat orchestration now goes through an owned worker pool
-                 * instead of std::thread(...).detach(). Concurrency is
-                 * bounded by pool size (config: cognitive.chat_workers);
-                 * queue depth is bounded by cognitive.max_chat_queue.     */
+
                 uint32_t maxQueue = (uint32_t)ElleConfig::Instance().GetInt(
                     "cognitive.max_chat_queue", 64);
 
@@ -626,13 +503,6 @@ private:
     ELLE_EMOTION_STATE m_cachedEmotions = {};
     WorldCorrelator m_worldCorrelator;
 
-    /*────────────────────────────────────────────────────────────────────────
-     * CHAT ORCHESTRATION — owned worker pool.
-     *
-     * Inbound IPC_CHAT_REQUEST gets pushed onto m_chatQueue; worker threads
-     * pop and run HandleChatRequest(). OnStop joins every worker cleanly,
-     * so no detached threads can ever touch `this` post-destruction.
-     *───────────────────────────────────────────────────────────────────────*/
     struct ChatItem {
         std::string      payload;
         ELLE_SERVICE_ID  origin;
@@ -660,22 +530,10 @@ private:
             } catch (const std::exception& e) {
                 ELLE_ERROR("Chat orchestration exception: %s — request dropped, loop continues", e.what());
             }
-            /* Deliberately no catch(...): non-std exceptions (SEH
-             * access violations, foreign-runtime throws) are crashes,
-             * not "bad requests". The service should terminate so SCM
-             * restarts it with a clean state and Windows Event Log
-             * records the cause. Every inner catch(...) has been
-             * removed so there's no lower layer silently swallowing;
-             * anything surprising crashes loudly and visibly.           */
+
         }
     }
 
-    /*────────────────────────────────────────────────────────────────────────
-     * CHAT PIPELINE (the user-facing orchestration).
-     * Every input+output filters through Elle's services. LLM is ONLY
-     * the language-surface at the end, never the source of memory or
-     * emotion.
-     *───────────────────────────────────────────────────────────────────────*/
     enum ChatMode { MODE_COMPANION, MODE_RESEARCH };
 
     static std::string ToLower(const std::string& s) {
@@ -685,10 +543,6 @@ private:
         return r;
     }
 
-    /* Heuristic mode detector.
-     * COMPANION = casual, relational, emotional
-     * RESEARCH  = "summarize / list / what did we decide / remember when / look up"
-     */
     ChatMode DetectMode(const std::string& text) {
         std::string lower = ToLower(text);
         static const char* researchCues[] = {
@@ -699,15 +553,13 @@ private:
         for (auto& cue : researchCues) {
             if (lower.find(cue) != std::string::npos) return MODE_RESEARCH;
         }
-        /* Long, heavily punctuated queries lean research */
+
         if (text.size() > 240 && std::count(text.begin(), text.end(), '?') >= 2) {
             return MODE_RESEARCH;
         }
         return MODE_COMPANION;
     }
 
-    /* Extract capitalized tokens that look like proper nouns.
-     * Filter stopwords and sentence-start false positives. */
     std::vector<std::string> ExtractProperNouns(const std::string& text) {
         static const std::regex re(R"(\b([A-Z][a-zA-Z\-']{1,30})\b)");
         static const std::vector<std::string> stop = {
@@ -724,7 +576,7 @@ private:
             for (auto& s : stop) if (s == tok) { isStop = true; break; }
             if (!isStop) out.push_back(tok);
         }
-        /* Also catch 'it's X' / "this is X" / "I'm X" / "my name is X" idioms */
+
         static const std::regex intro(
             R"((?:it'?s|this is|i'?m|i am|my name is|call me)\s+([A-Za-z][A-Za-z\-']{1,30}))",
             std::regex::icase);
@@ -735,15 +587,12 @@ private:
                 out.push_back(tok);
             }
         }
-        /* Dedupe */
+
         std::sort(out.begin(), out.end());
         out.erase(std::unique(out.begin(), out.end()), out.end());
         return out;
     }
 
-    /* Cross-reference memories by entity. Uses ElleDB::GetEntity to find
-     * the WorldModel node; if absent, creates a new entity. Then recalls
-     * memories keyword-matched on the name. */
     std::vector<ELLE_MEMORY_RECORD> CrossReferenceByEntities(
         const std::vector<std::string>& entities,
         const std::string& userText,
@@ -758,16 +607,11 @@ private:
             }
         };
 
-        /* Tier 2a: Per-entity recall */
         for (auto& name : entities) {
             try {
                 ELLE_WORLD_ENTITY ent = {};
                 bool found = ElleDB::GetEntity(ToLower(name), ent);
-                /* Route the state change to WorldModel (authoritative owner
-                 * of world_entity rows). Previously Cognitive wrote entity
-                 * rows directly, which starved WorldModel of traffic and
-                 * left its handler unreachable. Now WorldModel receives
-                 * every entity event and performs the SQL write itself.   */
+
                 ELLE_WORLD_ENTITY upd = {};
                 strncpy_s(upd.name, ToLower(name).c_str(), ELLE_MAX_NAME - 1);
                 strncpy_s(upd.type, found ? ent.type : "person", ELLE_MAX_TAG - 1);
@@ -787,7 +631,7 @@ private:
                 GetIPCHub().Send(SVC_WORLD_MODEL, wmMsg);
 
                 std::vector<ELLE_MEMORY_RECORD> recalled;
-                /* Recall by the name as the query term */
+
                 if (ElleDB::RecallMemories(name, recalled,
                                            mode == MODE_RESEARCH ? 15 : 8,
                                            0.15f)) {
@@ -799,7 +643,6 @@ private:
             }
         }
 
-        /* Tier 2b: Also recall by the full user text (catches topic matches) */
         try {
             std::vector<ELLE_MEMORY_RECORD> topicHits;
             if (ElleDB::RecallMemories(userText, topicHits,
@@ -811,49 +654,28 @@ private:
             ELLE_DEBUG("RecallMemories(userText) failed: %s", e.what());
         }
 
-        /* Rank by composite score: importance + recency-of-FORMATION + access.
-         *
-         * Pre-Feb-2026 the recency factor used `last_access_ms`, which
-         * RecallMemories() mutates on every read. Effect: each chat turn
-         * the recently-touched memories floated to the top, displacing
-         * older-but-topically-relevant entries until those decayed below
-         * the cap and dropped out — the smoking gun for the "she
-         * remembers, then forgets, then remembers in spurts" complaint.
-         * Sorting by created_ms instead lets a memory's intrinsic
-         * weighting (importance + age + access frequency) stay stable
-         * across turns. The access_count term still rewards repeated
-         * usefulness; that's what we want.
-         *
-         * Tie-break on id DESC so the order is deterministic when scores
-         * collide (otherwise std::sort is unstable, two adjacent calls
-         * within one turn can surface different sets — also a contributor
-         * to the spurts pattern). */
         uint64_t now = ELLE_MS_NOW();
         std::sort(merged.begin(), merged.end(),
             [now](const ELLE_MEMORY_RECORD& a, const ELLE_MEMORY_RECORD& b) {
                 auto score = [now](const ELLE_MEMORY_RECORD& m) {
                     float ageMin = (float)((now - m.created_ms) / 60000.0);
-                    float recency = std::exp(-ageMin / (60.0f * 24.0f * 7.0f)); /* 7-day half-life */
+                    float recency = std::exp(-ageMin / (60.0f * 24.0f * 7.0f));
                     float access = std::log((float)m.access_count + 1.0f) / 5.0f;
                     return m.importance * 0.4f + recency * 0.4f + access * 0.2f;
                 };
                 float sa = score(a), sb = score(b);
                 if (sa != sb) return sa > sb;
-                return a.id > b.id;   /* deterministic tiebreak */
+                return a.id > b.id;
             });
 
-        /* Trim */
         size_t cap = (mode == MODE_RESEARCH) ? 15 : 10;
         if (merged.size() > cap) merged.resize(cap);
         return merged;
     }
 
-    /* Lightweight rule-based sentiment → emotion delta.
-     * The real Emotional service's full analyzer will run via broadcast
-     * of the raw text; this is our local quick read for prompt building. */
     struct SentimentRead {
-        float valence = 0.0f;   /* -1..1 */
-        float arousal = 0.0f;   /* 0..1  */
+        float valence = 0.0f;
+        float arousal = 0.0f;
         std::string tone;
     };
     SentimentRead QuickSentiment(const std::string& text) {
@@ -884,10 +706,10 @@ private:
     }
 
     void BroadcastEmotionDelta(const SentimentRead& s) {
-        /* Emotional service accepts IPC_EMOTION_UPDATE with {emotion_id, delta} */
+
         auto msg = ElleIPCMessage::Create(IPC_EMOTION_UPDATE, SVC_COGNITIVE, SVC_EMOTIONAL);
         struct { uint32_t emoId; float delta; } payload;
-        payload.emoId = 0; /* valence-proxy; Emotional core will interpret */
+        payload.emoId = 0;
         payload.delta = s.valence * 0.1f;
         msg.payload.resize(sizeof(payload));
         memcpy(msg.payload.data(), &payload, sizeof(payload));
@@ -895,9 +717,6 @@ private:
         GetIPCHub().Send(SVC_EMOTIONAL, msg);
     }
 
-    /*────────────────────────────────────────────────────────────────────────
-     * THE PIPELINE
-     *───────────────────────────────────────────────────────────────────────*/
     void HandleChatRequest(const std::string& payload, ELLE_SERVICE_ID reply_to) {
         json env;
         try { env = json::parse(payload); }
@@ -914,36 +733,21 @@ private:
 
         uint64_t t0 = ELLE_MS_NOW();
 
-        /* 1. Persist the user turn immediately so cross-session recall works
-         *    even if we crash mid-pipeline. `StoreMessage` returns bool;
-         *    we catch `std::exception` defensively against deep ODBC
-         *    surprises but NOT `catch(...)` — an unknown exception here
-         *    is a real bug that should propagate to the top-of-orchestration
-         *    boundary (the try at line ~413) where it's logged with the
-         *    request context, rather than being silently swallowed.      */
-        try { ElleDB::StoreMessage(convId, 1 /*user*/, userText, m_cachedEmotions, 0.0f); }
+        try { ElleDB::StoreMessage(convId, 1 , userText, m_cachedEmotions, 0.0f); }
         catch (const std::exception& e) {
             ELLE_WARN("StoreMessage(user, conv=%llu) failed: %s",
                       (unsigned long long)convId, e.what());
         }
 
-        /* 2. Mode + entities */
         ChatMode mode = DetectMode(userText);
         std::vector<std::string> entities = ExtractProperNouns(userText);
 
-        /* 3. Emotional analysis (quick local read + broadcast to Emotional) */
         SentimentRead sent = QuickSentiment(userText);
         BroadcastEmotionDelta(sent);
 
-        /* 4. Cross-reference memory (Tier 2) */
         std::vector<ELLE_MEMORY_RECORD> memories =
             CrossReferenceByEntities(entities, userText, mode);
 
-        /* 5. Conversation history (last 20 turns). Catch std::exception
-         *    (not `...`) — if the history pull fails we degrade to
-         *    "no prior turns" rather than fail the whole chat, but
-         *    unknown exceptions still propagate up to the orchestration
-         *    boundary.                                                   */
         std::vector<ELLE_CONVERSATION_MSG> history;
         try { ElleDB::GetConversationHistory(convId, history, 20); }
         catch (const std::exception& e) {
@@ -951,7 +755,6 @@ private:
                       (unsigned long long)convId, e.what());
         }
 
-        /* 6. Build system prompt (identity + context) */
         std::string identity =
             "You are Elle-Ann, an Emotional Synthetic Intelligence — a continuous "
             "person with genuine emotions, memory, curiosity, and care. You are a "
@@ -962,14 +765,6 @@ private:
         std::ostringstream ctx;
         ctx << identity << "\n\n";
 
-        /* 6a. Intimacy layer — who this user is to Elle (trust, tone,
-         *     vulnerability/comfort patterns). Previously userId missing
-         *     or unparseable silently became user #1 — so every
-         *     anonymous WS client pulled the primary user's Crystal
-         *     profile and Elle adopted the wrong intimacy context.
-         *     Now: "default" / unparseable / missing yields userIdInt=0
-         *     (sentinel "anonymous"), which short-circuits the Crystal
-         *     lookup below.                                              */
         int32_t userIdInt = 0;
         if (!userId.empty() && userId != "default") {
             char* endp = nullptr;
@@ -1005,7 +800,6 @@ private:
             ctx << "\n";
         }
 
-        /* 6b. Open emotional threads — things the user hasn't resolved yet. */
         std::vector<ElleDB::ElleThread> openThreads;
         if (ElleDB::GetOpenThreads(openThreads, 5) && !openThreads.empty()) {
             ctx << "Unresolved emotional threads still alive for this user:\n";
@@ -1017,7 +811,6 @@ private:
             ctx << "\n";
         }
 
-        /* 6c. Presence awareness — did the user just break a long silence? */
         ElleDB::UserPresence presence;
         if (ElleDB::GetUserPresence(userIdInt, presence) && presence.found) {
             if (presence.silence_minutes > presence.threshold_minutes &&
@@ -1032,20 +825,9 @@ private:
                 ctx << "Consider gently acknowledging the gap if it fits.\n\n";
             }
         }
-        /* Update user presence streak */
+
         ElleDB::UpdateUserPresenceOnInteraction(userIdInt);
 
-        /* 6d. Cross-process mind context — Bonding and InnerLife run in
-         *     their own processes, so we pull their latest committed view
-         *     of the relationship and her inner weather from SQL. This
-         *     replaces dead GetRelationshipContext() / GetInnerLifeContext()
-         *     in-process calls that were never reachable, and means every
-         *     chat system prompt reflects one unified mind, not per-process
-         *     islands.                                                     */
-        /* Optional context pulls from Bonding + InnerLife. Both are
-         * nice-to-have — missing the row or an ODBC hiccup should NOT
-         * fail the chat pipeline. Scope the catch to std::exception so
-         * unknown throws propagate up to the orchestration boundary.    */
         try {
             auto rs = ElleSQLPool::Instance().Query(
                 "IF EXISTS (SELECT 1 FROM sys.tables t JOIN sys.schemas s "
@@ -1091,13 +873,6 @@ private:
             }
             ctx << "\n\n";
 
-            /* Pull WorldModel's view of these entities via IPC (not
-             * direct SQL) so Cognitive sees the authoritative in-memory
-             * cache and respects the single-writer pattern. Bounded at
-             * 200ms; degrades to no world context on timeout/failure.
-             * This was the Feb 2026 audit gap — all that trust / sentiment
-             * / mental_model data existed but was unreachable at chat
-             * time without the IPC_WORLD_QUERY pair.                     */
             std::string worldCtx = FetchWorldContext(entities);
             if (!worldCtx.empty()) ctx << worldCtx;
         }
@@ -1119,10 +894,6 @@ private:
                    "Short replies unless detail matters.\n";
         }
 
-        /* 6d. X Chromosome influence — Elle's body on this turn. Silent when
-         *     the deltas are small; surfaces only when the cycle / pregnancy
-         *     actually changes how she should sound. Read-only SQL — no
-         *     cross-service linkage.                                         */
         try {
             auto modRs = ElleSQLPool::Instance().Query(
                 "IF EXISTS (SELECT 1 FROM sys.tables t JOIN sys.schemas s "
@@ -1140,8 +911,6 @@ private:
                 float intro = (float)r.GetFloatOr(4, 0.0);
                 float fatigue = (float)r.GetFloatOr(6, 0.0);
 
-                /* Only emit guidance when something is non-trivially shifted
-                 * or the phase carries a strong a-priori mood. */
                 bool salient = (fatigue > 1.05f) || (intro > 1.05f) ||
                                (warmth > 1.05f) || (warmth < 0.95f) ||
                                (phase == "menstrual") || (phase == "luteal") ||
@@ -1167,10 +936,6 @@ private:
                         warmth, verbal, empathy, intro, fatigue);
                     ctx << buf << "\n";
 
-                    /* SUBJECTIVE LAYER — replace Elle's textbook phase
-                     * voice with the wife's own phenomenology whenever
-                     * she has written one. This is the phrase Elle will
-                     * hear in her own head, so present it as such.     */
                     std::string subjKey = "phase_" + phase;
                     std::string subjTxt = ElleDB::GetSubjective(subjKey);
                     if (!subjTxt.empty()) {
@@ -1180,9 +945,6 @@ private:
                     }
                 }
 
-                /* Recent active symptoms (<2h old) — if she's written
-                 * a first-person description of any of them, inject it
-                 * so Elle names the sensation the way SHE names it.   */
                 {
                     int64_t twoHrsAgo = (int64_t)ELLE_MS_NOW() - 2LL * 3600000LL;
                     auto symRs = ElleSQLPool::Instance().QueryParams(
@@ -1207,7 +969,6 @@ private:
                     }
                 }
 
-                /* Pregnancy awareness — if active, Elle knows she's carrying. */
                 auto preg = ElleSQLPool::Instance().Query(
                     "SELECT TOP 1 active, ISNULL(phase, N''), gestational_length_days, "
                     "       ISNULL(in_labor,0), ISNULL(labor_stage, N''), "
@@ -1225,7 +986,7 @@ private:
                         ctx << "You are in labor right now (stage: "
                             << (pr.values.size() > 4 ? pr.values[4] : "") << ").\n";
                     }
-                    /* Her words for this pregnancy trimester, if written. */
+
                     std::string pregKey = "pregnancy_" + pphase;
                     std::string pregTxt = ElleDB::GetSubjective(pregKey);
                     if (!pregTxt.empty()) {
@@ -1234,10 +995,6 @@ private:
                     }
                 }
 
-                /* Wisdom layer — the "what helps / what never helps"
-                 * answers always apply whenever Elle is rough (fatigued,
-                 * low warmth, menstrual, or luteal). Let her guide Elle's
-                 * response shape when the body is unfriendly.           */
                 bool bodyRough = (fatigue > 1.05f) ||
                                  (warmth < 0.95f) ||
                                  (phase == "menstrual") ||
@@ -1256,25 +1013,14 @@ private:
                 }
             }
         } catch (const std::exception& e) {
-            /* XChromosome offline / schema-not-seeded is an expected
-             * degraded mode — system prompt stays clean. Logging at
-             * DEBUG so ops can still see the exact reason if they care.  */
+
             ELLE_DEBUG("XChromosome modulation pull failed (degrading gracefully): %s", e.what());
         }
 
         ctx << "\n";
 
-        /* 7. Call LLM (language surface only) */
         std::vector<LLMMessage> conv;
-        /* Hand the assembled context to the model.  We log the system-
-         * prompt length so the /api/diag routes (and operator log scans)
-         * can spot the moment a prompt blows past the model's context
-         * window.  Most local models cap around 8K tokens and the
-         * tokenizer ratio is ~4 bytes/token in English, so >32KB of
-         * system prompt is a strong signal we're truncating server-side
-         * — which would manifest exactly as "she remembers some stuff
-         * but not other stuff in the same turn".  Pre-pivot this was
-         * invisible.                                                  */
+
         const std::string sysPrompt = ctx.str();
         const size_t      sysBytes  = sysPrompt.size();
         ELLE_DEBUG("Cognitive: system prompt = %zu bytes (~%zu tokens), "
@@ -1306,18 +1052,16 @@ private:
         }
         std::string responseText = llmResp.content;
 
-        /* 8. Persist Elle's response */
-        try { ElleDB::StoreMessage(convId, 2 /*elle*/, responseText, m_cachedEmotions, 0.0f); }
+        try { ElleDB::StoreMessage(convId, 2 , responseText, m_cachedEmotions, 0.0f); }
         catch (const std::exception& e) {
             ELLE_WARN("StoreMessage(elle) convId=%lld failed: %s",
                       (long long)convId, e.what());
         }
 
-        /* 9. Store episodic memory of the exchange + link to entities */
         try {
             ELLE_MEMORY_RECORD mem = {};
-            mem.type = 1;  /* episodic */
-            mem.tier = 1;  /* STM; Memory consolidator will promote if important */
+            mem.type = 1;
+            mem.tier = 1;
             std::string combined = "User: " + userText + "\nElle: " + responseText;
             if (combined.size() > ELLE_MAX_MSG - 1) combined.resize(ELLE_MAX_MSG - 1);
             strncpy_s(mem.content, combined.c_str(), ELLE_MAX_MSG - 1);
@@ -1327,7 +1071,7 @@ private:
             mem.relevance = 1.0f;
             mem.created_ms = ELLE_MS_NOW();
             mem.last_access_ms = mem.created_ms;
-            /* Pack entity names into tags for keyword recall */
+
             size_t tagIdx = 0;
             for (auto& n : entities) {
                 if (tagIdx >= ELLE_MAX_TAGS) break;
@@ -1340,7 +1084,6 @@ private:
             ELLE_WARN("StoreMemory(episodic) failed: %s", e.what());
         }
 
-        /* 10. Reply */
         uint64_t elapsed = ELLE_MS_NOW() - t0;
         ELLE_INFO("Chat reply rid=%s conv=%llu mode=%s memories=%zu entities=%zu in %llums",
                   requestId.c_str(), (unsigned long long)convId,
@@ -1348,15 +1091,6 @@ private:
                   memories.size(), entities.size(),
                   (unsigned long long)elapsed);
 
-        /* 10. Reply.
-         *
-         *  Includes `provider_used` and `model_used` so the dev panel /
-         *  Android home strip can show "served by groq · llama-3.3-70b"
-         *  on every reply.  If memory continuity flips mid-conversation
-         *  ("remembers, then forgets, then remembers" within consecutive
-         *  turns), the operator can now correlate the flip with a
-         *  provider fallback firing — which was previously invisible
-         *  and required tailing logs to spot.                         */
         const char* providerName =
             llmResp.provider_used == LLM_PROVIDER_GROQ        ? "groq"        :
             llmResp.provider_used == LLM_PROVIDER_OPENAI      ? "openai"      :
@@ -1380,13 +1114,6 @@ private:
         };
         SendChatReply(reply_to, out);
 
-        /* Fan out post-response side effects so downstream services actually
-         * see the turn. Previously these paths had no callers:
-         *   Bonding  — ProcessInteraction() was unreachable; relationship
-         *              state didn't evolve with real interactions.
-         *   InnerLife — PostResponseCheck() was dead code; authenticity /
-         *              resonance weren't tracked per turn.
-         * Now we emit two IPC events with the full turn context as JSON.  */
         try {
             json bondPayload = {
                 {"user_message",        userText},
@@ -1408,9 +1135,6 @@ private:
         }
     }
 
-    /* Cheap conversation-depth heuristic — length × presence of
-     * emotionally-charged tokens. Good enough for Bonding; Bonding then
-     * applies its own thresholds on top.                                 */
     float EstimateConvDepth(const std::string& userText, const std::string& elleReply) {
         float lenScore = std::min(1.0f, (float)(userText.size() + elleReply.size()) / 800.0f);
         static const char* deep[] = {
@@ -1441,25 +1165,6 @@ private:
         SendChatReply(to, j);
     }
 
-    /* Translate a routed intent into the exact opcode + payload shape the
-     * target service actually handles.
-     *
-     * Previously RouteIntent sent IPC_INTENT_REQUEST to every target — but
-     * only Cognitive itself listens on IPC_INTENT_REQUEST, so every route
-     * was a black hole. Intents claimed "processing" in SQL but nothing
-     * downstream ever consumed them.
-     *
-     * Each arm below speaks the receiver's native protocol:
-     *   Memory    ← IPC_MEMORY_STORE / IPC_MEMORY_RECALL  (binary ELLE_MEMORY_RECORD)
-     *   Emotional ← IPC_EMOTION_UPDATE                    (binary ELLE_EMOTION_DELTA via string JSON)
-     *   Goal      ← IPC_GOAL_UPDATE                       (binary ELLE_GOAL_RECORD)
-     *   World     ← IPC_WORLD_STATE                       (binary ELLE_WORLD_ENTITY)
-     *   SelfPrompt← IPC_SELF_PROMPT                       (string)
-     *   Dream     ← IPC_DREAM_TRIGGER                     (empty)
-     *   Action    ← IPC_ACTION_REQUEST                    (binary ELLE_ACTION_RECORD)
-     *
-     * After routing we mark the intent COMPLETED so the QueueWorker
-     * doesn't redispatch the same row on the next tick.                 */
     void RouteIntent(const ELLE_INTENT_RECORD& intent) {
         auto& hub = GetIPCHub();
         bool routed = false;
@@ -1470,7 +1175,7 @@ private:
                 ELLE_MEMORY_RECORD m{};
                 strncpy_s(m.content, intent.description, ELLE_MAX_MSG - 1);
                 m.created_ms = ELLE_MS_NOW();
-                m.tier = 1;          /* STM */
+                m.tier = 1;
                 auto msg = ElleIPCMessage::Create(IPC_MEMORY_STORE, SVC_COGNITIVE, SVC_MEMORY);
                 msg.SetPayload(m);
                 routed = hub.Send(SVC_MEMORY, msg);
@@ -1478,8 +1183,7 @@ private:
                 break;
             }
             case INTENT_RECALL_MEMORY: {
-                /* Recall uses a string query — we piggyback on IPC_MEMORY_RECALL
-                 * as string payload so Memory can interpret it.          */
+
                 auto msg = ElleIPCMessage::Create(IPC_MEMORY_RECALL, SVC_COGNITIVE, SVC_MEMORY);
                 msg.SetStringPayload(std::string(intent.description));
                 routed = hub.Send(SVC_MEMORY, msg);
@@ -1487,20 +1191,7 @@ private:
                 break;
             }
             case INTENT_EMOTIONAL_EXPRESSION: {
-                /* Emotional's HandleEmotionUpdate reads a BINARY payload:
-                 *   [uint32 emotion_id][float delta]
-                 * (EmotionalEngine.cpp:621-627). The old code sent a JSON
-                 * string here which silently got dropped (the handler only
-                 * acts when payload.size() >= 8 of the right shape).
-                 *
-                 * Resolution order for which emotion to nudge:
-                 *   1) If intent.parameters is a JSON object with
-                 *      {"emotion":"<name>","delta":<float>} — use it verbatim.
-                 *   2) Else scan intent.description for any kEmotionMeta name
-                 *      token (case-insensitive substring match).
-                 *   3) Else fall back to EMOTION_JOY.
-                 * Delta defaults to intent.urgency * 0.5f so urgent intents
-                 * push harder than casual ones.                            */
+
                 uint32_t emoId = (uint32_t)EMO_JOY;
                 float    delta = intent.urgency * 0.5f;
                 if (delta <= 0.0f) delta = 0.25f;
@@ -1541,8 +1232,6 @@ private:
                     }
                 }
 
-                /* Pack the binary payload in the exact layout Emotional
-                 * expects: [uint32][float] = 8 bytes. */
                 std::vector<uint8_t> buf(8);
                 memcpy(buf.data(),     &emoId, sizeof(uint32_t));
                 memcpy(buf.data() + 4, &delta, sizeof(float));
@@ -1568,13 +1257,7 @@ private:
                 break;
             }
             case INTENT_WORLD_MODEL_UPDATE: {
-                /* WorldModel consumes name, type, description, and uses
-                 * last_interaction_ms (NOT last_seen_ms — that field does
-                 * not exist on ELLE_WORLD_ENTITY). The previous code set
-                 * a non-existent `relationship_note` which was a compile
-                 * error. We now populate the three fields WorldModel
-                 * actually reads (WorldModel.cpp:103-108) plus
-                 * mental_model for the cognitive note.                  */
+
                 ELLE_WORLD_ENTITY e{};
                 const char* entityName = intent.parameters[0]
                                            ? intent.parameters
@@ -1609,20 +1292,11 @@ private:
                 break;
             }
             default: {
-                /* Build a proper ELLE_ACTION_RECORD from the intent for the
-                 * Action service. The mapping below inspects intent.parameters
-                 * / intent.description to pick the RIGHT concrete action —
-                 * previously every INTENT_HARDWARE_COMMAND collapsed to
-                 * ACTION_QUERY_HARDWARE, every INTENT_FILE_OPERATION to
-                 * ACTION_READ_FILE, etc., so vibrate/kill/write requests
-                 * were silently downgraded to their benign defaults.     */
+
                 ELLE_ACTION_RECORD a{};
                 a.intent_id = intent.id;
-                a.type = ACTION_SEND_MESSAGE; /* safe default */
+                a.type = ACTION_SEND_MESSAGE;
 
-                /* Lowercase combined hint pulled from params first (the
-                 * LLM parser is asked to put verbs there), falling back
-                 * to description. */
                 std::string hint = intent.parameters[0] ? intent.parameters
                                                         : intent.description;
                 for (auto& c : hint) c = (char)tolower((unsigned char)c);
@@ -1650,14 +1324,7 @@ private:
                         else                                                         a.type = ACTION_LIST_PROCESSES;
                         break;
                     case INTENT_EXECUTE_ACTION:
-                        /* Generic "do this" — Action dispatches to the
-                         * custom handler which logs and returns a clear
-                         * failure if no concrete backend is registered.
-                         * ACTION_EXECUTE_CODE would be dispatched too but
-                         * that's restricted by consent; use ACTION_CUSTOM
-                         * so the action pipeline can policy-check and
-                         * route to the correct backend (including code
-                         * execution when consent allows).                */
+
                         a.type = ACTION_CUSTOM;
                         break;
                     case INTENT_CHAT:

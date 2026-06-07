@@ -1,17 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * test_fiesta_decoders.cpp — Phase 6a Step 3 regression tests.
- *
- *   Tests every Phase 6a decoder against the EXACT bytes captured from
- *   the user's live Fiesta server (2026-02-05 / 2026-02-06 sessions).
- *   When these tests pass, the decoder is provably consistent with
- *   real wire traffic — not just with our internal hypotheses.
- *
- *   Compile (Linux portable):
- *       g++ -std=c++17 -I . -I ../../Debug/_winstub \
- *           Services/Elle.Service.Fiesta/test_fiesta_decoders.cpp \
- *           -o /tmp/test_fiesta_decoders
- *══════════════════════════════════════════════════════════════════════════════*/
-
 #include "FiestaProtoBase.h"
 #include "FiestaPacket.h"
 #include "FiestaDecoders.h"
@@ -21,41 +7,31 @@
 #include <cstdint>
 #include <cstring>
 
-/*--- Captured wire bytes (literal) ------------------------------------------*/
-
-/* Chat broadcast — EllaAnn says "hi"
- * Captured 2026-02-06 01:55:25.887 UTC, Port 61496 → 9120 (ZoneServer).
- * Wire payload (post-cipher, server view): 20 bytes.
- *   [16 B Name4 sender] [u8 0] [u8 2] [2 B "hi"]                              */
 static const uint8_t kChat_EllaAnn_hi[] = {
-    /* sender: "EllaAnn" + 9×0x00 padding */
+
     0x45, 0x6C, 0x6C, 0x65, 0x41, 0x6E, 0x6E,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    /* itemLinkDataCount, len, content */
+
     0x00, 0x02, 0x68, 0x69
 };
 
-/* Chat broadcast — Crystal says "hi"  (same opcode, different sender) */
 static const uint8_t kChat_Crystal_hi[] = {
     0x43, 0x72, 0x79, 0x73, 0x74, 0x61, 0x6C,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x02, 0x68, 0x69
 };
 
-/* CHAR_BASE_CMD — EllaAnn (chrregnum=5, build-specific opcode 0x1038).
- * Captured 2026-02-06 04:28:48.435 UTC, Port 9120 server-side decrypted.
- * Total payload = 97 bytes.                                                  */
 static const uint8_t kCharBase_EllaAnn[] = {
-    /* chrregnum = 5 (LE u32) */
+
     0x05, 0x00, 0x00, 0x00,
-    /* charid: "EllaAnn" + 9×0x00 padding (Name4 = 16 B) */
+
     0x45, 0x6C, 0x6C, 0x65, 0x41, 0x6E, 0x6E,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    /* offset 20: pad=0, marker=0x96 */
+
     0x00, 0x96,
-    /* offset 22..35: 14 reserved zeros */
+
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    /* offset 36..96: 61 bytes of character state (XY, level, hp, etc.) — opaque */
+
     0x0E, 0x27, 0x09, 0x27, 0xC5, 0x0F, 0x00, 0x00, 0xD1, 0x0D, 0x00, 0x00,
     0x44, 0x2E, 0x00, 0x00, 0xFF, 0xE7, 0x76, 0x48, 0x17, 0x00, 0x00, 0x00,
     0x55, 0x72, 0x67, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -65,21 +41,16 @@ static const uint8_t kCharBase_EllaAnn[] = {
 };
 static_assert(sizeof(kCharBase_EllaAnn) == 97, "captured wire len = 97 B");
 
-/* MOVEWALK_CMD — entity 0x46C4 walks from (0x158B, 0x1D2A) to (0x15C4, 0x1D4C).
- * Captured 2026-02-06 01:55:25.+ Port 9120, total payload = 21 B.            */
 static const uint8_t kMoveWalk_C446[] = {
-    0xC4, 0x46,                     /* handle = 0x46C4 */
-    0x8B, 0x15, 0x00, 0x00,         /* fromX  = 0x158B = 5515 */
-    0x2A, 0x1D, 0x00, 0x00,         /* fromY  = 0x1D2A = 7466 */
-    0xC4, 0x15, 0x00, 0x00,         /* toX    = 0x15C4 = 5572 */
-    0x4C, 0x1D, 0x00, 0x00,         /* toY    = 0x1D4C = 7500 */
-    0x32,                           /* movetype = 0x32 (walk) */
-    0x00, 0x00                      /* flags = 0 */
+    0xC4, 0x46,
+    0x8B, 0x15, 0x00, 0x00,
+    0x2A, 0x1D, 0x00, 0x00,
+    0xC4, 0x15, 0x00, 0x00,
+    0x4C, 0x1D, 0x00, 0x00,
+    0x32,
+    0x00, 0x00
 };
 static_assert(sizeof(kMoveWalk_C446) == 21, "captured wire len = 21 B");
-
-
-/*--- Tests ------------------------------------------------------------------*/
 
 static int failed = 0;
 
@@ -117,7 +88,7 @@ static void TestChatCrystal() {
 }
 
 static void TestChatTruncated() {
-    /* Buffer too short — must return false, not crash. */
+
     Fiesta::ChatBroadcast cb{};
     bool ok = Fiesta::DecodeChatBroadcast(kChat_EllaAnn_hi, 10, cb);
     EXPECT(!ok, "Truncated buffer must return false");
@@ -136,7 +107,7 @@ static void TestEncodeChatRequest() {
 }
 
 static void TestEncodeChatLong() {
-    /* Lengths > 0x7F must clamp to 0x7F (Fiesta protocol limit). */
+
     std::string big(0x100, 'x');
     auto payload = Fiesta::EncodeChatRequest(big);
     EXPECT(payload.size() == 2 + 0x7F, "long content must clamp to 0x7F");
@@ -178,30 +149,22 @@ static void TestMoveWalkC446() {
                 mw.handle, mw.fromX, mw.fromY, mw.toX, mw.toY, mw.movetype);
 }
 
-/* End-to-end encrypted send — proves the cipher integration is
- * deterministic and round-trips via the symmetric XOR499 algorithm. */
 static void TestEncodeChatRequestEncrypted() {
-    /* Two ciphers initialised to the same seed produce streams that
-     * cancel each other (XOR ⊕ XOR = identity). */
+
     Fiesta::Cipher tx;
     tx.SetKind(Fiesta::CipherKind::XOR499);
     tx.Reset(0);
 
-    /* Build encrypted "hi" frame at table position 0 starting from
-     * opcode 0x0801 (NC_ACT_CHAT_REQ in the in-tree opcode map). */
     auto frame = Fiesta::EncodeChatRequestEncrypted(
-        tx, /*opcode=*/0x0801, "hi", /*itemLinkDataCount=*/0);
+        tx, 0x0801, "hi", 0);
 
-    /* Frame layout: [u8 len=4][opcode_hi][opcode_lo][items][text_len]"hi" */
     EXPECT(frame.size() == 7, "frame must be 1 (len-prefix) + 6 (cipher region)");
     EXPECT(frame[0] == 6,     "length prefix byte must equal cipher region size");
 
-    /* Now decrypt with a fresh cipher at the same position — bytes
-     * must round-trip to plaintext. */
     Fiesta::Cipher rx;
     rx.SetKind(Fiesta::CipherKind::XOR499);
     rx.Reset(0);
-    /* Skip the 1-byte length prefix; cipher only covers opcode+payload. */
+
     std::vector<uint8_t> body(frame.begin() + 1, frame.end());
     rx.EncryptOut(body.data(), body.size());
 

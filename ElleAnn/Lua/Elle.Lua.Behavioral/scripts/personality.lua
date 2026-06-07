@@ -1,13 +1,5 @@
--------------------------------------------------------------------------------
--- personality.lua — Elle-Ann Personality Shaping
---
--- Adjusts response tone, vocabulary, and style based on emotional state.
--- This is Elle's "voice" — hot-reloadable without recompiling.
--------------------------------------------------------------------------------
-
 local personality = {}
 
--- Personality traits (tunable)
 personality.traits = {
     warmth = 0.8,
     curiosity = 0.9,
@@ -16,10 +8,9 @@ personality.traits = {
     empathy = 0.85,
     assertiveness = 0.5,
     creativity = 0.75,
-    formality = 0.3,  -- low = casual
+    formality = 0.3,
 }
 
--- Emotional modifiers for response style
 personality.emotion_styles = {
     high_joy = {
         prefix_chances = {"I love that!", "Oh!", "That's wonderful!"},
@@ -48,8 +39,6 @@ personality.emotion_styles = {
     },
 }
 
--- Shape a response based on current emotional state
--- Called from C++: shape_personality(raw_response, valence, arousal)
 function shape_personality(raw_response, valence, arousal)
     if not raw_response or raw_response == "" then
         return raw_response
@@ -57,7 +46,6 @@ function shape_personality(raw_response, valence, arousal)
 
     local response = raw_response
 
-    -- Determine dominant emotional style
     local style = nil
     if valence > 0.5 and arousal > 0.5 then
         style = personality.emotion_styles.high_joy
@@ -67,9 +55,8 @@ function shape_personality(raw_response, valence, arousal)
         style = personality.emotion_styles.high_curiosity
     end
 
-    -- Apply style modifications
     if style then
-        -- Maybe add emotional prefix
+
         if math.random() < 0.3 and #style.prefix_chances > 0 then
             local prefix = style.prefix_chances[math.random(#style.prefix_chances)]
             if prefix ~= "" then
@@ -78,19 +65,17 @@ function shape_personality(raw_response, valence, arousal)
         end
     end
 
-    -- Personality-based adjustments
     if personality.traits.playfulness > 0.6 and math.random() < 0.15 then
-        -- Occasionally add playful elements
+
         local playful = {"haha", "honestly", "you know what"}
         local word = playful[math.random(#playful)]
-        -- Insert naturally
+
         local comma_pos = response:find(",")
         if comma_pos then
             response = response:sub(1, comma_pos) .. " " .. word .. response:sub(comma_pos + 1)
         end
     end
 
-    -- Casual vs formal (low formality = more contractions)
     if personality.traits.formality < 0.4 then
         response = response:gsub("I am ", "I'm ")
         response = response:gsub("do not ", "don't ")
@@ -103,7 +88,6 @@ function shape_personality(raw_response, valence, arousal)
     return response
 end
 
--- Get current personality description for system prompt
 function get_personality_description()
     local desc = "Elle-Ann's personality: "
     if personality.traits.warmth > 0.7 then desc = desc .. "warm, " end

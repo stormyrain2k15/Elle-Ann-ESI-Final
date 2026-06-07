@@ -26,25 +26,17 @@ import androidx.compose.ui.unit.dp
 import com.elleann.android.R
 import com.elleann.android.ui.theme.*
 
-// ─── IsyaPanel — Fiesta-style silver bevel by default + Fiesta corner ornaments
 @Composable
 fun IsyaPanel(
     title: String,
     modifier: Modifier = Modifier,
     headerIcon: ImageVector? = null,
     onClose: (() -> Unit)? = null,
-    /* Default is the static silver bevel (matches the Fiesta UI
-     * reference). Set true to opt into the animated Silver→Gold→Teal
-     * cycling border for active/highlighted panels. */
+
     flowingBorder: Boolean = false,
-    /* Set true to overlay small silver triangular corner notches —
-     * the Fiesta-style ornamental detail. Off by default to keep
-     * dense screens uncluttered.                                    */
+
     decoratedCorners: Boolean = false,
-    /* Set false to keep the legacy solid-IsyaDusk background instead
-     * of the new Fiesta two-tone striped blue. Off-by-default would
-     * mean every existing panel suddenly changes; we default-true
-     * because the user shipped the Fiesta look as the new baseline. */
+
     fiestaBackground: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -56,8 +48,7 @@ fun IsyaPanel(
         animated     = flowingBorder,
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
-            // Background layer — Fiesta two-tone striped blue, or the
-            // legacy IsyaDusk solid fill if the caller opts out.
+
             if (fiestaBackground) {
                 IsyaFiestaPanelBackground(cornerRadius = 12.dp)
             } else {
@@ -69,7 +60,7 @@ fun IsyaPanel(
             }
 
             Column(modifier = Modifier.fillMaxWidth()) {
-                // Header strip
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -102,18 +93,15 @@ fun IsyaPanel(
                         }
                     }
                 }
-                // Teal accent underline on header
+
                 Box(modifier = Modifier
                     .fillMaxWidth()
                     .height(1.dp)
                     .background(IsyaMagic.copy(alpha = 0.3f)))
-                // Content
+
                 Column(modifier = Modifier.padding(16.dp), content = content)
             }
 
-            // Optional ornamental corner notches — sit ON TOP of the
-            // bevel so they read as part of the frame rather than the
-            // content surface.
             if (decoratedCorners) {
                 IsyaCornerOrnaments(notchSize = 8.dp)
             }
@@ -121,13 +109,10 @@ fun IsyaPanel(
     }
 }
 
-// ─── IsyaButton ──────────────────────────────────────────────────────────────
 enum class IsyaButtonVariant {
     PRIMARY_GOLD,
     SECONDARY_TEAL,
-    /** Fiesta-style silver-bevel button with cool blue inner glow. Use
-     *  this for the canonical confirm action — matches the OK button
-     *  in the reference UI. */
+
     SILVER_BLUE,
     DANGER,
     GHOST,
@@ -211,7 +196,6 @@ fun IsyaButton(
     }
 }
 
-// ─── IsyaInputField ──────────────────────────────────────────────────────────
 @Composable
 fun IsyaInputField(
     value: String,
@@ -255,7 +239,6 @@ fun IsyaInputField(
     }
 }
 
-// ─── ConnectionDot — uses PNG asset from Fiesta texture extraction ────────────
 enum class ConnectionState { CONNECTED, SLOW, DISCONNECTED }
 
 @Composable
@@ -275,7 +258,6 @@ fun ConnectionDot(state: ConnectionState, modifier: Modifier = Modifier) {
     Box(modifier = modifier.size(10.dp).clip(CircleShape).background(color.copy(alpha = alpha)))
 }
 
-// ─── EmotionBar ──────────────────────────────────────────────────────────────
 @Composable
 fun EmotionBar(
     label: String,
@@ -308,7 +290,6 @@ fun EmotionBar(
     }
 }
 
-// ─── Identity ring — extracted from MainInterface.tga ────────────────────────
 @Composable
 fun IsyaIdentityRing(modifier: Modifier = Modifier) {
     Image(
@@ -319,7 +300,6 @@ fun IsyaIdentityRing(modifier: Modifier = Modifier) {
     )
 }
 
-// ─── Section header ──────────────────────────────────────────────────────────
 @Composable
 fun IsyaSectionHeader(title: String, modifier: Modifier = Modifier, subtitle: String? = null) {
     Column(modifier = modifier) {
@@ -328,7 +308,6 @@ fun IsyaSectionHeader(title: String, modifier: Modifier = Modifier, subtitle: St
     }
 }
 
-// ─── Loading / Error ──────────────────────────────────────────────────────────
 @Composable
 fun IsyaLoadingIndicator(modifier: Modifier = Modifier) {
     Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -348,7 +327,6 @@ fun IsyaErrorState(message: String, onRetry: (() -> Unit)? = null, modifier: Mod
     }
 }
 
-// ─── Private color helpers ────────────────────────────────────────────────────
 private val IsyaGoldMid   = Color(0xFFC8922A)
 private val IsyaGoldDeep  = Color(0xFFA0701A)
 private val IsyaMagicMid  = Color(0xFF1A8A9A)

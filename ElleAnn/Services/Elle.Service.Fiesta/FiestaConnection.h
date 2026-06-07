@@ -1,20 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * FiestaConnection.h — TCP socket + receive framer for one game session.
- *
- *   Single TCP connection (login OR world). Reads bytes off the wire,
- *   feeds them into a sliding buffer, and emits complete decrypted
- *   packets to the [OnPacket] callback. Outbound: takes (opcode,
- *   payload), builds the size-prefixed frame, encrypts, sends.
- *
- *   Threading:
- *     - One dedicated receive thread (blocking recv into buffer).
- *     - Any thread may call Send() — guarded by m_sendMx.
- *
- *   The connection is non-IOCP because Fiesta sessions are single-
- *   socket, low-throughput (~1 KB/s), and a simple thread-per-conn
- *   keeps the code linear. The HTTP service uses IOCP because it
- *   handles concurrent inbound clients; here we have one outbound.
- *══════════════════════════════════════════════════════════════════════════════*/
 #pragma once
 #ifndef ELLE_FIESTA_CONNECTION_H
 #define ELLE_FIESTA_CONNECTION_H
@@ -39,10 +22,9 @@
 
 namespace Fiesta {
 
-/** Single decoded inbound packet handed to the consumer. */
 struct InPacket {
     uint16_t              opcode = 0;
-    std::vector<uint8_t>  payload;       /* decrypted, opcode-stripped   */
+    std::vector<uint8_t>  payload;
 };
 
 class Connection {
@@ -60,7 +42,6 @@ public:
         WSACleanup();
     }
 
-    /** Synchronous connect + start the receive thread on success.     */
     bool Connect(const std::string& host, uint16_t port) {
         Disconnect("re-connect");
 
@@ -71,8 +52,7 @@ public:
         addr.sin_family = AF_INET;
         addr.sin_port   = htons(port);
         if (inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1) {
-            /* Try DNS — Fiesta servers are usually IP-literal but the
-             * private-server world uses hostnames too.                */
+
             addrinfo hints{}; addrinfo* res = nullptr;
             hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM;
             const std::string portStr = std::to_string(port);
@@ -113,13 +93,10 @@ public:
         std::lock_guard<std::mutex> lk(m_sendMx);
         if (m_sock == INVALID_SOCKET) return false;
 
-        /* Live console trace BEFORE we encrypt — shows the logical
-         * intent to send (operator sees the human-readable opcode
-         * and plaintext payload size).  See FiestaConsoleTrace.h. */
         Fiesta::Trace::OnTx(opcode, payload);
 
         std::vector<uint8_t> wire = BuildPacket(opcode, payload);
-        /* Encrypt opcode + payload (everything AFTER the size prefix). */
+
         const size_t headerLen = (wire[0] == 0xFF) ? 3 : 1;
         m_cipher.EncryptOut(wire.data() + headerLen, wire.size() - headerLen);
 
@@ -142,9 +119,6 @@ public:
     Cipher& MutableCipher() { return m_cipher; }
     const Cipher& GetCipher() const { return m_cipher; }
 
-    /* Lifetime counters — surfaced on /api/diag/fiesta so the operator
-     * can see at a glance whether traffic is flowing.  Atomic so the
-     * REST handler can read without blocking the recv loop. */
     uint64_t PacketsIn()  const { return m_pktIn.load(std::memory_order_relaxed); }
     uint64_t PacketsOut() const { return m_pktOut.load(std::memory_order_relaxed); }
     uint64_t BytesIn()    const { return m_bytesIn.load(std::memory_order_relaxed); }
@@ -169,7 +143,6 @@ private:
             }
             buf.insert(buf.end(), chunk, chunk + n);
 
-            /* Drain as many complete packets as the buffer holds.  */
             while (true) {
                 if (buf.empty()) break;
 
@@ -182,20 +155,17 @@ private:
                 }
                 if (buf.size() < headerLen + bodyLen) break;
                 if (bodyLen < 2) {
-                    /* Malformed — drop the byte and try to resync.    */
+
                     buf.erase(buf.begin(), buf.begin() + 1);
                     continue;
                 }
 
-                /* Copy out the body, decrypt, dispatch.               */
                 std::vector<uint8_t> body(buf.begin() + headerLen,
                                           buf.begin() + headerLen + bodyLen);
                 m_cipher.DecryptIn(body);
 
                 InPacket pkt;
-                /* Opcode is [u8 cmdtype/department][u8 command/subid].
-                 * Pack into a host-side u16 as (dept << 8) | cmd to
-                 * match the Op::NC_* constant convention. */
+
                 pkt.opcode  = (uint16_t)((body[0] << 8) | body[1]);
                 pkt.payload.assign(body.begin() + 2, body.end());
 
@@ -223,5 +193,5 @@ private:
     DisconnectCallback      m_onDisconnect;
 };
 
-}  /* namespace Fiesta */
+}
 #endif

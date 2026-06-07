@@ -1,7 +1,3 @@
--------------------------------------------------------------------------------
--- goal_formation.lua — Rules for Autonomous Goal Generation
--------------------------------------------------------------------------------
-
 goal_formation = {}
 
 goal_formation.templates = {
@@ -18,12 +14,11 @@ function goal_formation.should_create_goal(drive_name, intensity, existing_goals
         threshold = get_threshold("goals", "auto_generate_drive_min") or 0.7
     end
     if intensity < threshold then return false end
-    
-    -- Don't create duplicate goals
+
     for _, goal in ipairs(existing_goals or {}) do
         if goal.source_drive == drive_name then return false end
     end
-    
+
     return true
 end
 

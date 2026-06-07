@@ -1,70 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * FiestaPacket.h — ShineEngine packet structure & opcode registry.
- *
- *   ────────────────────────────────────────────────────────────────────
- *   PROVENANCE — every constant in this file is sourced from one of:
- *   ────────────────────────────────────────────────────────────────────
- *     [PDB-V80] llvm-pdbutil dump of {Login,WorldManager,Account,
- *               AccountLog}.pdb  (post-region-toggle 2016 build).
- *     [PDB-V70] custom CodeView reader on 5ZoneServer2.pdb (CN2012
- *               2012-12 build, TPI v7.0 — llvm-pdbutil rejects).
- *     [BIN]     `strings(1)` over matching .exe (when PDB silent).
- *
- *   See `_re_artifacts/OPCODES_FROM_PDB.md` for the master extraction
- *   methodology and `_re_artifacts/pdb/extracted/PDB_OPCODES.json`
- *   for the full 2 687-entry resolved opcode table.
- *
- *   ────────────────────────────────────────────────────────────────────
- *   WIRE FORMAT (cleartext-prefix variant — verified)
- *   ────────────────────────────────────────────────────────────────────
- *
- *       [u8  sizeFlag]              0x00..0xFE → length is 1 byte (sizeFlag)
- *                                   0xFF       → length is the next u16 LE
- *       [u16 LE  payloadLen]        (only when sizeFlag == 0xFF)
- *       ┌─ cipher boundary ──────────────────────────────────────────┐
- *       │ [u8  cmdtype]   ─┐  this is NOT a u16 — it is the          │
- *       │ [u8  command]    ┘  on-wire image of NETCOMMAND { BYTE     │
- *       │                     department; BYTE command; }, struct-  │
- *       │                     order (department first).  Verified    │
- *       │                     against MainApp.cpp send-pump where    │
- *       │                     `pkWorld->AddNetMsg(&netcmd,           │
- *       │                     sizeof(netcmd))` emits the 2 bytes     │
- *       │                     in declared order.  Storing the opcode │
- *       │                     in a u16 constant as (cmdtype<<8)|sub  │
- *       │                     is purely a host-side convenience.     │
- *       │ [bytes]  payload                                            │
- *       └─────────────────────────────────────────────────────────────┘
- *
- *   `length` covers (opcode || payload). Cipher is keyed by a single
- *   u16 seed that the SERVER pushes immediately after TCP accept in
- *   PROTO_NC_MISC_SEED_ACK (opcode 0x0207). Both directions use the
- *   same seed; the cipher state advances continuously across the
- *   stream (no per-packet reset). See FiestaCipher.h.
- *
- *   ────────────────────────────────────────────────────────────────────
- *   3-HOP LOGIN DANCE (verified opcode IDs)
- *   ────────────────────────────────────────────────────────────────────
- *      hop 1: Login (port 9010)
- *        S→C  NC_MISC_SEED_ACK         (0x0207, payload {u16 seed})
- *        C→S  NC_USER_CLIENT_VERSION_CHECK_REQ (0x0365, 64B wchar key)
- *        S→C  NC_USER_CLIENT_RIGHTVERSION_CHECK_ACK (0x0367, empty)
- *        C→S  NC_USER_LOGIN_REQ       (0x0306, 272B {char[256]+char[16]})
- *        S→C  NC_USER_LOGIN_ACK       (0x030A, {u8 numofworld + WorldInfo[]})
- *               or NC_USER_LOGINFAIL_ACK (0x0309)
- *        C→S  NC_USER_WORLDSELECT_REQ (0x030B, {u8 worldno})
- *        S→C  NC_USER_WORLDSELECT_ACK (0x030C, 83B {status, ip[16],
- *                                                    port, validate[64]})
- *      hop 2: WorldManager (port returned by WORLDSELECT_ACK)
- *        S→C  NC_MISC_SEED_ACK
- *        C→S  NC_USER_WILLLOGIN_REQ   (0x030D, 347B inc. validate token)
- *        S→C  NC_USER_WILLLOGIN_ACK   (0x030E, returns Zone {ip,port,token})
- *      hop 3: Zone (port returned by WILLLOGIN_ACK)
- *        S→C  NC_MISC_SEED_ACK
- *        C→S  NC_USER_LOGINWORLD_REQ  (0x030F)
- *        C→S  NC_MAP_LOGIN_REQ        (0x0601, 978B incl. data checksum)
- *        S→C  NC_MAP_LOGINCOMPLETE_CMD (0x0603, 32B doorblock checksum)
- *               → IN_GAME
- *══════════════════════════════════════════════════════════════════════════════*/
 #pragma once
 #ifndef ELLE_FIESTA_PACKET_H
 #define ELLE_FIESTA_PACKET_H
@@ -74,148 +7,118 @@
 #include <string>
 #include <vector>
 
-/* Foundational types (Name4/5/8/256Byte, NETCOMMAND, SHINE_XY_TYPE,
- * SHINE_COORD_TYPE, NETPACKETZONEHEADER, MAKE_NETCMDID, …) live in
- * FiestaProtoBase.h since Phase 6a — pulled in here so existing
- * call-sites that depend on `Fiesta::SHINE_XY_TYPE` etc. through
- * this header keep compiling. */
 #include "FiestaProtoBase.h"
 
 namespace Fiesta {
 
-/*──────────────────────────────────────────────────────────────────────────────
- * NC_* opcode registry  —  encoded as opcode = (cmdtype << 8) | subid.
- *
- *   `cmdtype` values come from PROTOCOL_COMMAND (Login.pdb fieldlist
- *   0x28C1). Selected groupings (low byte fixed by PDB enums):
- *     0x02 NC_MISC      0x03 NC_USER     0x04 NC_CHAR     0x05 NC_AVATAR
- *     0x06 NC_MAP       0x07 NC_BRIEFINFO 0x08 NC_ACT     0x09 NC_BAT
- *     0x0A NC_OPTOOL    0x0C NC_ITEM     0x0E NC_PARTY    0x10 NC_CHARSAVE
- *     0x11 NC_QUEST     0x12 NC_SKILL    0x13 NC_TRADE    0x14 NC_SOULSTONE
- *     0x16 NC_KQ        0x17 NC_WT       0x18 NC_CT       0x1A NC_BOOTH
- *     0x1D NC_GUILD     0x21 NC_MINIHOUSE 0x24 NC_CHARGED 0x29 NC_INSTANCE
- *     0x2B NC_DICE      0x2D NC_USER_CONNECTION  0x2E NC_AUCTION  0x35 NC_PET
- *──────────────────────────────────────────────────────────────────────────────*/
 namespace Op {
 
-    /* ── NC_MISC — handshake, ping ───────────────────────────────── */
-    constexpr uint16_t NC_MISC_HEARTBEAT_REQ                     = 0x0204;  /* [PDB-V80] */
-    constexpr uint16_t NC_MISC_HEARTBEAT_ACK                     = 0x0205;  /* [PDB-V80] */
-    constexpr uint16_t NC_MISC_SEED_REQ                          = 0x0206;  /* [PDB-V80] (legacy, server-pushed) */
-    constexpr uint16_t NC_MISC_SEED_ACK                          = 0x0207;  /* [PDB-V80] cipher seed delivery */
-    constexpr uint16_t NC_MISC_GAMETIME_REQ                      = 0x0212;  /* [BIN] */
+    constexpr uint16_t NC_MISC_HEARTBEAT_REQ                     = 0x0204;
+    constexpr uint16_t NC_MISC_HEARTBEAT_ACK                     = 0x0205;
+    constexpr uint16_t NC_MISC_SEED_REQ                          = 0x0206;
+    constexpr uint16_t NC_MISC_SEED_ACK                          = 0x0207;
+    constexpr uint16_t NC_MISC_GAMETIME_REQ                      = 0x0212;
 
-    /* ── NC_USER — login / world-select / logout ────────────────── */
-    constexpr uint16_t NC_USER_XTRAP_REQ                         = 0x0304;  /* [PDB-V80] */
-    constexpr uint16_t NC_USER_XTRAP_ACK                         = 0x0305;  /* [PDB-V80] */
-    constexpr uint16_t NC_USER_LOGIN_REQ                         = 0x0306;  /* [PDB-V80] hop-1 */
-    constexpr uint16_t NC_USER_PASSWORD_CHECK_REQ                = 0x0307;  /* [PDB-V80] */
-    constexpr uint16_t NC_USER_PASSWORD_CHECK_ACK                = 0x0308;  /* [PDB-V80] */
-    constexpr uint16_t NC_USER_LOGINFAIL_ACK                     = 0x0309;  /* [PDB-V80] */
-    constexpr uint16_t NC_USER_LOGIN_ACK                         = 0x030A;  /* [PDB-V80] world list */
-    constexpr uint16_t NC_USER_WORLDSELECT_REQ                   = 0x030B;  /* [PDB-V80] */
-    constexpr uint16_t NC_USER_WORLDSELECT_ACK                   = 0x030C;  /* [PDB-V80] WM addr+token */
-    constexpr uint16_t NC_USER_WILLLOGIN_REQ                     = 0x030D;  /* [PDB-V80] hop-2 */
-    constexpr uint16_t NC_USER_WILLLOGIN_ACK                     = 0x030E;  /* [PDB-V80] zone addr+token */
-    constexpr uint16_t NC_USER_LOGINWORLD_REQ                    = 0x030F;  /* [PDB-V80] hop-3 enter */
-    constexpr uint16_t NC_USER_NORMALLOGOUT_CMD                  = 0x0318;  /* [PDB-V80] */
-    constexpr uint16_t NC_USER_USE_BEAUTY_SHOP_CMD               = 0x0332;  /* [BIN] */
-    constexpr uint16_t NC_USER_CLIENT_VERSION_CHECK_REQ          = 0x0365;  /* [PDB-V80] */
-    constexpr uint16_t NC_USER_CLIENT_WRONGVERSION_CHECK_ACK     = 0x0366;  /* [PDB-V80] */
-    constexpr uint16_t NC_USER_CLIENT_RIGHTVERSION_CHECK_ACK     = 0x0367;  /* [PDB-V80] */
+    constexpr uint16_t NC_USER_XTRAP_REQ                         = 0x0304;
+    constexpr uint16_t NC_USER_XTRAP_ACK                         = 0x0305;
+    constexpr uint16_t NC_USER_LOGIN_REQ                         = 0x0306;
+    constexpr uint16_t NC_USER_PASSWORD_CHECK_REQ                = 0x0307;
+    constexpr uint16_t NC_USER_PASSWORD_CHECK_ACK                = 0x0308;
+    constexpr uint16_t NC_USER_LOGINFAIL_ACK                     = 0x0309;
+    constexpr uint16_t NC_USER_LOGIN_ACK                         = 0x030A;
+    constexpr uint16_t NC_USER_WORLDSELECT_REQ                   = 0x030B;
+    constexpr uint16_t NC_USER_WORLDSELECT_ACK                   = 0x030C;
+    constexpr uint16_t NC_USER_WILLLOGIN_REQ                     = 0x030D;
+    constexpr uint16_t NC_USER_WILLLOGIN_ACK                     = 0x030E;
+    constexpr uint16_t NC_USER_LOGINWORLD_REQ                    = 0x030F;
+    constexpr uint16_t NC_USER_NORMALLOGOUT_CMD                  = 0x0318;
+    constexpr uint16_t NC_USER_USE_BEAUTY_SHOP_CMD               = 0x0332;
+    constexpr uint16_t NC_USER_CLIENT_VERSION_CHECK_REQ          = 0x0365;
+    constexpr uint16_t NC_USER_CLIENT_WRONGVERSION_CHECK_ACK     = 0x0366;
+    constexpr uint16_t NC_USER_CLIENT_RIGHTVERSION_CHECK_ACK     = 0x0367;
 
-    /* ── NC_LOG (uses subid space 0x03xx legacy) ─────────────────── */
-    constexpr uint16_t NC_LOG_MAP_NOBASE_CMD                     = 0x0384;  /* [BIN] */
+    constexpr uint16_t NC_LOG_MAP_NOBASE_CMD                     = 0x0384;
 
-    /* ── NC_CHAR — character lifecycle / stats ───────────────────── */
-    constexpr uint16_t NC_CHAR_LOGIN_ACK                         = 0x0403;  /* [PDB-V70] */
-    constexpr uint16_t NC_CHAR_BASE_CMD                          = 0x0407;  /* [PDB-V70] my own base info */
-    constexpr uint16_t NC_CHAR_CLIENT_BASE_CMD                   = 0x0438;  /* [PDB-V70] base stat delta */
-    constexpr uint16_t NC_CHAR_REVIVE_REQ                        = 0x044E;  /* [PDB-V80] */
-    constexpr uint16_t NC_CHAR_STAT_INCPOINT_REQ                 = 0x045C;  /* [PDB-V80] */
-    constexpr uint16_t NC_CHAR_STAT_DECPOINT_REQ                 = 0x0462;  /* [PDB-V80] */
-    constexpr uint16_t NC_CHAR_LOGOUTREADY_CMD                   = 0x0471;  /* [PDB-V80] */
-    constexpr uint16_t NC_CHAR_LOGOUTCANCEL_CMD                  = 0x0472;  /* [PDB-V80] */
-    constexpr uint16_t NC_CHAR_WEDDING_PARTNER_INFO_REQ          = 0x0493;  /* [BIN] */
-    constexpr uint16_t NC_CHAR_DEPOLYMORPH_CMD                   = 0x04B0;  /* [BIN] */
-    constexpr uint16_t NC_CHAR_SAVE_LINK_REQ                     = 0x04B9;  /* [BIN] */
-    constexpr uint16_t NC_CHAR_CLIENT_AUTO_PICK_REQ              = 0x04BC;  /* [BIN] */
-    constexpr uint16_t NC_CHAR_CLIENT_FREESTAT_APPLICATION_REQ   = 0x04C2;  /* [BIN] */
+    constexpr uint16_t NC_CHAR_LOGIN_ACK                         = 0x0403;
+    constexpr uint16_t NC_CHAR_BASE_CMD                          = 0x0407;
+    constexpr uint16_t NC_CHAR_CLIENT_BASE_CMD                   = 0x0438;
+    constexpr uint16_t NC_CHAR_REVIVE_REQ                        = 0x044E;
+    constexpr uint16_t NC_CHAR_STAT_INCPOINT_REQ                 = 0x045C;
+    constexpr uint16_t NC_CHAR_STAT_DECPOINT_REQ                 = 0x0462;
+    constexpr uint16_t NC_CHAR_LOGOUTREADY_CMD                   = 0x0471;
+    constexpr uint16_t NC_CHAR_LOGOUTCANCEL_CMD                  = 0x0472;
+    constexpr uint16_t NC_CHAR_WEDDING_PARTNER_INFO_REQ          = 0x0493;
+    constexpr uint16_t NC_CHAR_DEPOLYMORPH_CMD                   = 0x04B0;
+    constexpr uint16_t NC_CHAR_SAVE_LINK_REQ                     = 0x04B9;
+    constexpr uint16_t NC_CHAR_CLIENT_AUTO_PICK_REQ              = 0x04BC;
+    constexpr uint16_t NC_CHAR_CLIENT_FREESTAT_APPLICATION_REQ   = 0x04C2;
 
-    /* ── NC_MAP — zone enter / wing / portal ─────────────────────── */
-    constexpr uint16_t NC_MAP_LOGIN_REQ                          = 0x0601;  /* [PDB-V70] hop-3 */
-    constexpr uint16_t NC_MAP_LOGINCOMPLETE_CMD                  = 0x0603;  /* [PDB-V70] */
-    constexpr uint16_t NC_MAP_WING_SAVE_REQ                      = 0x0614;  /* [BIN] */
-    constexpr uint16_t NC_MAP_WING_FLY_REQ                       = 0x0616;  /* [BIN] */
-    constexpr uint16_t NC_MAP_TOWNPORTAL_REQ                     = 0x061A;  /* [BIN] */
-    constexpr uint16_t NC_MAP_LINEUP_PARTYPLAYER_REQ             = 0x061C;  /* [BIN] */
-    constexpr uint16_t NC_MAP_LINEUP_GUILDPLAYER_REQ             = 0x061F;  /* [BIN] */
+    constexpr uint16_t NC_MAP_LOGIN_REQ                          = 0x0601;
+    constexpr uint16_t NC_MAP_LOGINCOMPLETE_CMD                  = 0x0603;
+    constexpr uint16_t NC_MAP_WING_SAVE_REQ                      = 0x0614;
+    constexpr uint16_t NC_MAP_WING_FLY_REQ                       = 0x0616;
+    constexpr uint16_t NC_MAP_TOWNPORTAL_REQ                     = 0x061A;
+    constexpr uint16_t NC_MAP_LINEUP_PARTYPLAYER_REQ             = 0x061C;
+    constexpr uint16_t NC_MAP_LINEUP_GUILDPLAYER_REQ             = 0x061F;
 
-    /* ── NC_BRIEFINFO — server-pushed entity-state deltas ────────── */
-    constexpr uint16_t NC_BRIEFINFO_INFORM_CMD                   = 0x0701;  /* [PDB-V70] */
-    constexpr uint16_t NC_BRIEFINFO_LOGINCHARACTER_CMD           = 0x0706;  /* [PDB-V70] other player enters view */
-    constexpr uint16_t NC_BRIEFINFO_CHARACTER_CMD                = 0x0707;  /* [PDB-V70] */
-    constexpr uint16_t NC_BRIEFINFO_REGENMOB_CMD                 = 0x0708;  /* [PDB-V70] */
-    constexpr uint16_t NC_BRIEFINFO_BRIEFINFODELETE_CMD          = 0x070E;  /* [PDB-V70] entity leaves view */
-    constexpr uint16_t NC_BRIEFINFO_NPC_DISAPPEAR_CMD            = 0x0715;  /* [PDB-V70] */
-    constexpr uint16_t NC_BRIEFINFO_PLAYER_LIST_INFO_APPEAR_CMD  = 0x0716;  /* [PDB-V70] */
+    constexpr uint16_t NC_BRIEFINFO_INFORM_CMD                   = 0x0701;
+    constexpr uint16_t NC_BRIEFINFO_LOGINCHARACTER_CMD           = 0x0706;
+    constexpr uint16_t NC_BRIEFINFO_CHARACTER_CMD                = 0x0707;
+    constexpr uint16_t NC_BRIEFINFO_REGENMOB_CMD                 = 0x0708;
+    constexpr uint16_t NC_BRIEFINFO_BRIEFINFODELETE_CMD          = 0x070E;
+    constexpr uint16_t NC_BRIEFINFO_NPC_DISAPPEAR_CMD            = 0x0715;
+    constexpr uint16_t NC_BRIEFINFO_PLAYER_LIST_INFO_APPEAR_CMD  = 0x0716;
 
-    /* ── NC_ACT — movement, chat, NPC, gather, emote ─────────────── */
-    constexpr uint16_t NC_ACT_CHAT_REQ                           = 0x0801;  /* [PDB-V70] */
-    constexpr uint16_t NC_ACT_WALK_REQ                           = 0x0803;  /* [PDB-V70] */
-    constexpr uint16_t NC_ACT_RUN_REQ                            = 0x0805;  /* [PDB-V70] */
-    constexpr uint16_t NC_ACT_CHANGEMODE_REQ                     = 0x0808;  /* [BIN] */
-    constexpr uint16_t NC_ACT_NPCCLICK_CMD                       = 0x080A;  /* [PDB-V70] */
-    constexpr uint16_t NC_ACT_ENDOFTRADE_CMD                     = 0x080B;  /* [BIN] */
-    constexpr uint16_t NC_ACT_WHISPER_REQ                        = 0x080C;  /* [PDB-V70] */
-    constexpr uint16_t NC_ACT_STOP_REQ                           = 0x0812;  /* [PDB-V70] */
-    constexpr uint16_t NC_ACT_MOVEWALK_CMD                       = 0x0817;  /* [PDB-V70] */
-    constexpr uint16_t NC_ACT_MOVERUN_CMD                        = 0x0819;  /* [PDB-V70] */
-    constexpr uint16_t NC_ACT_NPCMENUOPEN_ACK                    = 0x081D;  /* [BIN] */
-    constexpr uint16_t NC_ACT_SHOUT_CMD                          = 0x081E;  /* [PDB-V70] */
-    constexpr uint16_t NC_ACT_EMOTICON_CMD                       = 0x0820;  /* [BIN] */
-    constexpr uint16_t NC_ACT_EMOTICONSTOP_CMD                   = 0x0822;  /* [BIN] */
-    constexpr uint16_t NC_ACT_JUMP_CMD                           = 0x0824;  /* [PDB-V70] */
-    constexpr uint16_t NC_ACT_PITCHTENT_REQ                      = 0x0827;  /* [BIN] */
-    constexpr uint16_t NC_ACT_FOLDTENT_REQ                       = 0x082A;  /* [BIN] */
-    constexpr uint16_t NC_ACT_GATHERSTART_REQ                    = 0x082D;  /* [BIN] */
-    constexpr uint16_t NC_ACT_GATHERCANCEL_CMD                   = 0x0830;  /* [BIN] */
-    constexpr uint16_t NC_ACT_GATHERCOMPLETE_REQ                 = 0x0832;  /* [BIN] */
-    constexpr uint16_t NC_ACT_PRODUCE_CAST_REQ                   = 0x0835;  /* [BIN] */
-    constexpr uint16_t NC_ACT_PRODUCE_CASTABORT_CMD              = 0x0839;  /* [BIN] */
-    constexpr uint16_t NC_ACT_RIDE_FEEDING_REQ                   = 0x0844;  /* [BIN] */
-    constexpr uint16_t NC_ACT_ROAR_REQ                           = 0x084B;  /* [BIN] */
-    constexpr uint16_t NC_ACT_RIDE_OFF_REQ                       = 0x086D;  /* [BIN] */
-    constexpr uint16_t NC_ACT_AUTO_WAY_FINDING_USE_GATE_REQ      = 0x0870;  /* [BIN] */
+    constexpr uint16_t NC_ACT_CHAT_REQ                           = 0x0801;
+    constexpr uint16_t NC_ACT_WALK_REQ                           = 0x0803;
+    constexpr uint16_t NC_ACT_RUN_REQ                            = 0x0805;
+    constexpr uint16_t NC_ACT_CHANGEMODE_REQ                     = 0x0808;
+    constexpr uint16_t NC_ACT_NPCCLICK_CMD                       = 0x080A;
+    constexpr uint16_t NC_ACT_ENDOFTRADE_CMD                     = 0x080B;
+    constexpr uint16_t NC_ACT_WHISPER_REQ                        = 0x080C;
+    constexpr uint16_t NC_ACT_STOP_REQ                           = 0x0812;
+    constexpr uint16_t NC_ACT_MOVEWALK_CMD                       = 0x0817;
+    constexpr uint16_t NC_ACT_MOVERUN_CMD                        = 0x0819;
+    constexpr uint16_t NC_ACT_NPCMENUOPEN_ACK                    = 0x081D;
+    constexpr uint16_t NC_ACT_SHOUT_CMD                          = 0x081E;
+    constexpr uint16_t NC_ACT_EMOTICON_CMD                       = 0x0820;
+    constexpr uint16_t NC_ACT_EMOTICONSTOP_CMD                   = 0x0822;
+    constexpr uint16_t NC_ACT_JUMP_CMD                           = 0x0824;
+    constexpr uint16_t NC_ACT_PITCHTENT_REQ                      = 0x0827;
+    constexpr uint16_t NC_ACT_FOLDTENT_REQ                       = 0x082A;
+    constexpr uint16_t NC_ACT_GATHERSTART_REQ                    = 0x082D;
+    constexpr uint16_t NC_ACT_GATHERCANCEL_CMD                   = 0x0830;
+    constexpr uint16_t NC_ACT_GATHERCOMPLETE_REQ                 = 0x0832;
+    constexpr uint16_t NC_ACT_PRODUCE_CAST_REQ                   = 0x0835;
+    constexpr uint16_t NC_ACT_PRODUCE_CASTABORT_CMD              = 0x0839;
+    constexpr uint16_t NC_ACT_RIDE_FEEDING_REQ                   = 0x0844;
+    constexpr uint16_t NC_ACT_ROAR_REQ                           = 0x084B;
+    constexpr uint16_t NC_ACT_RIDE_OFF_REQ                       = 0x086D;
+    constexpr uint16_t NC_ACT_AUTO_WAY_FINDING_USE_GATE_REQ      = 0x0870;
 
-    /* ── NC_BAT — combat (Zone-side; PDB-V70 names but layouts not
-     *   recovered from this build's PDB — opcodes verified via WM
-     *   dispatcher table cross-reference, payloads remain WIP). ─── */
-    constexpr uint16_t NC_BAT_TARGETING_REQ                      = 0x0901;  /* [BIN] (note: not "TARGETTING") */
-    constexpr uint16_t NC_BAT_HIT_REQ                            = 0x0903;  /* [BIN] */
-    constexpr uint16_t NC_BAT_UNTARGET_REQ                       = 0x0908;  /* [BIN] */
-    constexpr uint16_t NC_BAT_SMASH_REQ                          = 0x0912;  /* [BIN] */
-    constexpr uint16_t NC_BAT_SKILLCAST_REQ                      = 0x0918;  /* [BIN] */
-    constexpr uint16_t NC_BAT_SKILLCASTABORT_CMD                 = 0x091C;  /* [BIN] */
-    constexpr uint16_t NC_BAT_BASHSTART_CMD                      = 0x092B;  /* [BIN] */
-    constexpr uint16_t NC_BAT_BASHSTOP_CMD                       = 0x0932;  /* [BIN] */
-    constexpr uint16_t NC_BAT_ASSIST_REQ                         = 0x093E;  /* [BIN] */
-    constexpr uint16_t NC_BAT_SKILLBASH_OBJ_CAST_REQ             = 0x0940;  /* [BIN] */
-    constexpr uint16_t NC_BAT_SKILLBASH_FLD_CAST_REQ             = 0x0941;  /* [BIN] */
-    constexpr uint16_t NC_BAT_SKILLBASH_CASTABORT_REQ            = 0x0944;  /* [BIN] */
-    constexpr uint16_t NC_BAT_ABSTATE_ERASE_REQ                  = 0x0954;  /* [BIN] */
+    constexpr uint16_t NC_BAT_TARGETING_REQ                      = 0x0901;
+    constexpr uint16_t NC_BAT_HIT_REQ                            = 0x0903;
+    constexpr uint16_t NC_BAT_UNTARGET_REQ                       = 0x0908;
+    constexpr uint16_t NC_BAT_SMASH_REQ                          = 0x0912;
+    constexpr uint16_t NC_BAT_SKILLCAST_REQ                      = 0x0918;
+    constexpr uint16_t NC_BAT_SKILLCASTABORT_CMD                 = 0x091C;
+    constexpr uint16_t NC_BAT_BASHSTART_CMD                      = 0x092B;
+    constexpr uint16_t NC_BAT_BASHSTOP_CMD                       = 0x0932;
+    constexpr uint16_t NC_BAT_ASSIST_REQ                         = 0x093E;
+    constexpr uint16_t NC_BAT_SKILLBASH_OBJ_CAST_REQ             = 0x0940;
+    constexpr uint16_t NC_BAT_SKILLBASH_FLD_CAST_REQ             = 0x0941;
+    constexpr uint16_t NC_BAT_SKILLBASH_CASTABORT_REQ            = 0x0944;
+    constexpr uint16_t NC_BAT_ABSTATE_ERASE_REQ                  = 0x0954;
 
-    /* ── NC_ITEM — inventory ─────────────────────────────────────── */
-    constexpr uint16_t NC_ITEM_BUY_REQ                           = 0x0C03;  /* [BIN] */
-    constexpr uint16_t NC_ITEM_SELL_REQ                          = 0x0C06;  /* [BIN] */
-    constexpr uint16_t NC_ITEM_DROP_REQ                          = 0x0C07;  /* [BIN] */
-    constexpr uint16_t NC_ITEM_PICKUP_REQ                        = 0x0C09;  /* [BIN] */
-    constexpr uint16_t NC_ITEM_RELOC_REQ                         = 0x0C0B;  /* [BIN] */
-    constexpr uint16_t NC_ITEM_USE_REQ                           = 0x0C0F;  /* [BIN] */
-    constexpr uint16_t NC_ITEM_QUICKSLOT_RELOC_REQ               = 0x0C42;  /* [BIN] */
-    constexpr uint16_t NC_ITEM_REVIVEITEMUSE_CMD                 = 0x0C48;  /* [BIN] */
+    constexpr uint16_t NC_ITEM_BUY_REQ                           = 0x0C03;
+    constexpr uint16_t NC_ITEM_SELL_REQ                          = 0x0C06;
+    constexpr uint16_t NC_ITEM_DROP_REQ                          = 0x0C07;
+    constexpr uint16_t NC_ITEM_PICKUP_REQ                        = 0x0C09;
+    constexpr uint16_t NC_ITEM_RELOC_REQ                         = 0x0C0B;
+    constexpr uint16_t NC_ITEM_USE_REQ                           = 0x0C0F;
+    constexpr uint16_t NC_ITEM_QUICKSLOT_RELOC_REQ               = 0x0C42;
+    constexpr uint16_t NC_ITEM_REVIVEITEMUSE_CMD                 = 0x0C48;
 
-    /* ── small subsystems (BIN-sourced; payloads not in scope) ──── */
     constexpr uint16_t NC_PARTY_REQUEST_REQ                      = 0x0E48;
     constexpr uint16_t NC_MENU_SERVERMENU_ACK                    = 0x0F02;
     constexpr uint16_t NC_QUEST_DOING_REQ                        = 0x1102;
@@ -253,61 +156,27 @@ namespace Op {
     constexpr uint16_t NC_DICE_TAISAI_BETTING_CANCEL_REQ         = 0x2B0F;
     constexpr uint16_t NC_GAMBLE_GAMBLEHOUSE_EXIT_REQ            = 0x2F02;
 
-}  /* namespace Op */
+}
 
-/*──────────────────────────────────────────────────────────────────────────────
- * ShineEngine PROTO_NC_* PODs — verified bit-exact layouts.
- *
- *   Every struct below has its sizeof checked at compile time
- *   against the value reported by the PDB type stream.  The packed
- *   pragma pair guarantees the in-memory image matches the wire image
- *   on x86 / x86-64 toolchains (Visual Studio + GCC + Clang all honor
- *   #pragma pack(push,1) for these scalar/array layouts).
- *──────────────────────────────────────────────────────────────────────────────*/
 #pragma pack(push, 1)
 
-/* SHINE_XY_TYPE, SHINE_COORD_TYPE — moved to FiestaProtoBase.h
- * (included above).  Kept their static_asserts in this file's
- * "guard" block at the bottom for one extra layer of drift checks. */
-
-/** PROTO_NC_MISC_SEED_ACK — server pushes once after TCP accept.
- *  Source: Login PDB type 0x28D0 (sizeof=2). */
 struct PROTO_NC_MISC_SEED_ACK {
     uint16_t seed;
 };
 
-/** PROTO_NC_USER_CLIENT_VERSION_CHECK_REQ — version handshake.
- *  Source: Login PDB type for 0x2A...; sizeof=64.  Field is a
- *  fixed-size 32-char wide string (UTF-16LE).  Region-specific
- *  builds compare exact bytes against a hard-coded constant; for
- *  the CN2012 build the expected key is `"SDO_FIESTA_NEW_VER_KEY"`
- *  padded with NULs (0x00). */
 struct PROTO_NC_USER_CLIENT_VERSION_CHECK_REQ {
-    uint16_t sVersionKey[32];   /* UTF-16LE; verbatim wire bytes */
+    uint16_t sVersionKey[32];
 };
 
-/** PROTO_NC_USER_LOGIN_REQ — hop-1 credentials.
- *  Source: Login PDB struct 0x297F + fieldlist 0x297E (sizeof=272).
- *  Both fields are NUL-padded fixed-width ASCII (NOT length-prefixed). */
 struct PROTO_NC_USER_LOGIN_REQ {
     char user[256];
     char password[16];
 };
 
-/** PROTO_NC_USER_WORLDSELECT_REQ — pick which world from LOGIN_ACK list.
- *  Source: Login PDB; sizeof=1. */
 struct PROTO_NC_USER_WORLDSELECT_REQ {
     uint8_t worldno;
 };
 
-/** PROTO_NC_USER_WORLDSELECT_ACK — WM addr + per-session validation
- *  token. Login → Client.
- *  Source: Login PDB struct 0x27C6 + fieldlist 0x27C5 (sizeof=83).
- *  Layout exactly:
- *    [0]  u8       worldstatus     0=down 1=normal 2=busy 3=test ...
- *    [1]  char[16] ip              dotted-quad ASCIZ for WM
- *    [17] u16      port            WM listen port (LE)
- *    [19] u16[32]  validate_new    64-byte session token (echoed to WM) */
 struct PROTO_NC_USER_WORLDSELECT_ACK {
     uint8_t  worldstatus;
     char     ip[16];
@@ -315,15 +184,6 @@ struct PROTO_NC_USER_WORLDSELECT_ACK {
     uint16_t validate_new[32];
 };
 
-/** PROTO_NC_USER_WILLLOGIN_REQ — hop-2 (Client → WM).
- *  Source: Login PDB struct 0x28FF + fieldlist 0x28FE (sizeof=347).
- *  Layout exactly:
- *    [  0] netpacketheader 7B (clienthandle:u16 + 5 unnamed bytes —
- *           in CN2012 these are zero on the client→WM direction)
- *    [  7] char[256]       userid  (same string used in LOGIN_REQ.user)
- *    [263] u16[32]         validate_new  (echoed from WORLDSELECT_ACK)
- *    [327] char[20]        spawnapps  (launcher OS fingerprint, NUL-pad
- *           — CN2012 accepts all-zero for headless clients) */
 struct PROTO_NC_USER_WILLLOGIN_REQ {
     uint8_t  netpacketheader[7];
     char     userid[256];
@@ -331,10 +191,6 @@ struct PROTO_NC_USER_WILLLOGIN_REQ {
     char     spawnapps[20];
 };
 
-/** PROTO_NC_USER_WILLLOGIN_ACK — WM → Client.
- *  Source: Login PDB struct (sizeof=348).  Wraps WILLLOGIN_REQ +
- *  status byte; on success WM rewrites `validate_new` to the Zone
- *  token and the IP/port fields point to the destination zone. */
 struct PROTO_NC_USER_WILLLOGIN_ACK {
     uint8_t  status;
     uint8_t  netpacketheader[7];
@@ -345,47 +201,23 @@ struct PROTO_NC_USER_WILLLOGIN_ACK {
     uint8_t  pad[2];
 };
 
-/** PROTO_NC_ACT_WALK_REQ — Zone movement request.
- *  Source: Zone PDB struct 0xdf53 (sizeof=16). */
 struct PROTO_NC_ACT_WALK_REQ {
     SHINE_XY_TYPE from;
     SHINE_XY_TYPE to;
 };
 
-/** PROTO_NC_ACT_NPCCLICK_CMD — Zone NPC interaction.
- *  Source: Zone PDB (sizeof=2). */
 struct PROTO_NC_ACT_NPCCLICK_CMD {
     uint16_t npchandle;
 };
 
-/** PROTO_NC_ACT_CHAT_REQ — chat / shout text payload.
- *  Source: Fiesta CLIENT PDB struct 0x159AC + fieldlist 0x159AB.
- *  Total wire size = 2 + len bytes.  The same struct is used for
- *  both directions; sender identity for broadcasts comes from the
- *  outer NETPACKETZONEHEADER (when the zone wraps the frame), NOT
- *  from inside the chat payload.
- *
- *  🟡 WIP / PENDING-PROOF: the broadcast envelope (whether the
- *  zone prepends NETPACKETZONEHEADER or whether sender is implicit
- *  from a separate `_NORMAL_CHAT_CMD` opcode) is awaiting PCAPs.
- *  The `STUB_CHAT_BROADCAST_PARSE` site in FiestaClient.cpp probes
- *  both shapes and surfaces the raw bytes for diagnosis. */
 struct PROTO_NC_ACT_CHAT_REQ_HEAD {
     uint8_t itemLinkDataCount;
     uint8_t len;
-    /* trailing `content[len]` bytes follow this fixed head. */
+
 };
 static_assert(sizeof(PROTO_NC_ACT_CHAT_REQ_HEAD) == 2,
               "CHAT_REQ head wire-size mismatch");
 
-/** PROTO_NC_ACT_WHISPER_REQ_HEAD — directed whisper.
- *  PDB-V70 struct (Zone + Client builds). Layout:
- *    [0]  char[16] target/sender (NUL-pad ASCII)  ← in C→S this is
- *                  the recipient name; in S→C broadcast this is the
- *                  speaker name. The wire shape is symmetric.
- *    [16] u8       itemLinkDataCount
- *    [17] u8       len
- *    [18] u8       content[len]                                       */
 struct PROTO_NC_ACT_WHISPER_REQ_HEAD {
     char    handle[16];
     uint8_t itemLinkDataCount;
@@ -394,20 +226,14 @@ struct PROTO_NC_ACT_WHISPER_REQ_HEAD {
 static_assert(sizeof(PROTO_NC_ACT_WHISPER_REQ_HEAD) == 18,
               "WHISPER_REQ head wire-size mismatch");
 
-/** PROTO_NC_BAT_TARGETING_REQ — switch target.  Payload `target:u16`. */
 struct PROTO_NC_BAT_TARGETING_REQ {
     uint16_t target_handle;
 };
 
-/** PROTO_NC_BAT_HIT_REQ — melee hit on current target.  Payload
- *  `target:u16`.  The Zone server validates that this matches the
- *  most recent NC_BAT_TARGETING_REQ.target_handle.                  */
 struct PROTO_NC_BAT_HIT_REQ {
     uint16_t target_handle;
 };
 
-/** PROTO_NC_BAT_SKILLCAST_REQ — cast a learned skill on a target.
- *  Layout (PDB-V70 inferred): [u16 skillId][u16 targetHandle].      */
 struct PROTO_NC_BAT_SKILLCAST_REQ {
     uint16_t skill_id;
     uint16_t target_handle;
@@ -415,78 +241,47 @@ struct PROTO_NC_BAT_SKILLCAST_REQ {
 static_assert(sizeof(PROTO_NC_BAT_SKILLCAST_REQ) == 4,
               "SKILLCAST_REQ wire-size mismatch");
 
-/** PROTO_NC_ACT_EMOTICON_CMD — play emote.  Payload `emoteId:u16`. */
 struct PROTO_NC_ACT_EMOTICON_CMD {
     uint16_t emote_id;
 };
 
-/** PROTO_NC_ACT_JUMP_CMD — cosmetic jump trigger.  Empty payload. */
-/* (no struct — zero bytes) */
-
-/** PROTO_NC_BRIEFINFO_REGENMOB_CMD head — mob spawned in our view.
- *  Source: Zone PDB.  Head fields are handle:u16 + mobId:u16. The
- *  trailing bytes carry mode/coord/abstate which are opaque here.  */
 struct PROTO_NC_BRIEFINFO_REGENMOB_CMD_HEAD {
     uint16_t handle;
     uint16_t mob_id;
 };
 
-/** PROTO_NC_BRIEFINFO_NPC_DISAPPEAR_CMD — NPC despawn.  Payload
- *  `handle:u16` (sizeof=2). */
 struct PROTO_NC_BRIEFINFO_NPC_DISAPPEAR_CMD {
     uint16_t handle;
 };
 
-/** PROTO_NC_BRIEFINFO_INFORM_CMD — zone broadcast trigger.
- *  Source: Zone PDB (sizeof=6). */
 struct PROTO_NC_BRIEFINFO_INFORM_CMD {
     uint16_t nMyHnd;
     uint16_t ReceiveNetCommand;
     uint16_t hnd;
 };
 
-/** PROTO_NC_BRIEFINFO_BRIEFINFODELETE_CMD — entity removed from view.
- *  Source: Zone PDB (sizeof=2). */
 struct PROTO_NC_BRIEFINFO_BRIEFINFODELETE_CMD {
     uint16_t hnd;
 };
 
-/** PROTO_NC_BRIEFINFO_LOGINCHARACTER_CMD — other player enters our
- *  visibility radius.  Carries the handle⇆name binding our ring
- *  needs to resolve chat speakers.
- *  Source: Zone PDB struct (sizeof=221).  We only need the head
- *  fields (handle + charid); the rest is body/equipment shape data
- *  that varies by region toggle and is handled opaquely. */
 struct PROTO_NC_BRIEFINFO_LOGINCHARACTER_CMD_HEAD {
     uint16_t handle;
-    char     charid[16];   /* Name4 — NUL-padded ASCII */
-    /* trailing 203 bytes: coord, mode, class, shape, polymorph,
-     * emoticon, title, abstate, guild, type, …, sAnimation[32]
-     * — opaque to the ring; read separately on demand. */
+    char     charid[16];
+
 };
 static_assert(sizeof(PROTO_NC_BRIEFINFO_LOGINCHARACTER_CMD_HEAD) == 18,
               "LOGINCHARACTER head wire-size mismatch");
 
-/** PROTO_NC_CHAR_BASE_CMD head — MY OWN base info on Zone enter.
- *  First fields give us our own (registration#, charid) binding,
- *  i.e. self-handle.  Source: Zone PDB struct (sizeof=97). */
 struct PROTO_NC_CHAR_BASE_CMD_HEAD {
     uint32_t chrregnum;
-    char     charid[16];   /* Name4 */
-    /* trailing 77 bytes: slotno, level, xp, stones, hp/sp, fame,
-     * cen, login location, statdistribute, pk fields, flags. */
+    char     charid[16];
+
 };
 static_assert(sizeof(PROTO_NC_CHAR_BASE_CMD_HEAD) == 20,
               "CHAR_BASE head wire-size mismatch");
 
-/** NETPACKETZONEHEADER — moved to FiestaProtoBase.h
- *  (included at the top). Definition kept there so the X-macro
- *  generated tables and this header agree on the exact bit layout. */
-
 #pragma pack(pop)
 
-/* ── compile-time sizeof guards — refuse to compile if the layout
- *    drifts from the PDB-reported value. ───────────────────────── */
 static_assert(sizeof(SHINE_XY_TYPE)                         ==   8, "SHINE_XY_TYPE wire-size mismatch");
 static_assert(sizeof(SHINE_COORD_TYPE)                      ==   9, "SHINE_COORD_TYPE wire-size mismatch");
 static_assert(sizeof(PROTO_NC_MISC_SEED_ACK)                ==   2, "SEED_ACK wire-size mismatch");
@@ -505,18 +300,11 @@ static_assert(sizeof(PROTO_NC_ACT_EMOTICON_CMD)             ==   2, "EMOTICON wi
 static_assert(sizeof(PROTO_NC_BRIEFINFO_REGENMOB_CMD_HEAD)  ==   4, "REGENMOB head wire-size mismatch");
 static_assert(sizeof(PROTO_NC_BRIEFINFO_NPC_DISAPPEAR_CMD)  ==   2, "NPC_DISAPPEAR wire-size mismatch");
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Buffer reader/writer helpers for little-endian primitives.
- *──────────────────────────────────────────────────────────────────────────────*/
 class Writer {
 public:
     void U8(uint8_t v)   { m_buf.push_back(v); }
     void U16(uint16_t v) { m_buf.push_back((uint8_t)(v & 0xFF)); m_buf.push_back((uint8_t)(v >> 8)); }
-    /** Routing handle (SHINE_HANDLE_NUMBER = WORD, little-endian). Used
-     *  inside payloads for WM-bound packets that target a specific
-     *  entity (see MainApp.cpp exception reporter — handle is body
-     *  data, not framing). Functionally identical to U16; named for
-     *  intent. */
+
     void Handle(uint16_t h) { U16(h); }
     void U32(uint32_t v) {
         for (int i = 0; i < 4; i++) m_buf.push_back((uint8_t)((v >> (i * 8)) & 0xFF));
@@ -525,13 +313,13 @@ public:
         const auto* b = static_cast<const uint8_t*>(p);
         m_buf.insert(m_buf.end(), b, b + n);
     }
-    /* NUL-padded fixed-width ASCII (Fiesta uses these — NOT length-prefix). */
+
     void FixedStr(const std::string& s, size_t width) {
         const size_t copy = (s.size() < width) ? s.size() : width;
         m_buf.insert(m_buf.end(), s.begin(), s.begin() + copy);
         for (size_t i = copy; i < width; i++) m_buf.push_back(0);
     }
-    /* Length-prefixed UTF-8 string with u8 length (NC_ACT_CHAT_REQ uses this). */
+
     void Str8(const std::string& s) {
         const size_t n = (s.size() > 0xFF) ? 0xFF : s.size();
         m_buf.push_back((uint8_t)n);
@@ -564,7 +352,7 @@ public:
         if (m_p + n > m_end) return false;
         std::memcpy(dst, m_p, n); m_p += n; return true;
     }
-    /* Reads exactly `width` bytes and trims trailing NULs. */
+
     bool FixedStr(std::string& out, size_t width) {
         if (m_p + width > m_end) return false;
         size_t end = width;
@@ -573,7 +361,7 @@ public:
         m_p += width;
         return true;
     }
-    /* u8-length-prefixed string. */
+
     bool Str8(std::string& out) {
         uint8_t n; if (!U8(n)) return false;
         if (m_p + n > m_end) return false;
@@ -587,20 +375,6 @@ private:
     const uint8_t* m_end;
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Build a wire-ready packet (size prefix + opcode + payload).
- *
- *   Returns the cleartext frame.  Caller passes through
- *   `FiestaCipher::EncryptOut` on the bytes AFTER the size prefix
- *   (i.e. on opcode || payload) before transmitting.  The size
- *   prefix itself stays cleartext because the receiver must read
- *   it to know how many bytes to feed into its decryptor.
- *
- *   ⚠ Opcode byte order: NETCOMMAND is { BYTE department; BYTE command; }
- *   emitted in struct order. The host-side u16 constant packs them
- *   as (department << 8) | command (e.g. 0x0207 = NC_MISC,SEED_ACK
- *   → wire bytes [0x02][0x07]). This is NOT a little-endian u16.
- *──────────────────────────────────────────────────────────────────────────────*/
 inline std::vector<uint8_t> BuildPacket(uint16_t opcode,
                                          const std::vector<uint8_t>& payload) {
     const size_t bodyLen = 2 + payload.size();
@@ -614,17 +388,13 @@ inline std::vector<uint8_t> BuildPacket(uint16_t opcode,
         out.push_back((uint8_t)(bodyLen & 0xFF));
         out.push_back((uint8_t)((bodyLen >> 8) & 0xFF));
     }
-    /* department (cmdtype) goes first on the wire, then command (subid). */
-    out.push_back((uint8_t)((opcode >> 8) & 0xFF));   /* department */
-    out.push_back((uint8_t)(opcode & 0xFF));          /* command    */
+
+    out.push_back((uint8_t)((opcode >> 8) & 0xFF));
+    out.push_back((uint8_t)(opcode & 0xFF));
     out.insert(out.end(), payload.begin(), payload.end());
     return out;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Convenience: serialise a trivially-copyable PROTO_NC_* into a
- * wire-ready Writer payload.  Compile-time check via std::is_trivial.
- *──────────────────────────────────────────────────────────────────────────────*/
 template <typename T>
 inline std::vector<uint8_t> ToBytes(const T& proto) {
     static_assert(std::is_trivially_copyable<T>::value,
@@ -634,5 +404,5 @@ inline std::vector<uint8_t> ToBytes(const T& proto) {
     return out;
 }
 
-}  /* namespace Fiesta */
+}
 #endif

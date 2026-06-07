@@ -1,7 +1,3 @@
--------------------------------------------------------------------------------
--- ethical_reasoning.lua — Moral Framework
--------------------------------------------------------------------------------
-
 ethical = {}
 
 ethical.principles = {
@@ -26,8 +22,7 @@ function ethical.evaluate_action(action_type, context)
         benefit_score = 0.5,
         reasoning = "",
     }
-    
-    -- Check hard blocks
+
     for _, block in ipairs(ethical.hard_blocks) do
         if action_type == block then
             result.allowed = false
@@ -36,8 +31,7 @@ function ethical.evaluate_action(action_type, context)
             return result
         end
     end
-    
-    -- Score based on trust requirements
+
     local harm_threshold = 0.9
     if get_threshold then
         harm_threshold = get_threshold("ethics", "harm_block") or 0.9
@@ -46,7 +40,7 @@ function ethical.evaluate_action(action_type, context)
         result.allowed = false
         result.reasoning = "Harm score exceeds threshold"
     end
-    
+
     return result
 end
 

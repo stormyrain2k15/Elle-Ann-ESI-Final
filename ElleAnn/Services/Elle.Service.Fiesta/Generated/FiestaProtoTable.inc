@@ -1,24 +1,4 @@
-/* ╔════════════════════════════════════════════════════════════════════════╗
- * ║  FiestaProtoTable.inc                                                    ║
- * ║  AUTO-GENERATED — DO NOT EDIT.  Regen:                                   ║
- * ║      python3 _re_artifacts/pdb/gen_proto_table.py                        ║
- * ║                                                                          ║
- * ║  X-macro list of every recovered Fiesta opcode crossed against PDB     ║
- * ║  struct catalogue (MERGED_protos.json) and live wire observations      ║
- * ║  (parsed_captures.json).                                                ║
- * ║                                                                          ║
- * ║  Use:                                                                    ║
- * ║      #define X(opcode_hex, opcode_name, struct_name,                    ║
- * ║                 pdb_sizeof, category) ...                                ║
- * ║      FIESTA_PROTO_TABLE(X)                                              ║
- * ║      #undef X                                                            ║
- * ║                                                                          ║
- * ║  Rows where the PDB does not know a struct render `void` for the        ║
- * ║  struct slot and -1 for sizeof — the consuming switch must default     ║
- * ║  these to a raw-bytes handler.                                         ║
- * ╚════════════════════════════════════════════════════════════════════════╝ */
 #pragma once
-/* 2300 named opcodes total. */
 
 #define FIESTA_PROTO_TABLE(X) \
     X(0x0000  , NC_NULL                                                     , void                                                        ,    -1, "unknown") \
@@ -2322,8 +2302,6 @@
     X(0x3513  , NC_PET_SET_NAME_CMD                                         , PROTO_NC_PET_SET_NAME_CMD                                   ,    18, "pet_set") \
     X(0x3535  , NC_PET                                                      , void                                                        ,    -1, "unknown")  
 
-/* 15 wire-observed opcodes (hot subset). */
-
 #define FIESTA_PROTO_HOT_TABLE(X) \
     X(0x0438  , NC_CHAR_OPTION_IMPROVE_SET_SHORTCUTDATA_ACK                 , PROTO_NC_CHAR_OPTION_IMPROVE_SET_SHORTCUTDATA_ACK           ,     2, "char_option") \
     X(0x0439  , NC_CHAR_OPTION_IMPROVE_SET_KEYMAP_REQ                       , PROTO_NC_CHAR_OPTION_IMPROVE_SET_KEYMAP_REQ                 ,     2, "char_option") \
@@ -2339,4 +2317,4 @@
     X(0x04D7  , NC_CHAR_CLIENT_QUEST_REPEAT_CMD                             , void                                                        ,    -1, "char_client") \
     X(0x04DE  , NC_CHAR_CLIENT_COININFO_CMD                                 , void                                                        ,    -1, "char_client") \
     X(0x0602  , NC_MAP_LOGIN_ACK                                            , PROTO_NC_MAP_LOGIN_REQ                                      ,  1622, "map_login") \
-    X(0x100A  , NC_CHARSAVE_SKILL_ACK                                       , PROTO_NC_CHARSAVE_SKILL_REQ                                 ,     8, "charsave_skill")  
+    X(0x100A  , NC_CHARSAVE_SKILL_ACK                                       , PROTO_NC_CHARSAVE_SKILL_REQ                                 ,     8, "charsave_skill")

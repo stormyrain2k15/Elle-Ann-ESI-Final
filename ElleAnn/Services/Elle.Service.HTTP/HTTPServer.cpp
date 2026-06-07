@@ -1,15 +1,3 @@
-/*******************************************************************************
- * HTTPServer.cpp — Raw Winsock HTTP + WebSocket Server (No Framework)
- *
- * Handles REST API endpoints (matching Kotlin ElleApiService contract)
- * and WebSocket command channel with full RFC 6455 handshake + framing.
- *
- * Dependencies:
- *   - WinSock 2
- *   - WinHTTP  (direct Groq calls for /api/ai/chat fallback)
- *   - bcrypt   (SHA-1 for WebSocket handshake)
- *   - nlohmann::json (../../Shared/json.hpp) for robust JSON parsing
- ******************************************************************************/
 #include "../../Shared/ElleTypes.h"
 #include "../../Shared/ElleServiceBase.h"
 #include "../../Shared/ElleLogger.h"
@@ -126,9 +114,6 @@ static void RunGameAuthSelfTest() {
     SetGameAuthDiag(out);
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * BASE64 (for WebSocket handshake)
- *──────────────────────────────────────────────────────────────────────────────*/
 static const char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 static std::string Base64Encode(const unsigned char* data, size_t len) {
@@ -146,9 +131,6 @@ static std::string Base64Encode(const unsigned char* data, size_t len) {
     return out;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SHA-1 via Windows bcrypt (for Sec-WebSocket-Accept)
- *──────────────────────────────────────────────────────────────────────────────*/
 static bool SHA1Hash(const std::string& input, unsigned char out[20]) {
     BCRYPT_ALG_HANDLE hAlg = nullptr;
     BCRYPT_HASH_HANDLE hHash = nullptr;
@@ -176,9 +158,6 @@ static std::string MakeWsAccept(const std::string& key) {
     return Base64Encode(digest, 20);
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * HTTP REQUEST/RESPONSE TYPES
- *──────────────────────────────────────────────────────────────────────────────*/
 struct HTTPRequest {
     std::string method;
     std::string path;
@@ -194,20 +173,6 @@ struct HTTPRequest {
         return it != queryParams.end() ? it->second : def;
     }
 
-    /*─────────────────────────────────────────────────────────────────────
-     * Strict numeric parsers. Every previous call site that did
-     *   std::atoi(req.QueryParam(...).c_str())
-     * silently mapped garbage or empty strings to 0, turning "bad input"
-     * into "act on id=0" — a class of bug that's how moderation endpoints
-     * end up hitting row 0 when a URL encoder drops a digit.
-     *
-     * These helpers:
-     *   • Return `def` when the value is missing.
-     *   • Return `def` when the value is present but not a clean integer
-     *     (i.e. strtoll must consume the entire string).
-     *   • Clamp out-of-range values to [INT32_MIN, INT32_MAX] for Int(),
-     *     so a 2^40 query param can't corrupt downstream int32 fields.
-     *───────────────────────────────────────────────────────────────────*/
     static bool StrictParseLL(const std::string& s, long long& out) {
         if (s.empty()) return false;
         errno = 0;
@@ -235,9 +200,7 @@ struct HTTPRequest {
         if (!StrictParseLL(it->second, v)) return def;
         return v;
     }
-    /** Look up a query-string value as a (URL-decoded) string. Returns
-     *  the supplied default when the key is absent. Decoding is already
-     *  done by ParseQueryString. */
+
     std::string QueryString(const std::string& key, const std::string& def = "") const {
         auto it = queryParams.find(key);
         return it == queryParams.end() ? def : it->second;
@@ -259,28 +222,14 @@ struct HTTPRequest {
         return v;
     }
 
-    /* Attempt to parse body as JSON. STRICT by OpSec convention:
-     *   - Empty body    -> empty object (benign; many GETs/DELETEs work this way).
-     *   - Malformed     -> throws std::invalid_argument.
-     *   - Trailing data -> parse failure (nlohmann raises on garbage-after-root).
-     *   - Comments      -> rejected (we pass ignore_comments=false).
-     *   - Non-UTF-8     -> parse failure (nlohmann enforces UTF-8 by default).
-     *
-     * Previous behaviour silently returned an empty object on parse
-     * failure, so a handler doing body.value("user_id", 0) couldn't tell
-     * "client posted garbage" from "client posted {}". The outer
-     * HandleClient wrapper catches std::invalid_argument and returns 400.
-     * Use TryBodyJSON() if you need soft-fail behaviour.                  */
     json BodyJSON() const {
         if (body.empty()) return json::object();
         try {
-            /* parser_callback = nullptr, allow_exceptions = true,
-             * ignore_comments = false. Pinned explicitly because future
-             * nlohmann releases might flip defaults.                    */
+
             return json::parse(body.begin(), body.end(),
-                               /*cb=*/nullptr,
-                               /*allow_exceptions=*/true,
-                               /*ignore_comments=*/false);
+                               nullptr,
+                               true,
+                               false);
         }
         catch (const std::exception& e) {
             throw std::invalid_argument(
@@ -288,17 +237,13 @@ struct HTTPRequest {
         }
     }
 
-    /* Non-throwing variant — returns false and populates outErr when the
-     * body is non-empty but not valid JSON. Callers that want to distinguish
-     * "malformed" from "missing" use this directly instead of relying on
-     * the throwing BodyJSON() behaviour.                                 */
     bool TryBodyJSON(json& out, std::string& outErr) const {
         if (body.empty()) { out = json::object(); return true; }
         try {
             out = json::parse(body.begin(), body.end(),
-                              /*cb=*/nullptr,
-                              /*allow_exceptions=*/true,
-                              /*ignore_comments=*/false);
+                              nullptr,
+                              true,
+                              false);
             return true;
         }
         catch (const std::exception& e) {
@@ -316,22 +261,17 @@ struct HTTPResponse {
     std::string body;
 
     std::string Serialize() const {
-        /* CORS policy now comes from config — previously this was hardcoded
-         * to "Allow-Origin: *" for every response regardless of
-         * cors_enabled / cors_origins config, which defeated the intent of
-         * those config keys. Respect the config; leave CORS off entirely if
-         * cors_enabled is false.                                           */
+
         auto& http = ElleConfig::Instance().GetHTTP();
         std::string allowOrigin;
         if (http.cors_enabled) {
-            /* cors_origins is comma-separated; "*" (or a missing value)
-             * means wildcard; otherwise the first origin is used.         */
+
             const std::string& list = http.cors_origins;
             if (list.empty() || list == "*") allowOrigin = "*";
             else {
                 auto c = list.find(',');
                 allowOrigin = (c == std::string::npos) ? list : list.substr(0, c);
-                /* trim whitespace */
+
                 auto trim = [](std::string& s){
                     while (!s.empty() && std::isspace((unsigned char)s.front())) s.erase(0,1);
                     while (!s.empty() && std::isspace((unsigned char)s.back()))  s.pop_back();
@@ -375,11 +315,6 @@ struct HTTPResponse {
         return JSON(code, j.dump());
     }
 
-    /** Raw-bytes response — used by file-serving endpoints (e.g.
-     *  GET /api/video/file/{job_id} streaming an mp4). The caller
-     *  owns the body bytes; we do NOT base64-encode. CORS / status
-     *  / Content-Length are filled in by Serialize() the same way
-     *  as JSON responses.                                          */
     static HTTPResponse Binary(const std::string& contentType,
                                 std::string body) {
         HTTPResponse r;
@@ -403,28 +338,6 @@ static HTTPResponse InternalErrorResponse(const std::string& detail) {
 
 typedef std::function<HTTPResponse(const HTTPRequest&)> RouteHandler;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * PER-ROUTE AUTH METADATA
- *
- * Replaces the previous method-based heuristic ("GET=free, rest=protected").
- * Every route declares its own auth level at Register() time. The central
- * gate in Dispatch() uses the route's metadata — there is no longer a
- * path-prefix allowlist or a GET/HEAD bypass.
- *
- *   AUTH_PUBLIC        — unauthenticated clients are allowed (health,
- *                        CORS-preflight-style reads, info endpoints).
- *   AUTH_USER          — requires Authorization: Bearer <jwt_secret> or
- *                        the admin key. This is the default when a route
- *                        is registered without specifying a level, so
- *                        adding a new route without thinking fails closed.
- *   AUTH_ADMIN         — requires x-admin-key match (or Bearer with the
- *                        admin secret). Used for reload / reinstall /
- *                        destructive ops.
- *   AUTH_INTERNAL_ONLY — loopback only; rejects anything whose peer
- *                        address isn't 127.0.0.1 / ::1. For routes that
- *                        should never be reachable from outside the host
- *                        (worker claim, family spawn control, etc.).
- *──────────────────────────────────────────────────────────────────────────────*/
 enum HttpAuthLevel {
     AUTH_PUBLIC = 0,
     AUTH_USER,
@@ -432,45 +345,13 @@ enum HttpAuthLevel {
     AUTH_INTERNAL_ONLY
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * JWT VERIFICATION (HS256) — gate-side
- *
- *   Validates a device-issued HS256 JWT produced by MintJwt(). Returns
- *   true iff ALL of the following are true:
- *
- *     1. Token has exactly three '.'-separated segments.
- *     2. Header decodes as JSON with {"alg":"HS256","typ":"JWT"}.
- *          (We accept only HS256. "none" and unknown algs are refused —
- *          the classic JWT downgrade attack.)
- *     3. Signature equals HMAC-SHA256(header_b64 + "." + payload_b64,
- *        secret). Compared constant-time.
- *     4. Payload decodes as JSON with string `sub` and integer `exp`.
- *     5. `exp` is strictly greater than `now_ms`.
- *
- *   On success, `sub_out` receives the device_id and `exp_ms_out` the
- *   expiry time. The caller is responsible for follow-up checks against
- *   PairedDevices.Revoked — the JWT alone is not the final word on
- *   authenticity once a device is revoked out-of-band.
- *──────────────────────────────────────────────────────────────────────────────*/
 struct JwtVerifyResult {
     bool        valid       = false;
-    std::string sub;             /* device_id */
+    std::string sub;
     uint64_t    exp_ms       = 0;
-    std::string failureReason;   /* one-line diagnostic for ELLE_WARN */
+    std::string failureReason;
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * PAIRED-DEVICE CACHE (short TTL)
- *
- *   The Dispatch gate calls ElleDB::GetPairedDevice on every authenticated
- *   request to check Revoked. That's a PK-indexed query so it's cheap, but
- *   a local single-user app doing 50 req/s during a video-call session is
- *   still 50 round-trips/s we can trivially coalesce. Cache by device_id
- *   with a 30-second TTL; revocation propagates within that window, which
- *   is fine for a local trust domain. The cache is per-process — an
- *   operator who needs instant effect on revoke can `Stop()/Start()` the
- *   service (already O(ms) because we have InterruptibleSleep discipline).
- *──────────────────────────────────────────────────────────────────────────────*/
 struct PairedCacheEntry {
     bool     revoked   = false;
     uint64_t cached_ms = 0;
@@ -480,8 +361,6 @@ static std::mutex                                     g_pairedCacheMx;
 static std::unordered_map<std::string, PairedCacheEntry> g_pairedCache;
 static constexpr uint64_t kPairedCacheTtlMs = 30ull * 1000ull;
 
-/** Returns {exists, revoked}. Hits the DB only when the cache entry is
- *  missing or older than kPairedCacheTtlMs.                              */
 static std::pair<bool, bool>
 PairedDeviceStatusCached(const std::string& device_id, uint64_t now_ms) {
     {
@@ -502,9 +381,7 @@ PairedDeviceStatusCached(const std::string& device_id, uint64_t now_ms) {
         e.revoked   = revoked;
         e.cached_ms = now_ms;
         g_pairedCache[device_id] = e;
-        /* Cap map size to prevent unbounded growth under forged-token
-         * attacks. Whoever's trying to storm us with bogus device_ids
-         * would otherwise inflate the map — evict the oldest half. */
+
         if (g_pairedCache.size() > 4096) {
             std::vector<std::pair<std::string, uint64_t>> ordered;
             ordered.reserve(g_pairedCache.size());
@@ -526,7 +403,6 @@ static JwtVerifyResult VerifyJwtHs256(const std::string& token,
         return r;
     }
 
-    /* Split on '.'. A valid HS256 JWT has exactly two dots. */
     size_t d1 = token.find('.');
     if (d1 == std::string::npos) { r.failureReason = "no dots"; return r; }
     size_t d2 = token.find('.', d1 + 1);
@@ -543,17 +419,16 @@ static JwtVerifyResult VerifyJwtHs256(const std::string& token,
         return r;
     }
 
-    /* 1. Decode + validate header. */
     auto headerBytes = ElleCrypto::Base64UrlDecode(h64);
     if (headerBytes.empty()) { r.failureReason = "header b64 invalid"; return r; }
     try {
         auto jh = nlohmann::json::parse(std::string(headerBytes.begin(),
                                                      headerBytes.end()));
         if (!jh.is_object()) { r.failureReason = "header not object"; return r; }
-        /* Accept only HS256. Reject "none" and any unknown alg. */
+
         std::string alg = jh.value("alg", "");
         if (alg != "HS256") { r.failureReason = "bad alg=" + alg; return r; }
-        /* typ is optional per RFC 7519 §5.1 but if present must be JWT.   */
+
         if (jh.contains("typ") && jh["typ"].is_string() &&
             jh["typ"].get<std::string>() != "JWT") {
             r.failureReason = "bad typ";
@@ -564,7 +439,6 @@ static JwtVerifyResult VerifyJwtHs256(const std::string& token,
         return r;
     }
 
-    /* 2. Compute expected signature over (h64 "." p64). */
     const std::string signingInput = h64 + "." + p64;
     uint8_t expected[32];
     if (!ElleCrypto::HmacSha256(secret.data(), secret.size(),
@@ -583,7 +457,6 @@ static JwtVerifyResult VerifyJwtHs256(const std::string& token,
         return r;
     }
 
-    /* 3. Decode + validate payload. */
     auto payloadBytes = ElleCrypto::Base64UrlDecode(p64);
     if (payloadBytes.empty()) { r.failureReason = "payload b64 invalid"; return r; }
     try {
@@ -619,24 +492,18 @@ static JwtVerifyResult VerifyJwtHs256(const std::string& token,
     return r;
 }
 
-
-/*──────────────────────────────────────────────────────────────────────────────
- * ROUTE DISPATCHER — supports path patterns with {placeholders}
- *──────────────────────────────────────────────────────────────────────────────*/
 struct RouteEntry {
     std::string   method;
-    std::string   pattern;   /* e.g. /api/memory/{id} */
+    std::string   pattern;
     std::regex    re;
     std::vector<std::string> paramNames;
     RouteHandler  handler;
-    HttpAuthLevel auth = AUTH_USER;   /* fail-closed default */
+    HttpAuthLevel auth = AUTH_USER;
 };
 
 class RouteDispatch {
 public:
-    /* Default auth = AUTH_USER so a developer who forgets to specify
-     * auth on a new route doesn't accidentally ship an anonymous write
-     * endpoint. Call with AUTH_PUBLIC for health/info reads.           */
+
     void Register(const std::string& method, const std::string& pattern,
                   RouteHandler h, HttpAuthLevel auth = AUTH_USER) {
         RouteEntry entry;
@@ -667,11 +534,7 @@ public:
     }
 
     HTTPResponse Dispatch(HTTPRequest& req) {
-        /* Global rate limit enforced before routing. Config key:
-         *   http_server.rate_limit_rpm (requests per minute; 0 disables).
-         * This was flagged as "no global middleware" — per-IP limiting is a
-         * future step (needs the peer addr plumbed through accept), but a
-         * single global counter already stops trivial flood abuse.        */
+
         const auto& httpCfg = ElleConfig::Instance().GetHTTP();
         uint32_t rpm = httpCfg.rate_limit_rpm;
         if (rpm > 0) {
@@ -687,18 +550,6 @@ public:
             m_rlCount++;
         }
 
-        /*───────────────────────────────────────────────────────────────
-         * MATCH FIRST, THEN AUTH — per-route policy.
-         *
-         * Previous policy was method-based ("GET=free unless on a
-         * sensitive-prefix allowlist"). That was a maintenance bug
-         * factory: adding a new sensitive GET required remembering to
-         * update the allowlist, and new routes defaulted to anonymous.
-         *
-         * New policy: each RouteEntry carries its own HttpAuthLevel
-         * (default AUTH_USER when not specified). We match first so
-         * OPTIONS preflight still works against any registered path,
-         * then apply the matched route's policy before dispatching.   */
         RouteEntry* matched = nullptr;
         std::smatch mm;
         for (auto& e : m_routes) {
@@ -710,9 +561,7 @@ public:
 
         const bool noAuth = (ElleConfig::Instance().GetInt("http_server.no_auth", 0) != 0);
         if (matched && matched->auth != AUTH_PUBLIC) {
-            /* no_auth mode: disable authentication entirely.
-             * Any client can connect; all traffic is treated as one user.
-             * Intended for local/dev pairing only. */
+
             if (noAuth) {
                 req.headers["x-auth-nuserno"]   = "1";
                 req.headers["x-auth-user-id"]   = "single";
@@ -723,48 +572,11 @@ public:
         }
 
         if (!noAuth && httpCfg.auth_enabled && matched && matched->auth != AUTH_PUBLIC) {
-            /*══════════════════════════════════════════════════════════════════
-             * AUTH GATE — post-Feb-2026 simplification.
-             *
-             *   Prior to this pivot the gate juggled:
-             *     - HS256 JWTs (with mint / verify / exp check / revocation
-             *       cache / signature downgrade protection)
-             *     - A shared-secret `jwt_secret` Bearer compare
-             *     - A separate `x-admin-key` header path
-             *     - A pair-code intermediate exchange
-             *
-             *   All of that is now gone.  Per user directive: opaque Bearer
-             *   tokens, NO expiry, admin gated by `tUser.nAuthID` (cached on
-             *   the session row at login time so we don't hammer the Account
-             *   DB on every request).
-             *
-             *   The only things this gate does:
-             *     1. Pull Bearer token from Authorization.
-             *     2. Look it up in ElleSystem.dbo.Sessions.
-             *     3. If missing → 401.
-             *     4. For AUTH_ADMIN, require session.nAuthID ≥ threshold
-             *        (config `http_server.admin_auth_id_threshold`, default 9).
-             *        nAuthID convention on this server:
-             *          1 = normal user (login allowed)
-             *          5 = admin
-             *          9 = dev
-             *        Threshold defaults to 9 so the /api/diag routes are
-             *        dev-only; drop it to 5 in elle_master_config.json
-             *        if your operations admins also need diagnostic
-             *        endpoints.
-             *     5. For AUTH_INTERNAL_ONLY, same + loopback-only peer.
-             *     6. Stash identity columns on the request for handlers.
-             *     7. Best-effort LastSeenMs touch.
-             *
-             *   The brute-force lockout on /api/auth/login stays (same table,
-             *   same logic) — it only fires on FAILED logins, never
-             *   interferes with legitimate traffic.
-             *══════════════════════════════════════════════════════════════════*/
+
             HttpAuthLevel need = matched->auth;
             const int adminThreshold = (int)ElleConfig::Instance().GetInt(
                 "http_server.admin_auth_id_threshold", 9);
 
-            /* Extract Bearer token from Authorization header.           */
             std::string token;
             auto authIt = req.headers.find("authorization");
             if (authIt != req.headers.end()) {
@@ -783,9 +595,6 @@ public:
                 }
             }
 
-            /* Internal-only routes are loopback-gated BEFORE session
-             * lookup — a valid token on a LAN request must still 403
-             * on an internal-only route.                              */
             if (need == AUTH_INTERNAL_ONLY) {
                 auto peerIt = req.headers.find("x-peer-addr");
                 std::string peer = (peerIt != req.headers.end())
@@ -815,15 +624,8 @@ public:
                 return HTTPResponse::Err(403, "insufficient privilege");
             }
 
-            /* Best-effort last-seen touch.  Failure is swallowed —
-             * we don't 5xx a live request over a stats update.      */
             ElleDB::TouchSessionLastSeen(token);
 
-            /* Stash identity columns for handlers.  These synthetic
-             * x-auth-* headers are the new single source of truth
-             * for "who made this request"; handlers that used to
-             * read x-auth-device-id keep working (it now carries
-             * the session token, which is functionally equivalent).  */
             req.headers["x-auth-nuserno"]   = std::to_string(sess.nUserNo);
             req.headers["x-auth-user-id"]   = sess.sUserID;
             req.headers["x-auth-user-name"] = sess.sUserName;
@@ -846,15 +648,11 @@ public:
 private:
     std::vector<RouteEntry> m_routes;
 
-    /* Global sliding-window rate counter. */
     std::mutex m_rlMutex;
     uint64_t   m_rlWindowStart = 0;
     uint32_t   m_rlCount = 0;
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * WEBSOCKET CLIENT
- *──────────────────────────────────────────────────────────────────────────────*/
 struct WSClient {
     SOCKET      socket = INVALID_SOCKET;
     std::string id;
@@ -863,12 +661,6 @@ struct WSClient {
     std::mutex  sendMutex;
 };
 
-/* Strict int-from-header helper. Previously route handlers did
- *     int64_t id = req.PathLL("id");
- * which silently turns any non-numeric value into 0 AND throws
- * std::out_of_range if the header key is missing. This helper returns
- * `false` cleanly on either failure, so handlers can emit a real
- * 400 instead of crashing or acting on id=0.                           */
 static inline bool GetIntHeader(const HTTPRequest& req, const std::string& key,
                                 long long& out) {
     auto it = req.headers.find(key);
@@ -880,10 +672,6 @@ static inline bool GetIntHeader(const HTTPRequest& req, const std::string& key,
     return true;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * DIRECT GROQ CALL via WinHTTP (bypass IPC — prevents chat hang)
- * Accepts a full conversation message list so the caller controls history.
- *──────────────────────────────────────────────────────────────────────────────*/
 struct LLMMsg { std::string role; std::string content; };
 
 static bool CallGroqDirect(const std::vector<LLMMsg>& messages,
@@ -898,7 +686,6 @@ static bool CallGroqDirect(const std::vector<LLMMsg>& messages,
     }
     if (!groq) { outError = "No Groq provider configured"; return false; }
 
-    /* Build request body via nlohmann::json */
     json msgArr = json::array();
     for (auto& m : messages) {
         msgArr.push_back({{"role", m.role}, {"content", m.content}});
@@ -912,7 +699,6 @@ static bool CallGroqDirect(const std::vector<LLMMsg>& messages,
     };
     std::string bodyStr = body.dump();
 
-    /* Parse base URL */
     std::string host = "api.groq.com";
     std::string path = "/openai/v1/chat/completions";
     if (!groq->api_url.empty()) {
@@ -929,7 +715,6 @@ static bool CallGroqDirect(const std::vector<LLMMsg>& messages,
         }
     }
 
-    /* Convert to wide strings */
     auto toWide = [](const std::string& s) -> std::wstring {
         int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
         std::wstring w(len, 0);
@@ -958,7 +743,6 @@ static bool CallGroqDirect(const std::vector<LLMMsg>& messages,
                                              WINHTTP_FLAG_SECURE);
     if (!hRequest) { WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); outError = "WinHttpOpenRequest failed"; return false; }
 
-    /* Headers */
     std::wstring headers = L"Content-Type: application/json\r\n";
     headers += L"Authorization: Bearer " + toWide(groq->api_key) + L"\r\n";
 
@@ -978,7 +762,6 @@ static bool CallGroqDirect(const std::vector<LLMMsg>& messages,
         return false;
     }
 
-    /* Read body */
     std::string responseStr;
     DWORD dwSize = 0;
     do {
@@ -995,7 +778,6 @@ static bool CallGroqDirect(const std::vector<LLMMsg>& messages,
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
 
-    /* Parse JSON */
     try {
         json resp = json::parse(responseStr);
         if (resp.contains("error")) {
@@ -1018,13 +800,10 @@ static bool CallGroqDirect(const std::vector<LLMMsg>& messages,
     }
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * WEBSOCKET FRAMING
- *──────────────────────────────────────────────────────────────────────────────*/
 static bool WsSendText(SOCKET s, std::mutex& mtx, const std::string& payload) {
     std::lock_guard<std::mutex> lock(mtx);
     std::vector<unsigned char> frame;
-    frame.push_back(0x81); /* FIN + text opcode */
+    frame.push_back(0x81);
     size_t len = payload.size();
     if (len < 126) {
         frame.push_back((unsigned char)len);
@@ -1048,17 +827,11 @@ static bool WsSendText(SOCKET s, std::mutex& mtx, const std::string& payload) {
     return true;
 }
 
-/* Read a single frame (blocking). Returns false on disconnect / error.
- * Per RFC 6455 §5.1, client→server frames MUST be masked; the server MUST
- * close the connection on an unmasked frame. Payload is capped at
- * http.max_ws_frame_bytes to prevent unbounded allocation.              */
-/* Status-returning frame reader used by WebSocketReadLoop. Lets the caller
- * distinguish "peer hung up" from "peer sent trash" from "network error". */
 enum class WsFrameStatus {
-    Ok,                  /* frame read successfully (outPayload / outOpcode set) */
-    CleanClose,          /* recv returned 0 OR we read opcode 0x8                */
-    NetworkError,        /* recv returned SOCKET_ERROR (peer gone, timeout, etc) */
-    ProtocolViolation    /* unmasked client frame, oversized payload, bad len    */
+    Ok,
+    CleanClose,
+    NetworkError,
+    ProtocolViolation
 };
 
 static WsFrameStatus WsReadFrameStatus(SOCKET s, std::string& outPayload, int& outOpcode) {
@@ -1081,8 +854,7 @@ static WsFrameStatus WsReadFrameStatus(SOCKET s, std::string& outPayload, int& o
         if (er == 0)            return WsFrameStatus::CleanClose;
         if (er != 2)            return WsFrameStatus::NetworkError;
         payloadLen = ((uint64_t)ext[0] << 8) | ext[1];
-        /* Per RFC 6455 §5.2, the minimal encoding MUST be used. 126 with a
-         * payload <= 125 is a protocol violation. */
+
         if (payloadLen < 126)   return WsFrameStatus::ProtocolViolation;
     } else if (payloadLen == 127) {
         unsigned char ext[8];
@@ -1091,7 +863,7 @@ static WsFrameStatus WsReadFrameStatus(SOCKET s, std::string& outPayload, int& o
         if (er != 8)            return WsFrameStatus::NetworkError;
         payloadLen = 0;
         for (int i = 0; i < 8; i++) payloadLen = (payloadLen << 8) | ext[i];
-        /* High bit of the 64-bit payload length MUST be zero (§5.2).       */
+
         if (payloadLen & (1ULL << 63)) return WsFrameStatus::ProtocolViolation;
         if (payloadLen <= 0xFFFF)      return WsFrameStatus::ProtocolViolation;
     }
@@ -1100,8 +872,6 @@ static WsFrameStatus WsReadFrameStatus(SOCKET s, std::string& outPayload, int& o
     if (maxFrame == 0) maxFrame = 1ULL * 1024 * 1024;
     if (payloadLen > maxFrame) return WsFrameStatus::ProtocolViolation;
 
-    /* Control frames (opcode bit 3 set) MUST have payload ≤ 125 and MUST
-     * be FIN=1 per §5.5. */
     if ((outOpcode & 0x08) && (payloadLen > 125 || !fin))
         return WsFrameStatus::ProtocolViolation;
 
@@ -1122,13 +892,10 @@ static WsFrameStatus WsReadFrameStatus(SOCKET s, std::string& outPayload, int& o
     return WsFrameStatus::Ok;
 }
 
-/* Legacy wrapper retained for any caller that only cares about success/fail. */
 static bool WsReadFrame(SOCKET s, std::string& outPayload, int& outOpcode) {
     return WsReadFrameStatus(s, outPayload, outOpcode) == WsFrameStatus::Ok;
 }
 
-/* UTF-8 validator — rejects overlong encodings, surrogates, codepoints
- * above U+10FFFF. Required by RFC 6455 §8.1 for text frames.           */
 static bool IsValidUtf8(const std::string& s) {
     size_t i = 0, n = s.size();
     while (i < n) {
@@ -1146,25 +913,19 @@ static bool IsValidUtf8(const std::string& s) {
             if ((cc & 0xC0) != 0x80) return false;
             cp = (cp << 6) | (cc & 0x3F);
         }
-        /* Overlong encoding check. */
+
         if (len == 2 && cp < 0x80)    return false;
         if (len == 3 && cp < 0x800)   return false;
         if (len == 4 && cp < 0x10000) return false;
-        /* Surrogate half is illegal in UTF-8. */
+
         if (cp >= 0xD800 && cp <= 0xDFFF) return false;
-        /* Out of Unicode range. */
+
         if (cp > 0x10FFFF) return false;
         i += len;
     }
     return true;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * CHAT REQUEST CORRELATION MAP
- *   HTTPServer sends IPC_CHAT_REQUEST → Cognitive, then blocks until a matching
- *   IPC_CHAT_RESPONSE arrives (correlated by request_id). OnMessage is a
- *   different thread, so we signal via condition_variable.
- *──────────────────────────────────────────────────────────────────────────────*/
 struct PendingChat {
     std::mutex              m;
     std::condition_variable cv;
@@ -1205,9 +966,6 @@ private:
     std::unordered_map<std::string, std::shared_ptr<PendingChat>> m_map;
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * HTTP SERVER SERVICE
- *──────────────────────────────────────────────────────────────────────────────*/
 class ElleHTTPService : public ElleServiceBase {
 public:
     ElleHTTPService()
@@ -1217,9 +975,7 @@ public:
 
 protected:
     bool OnStart() override {
-        /* First line emitted by the service — lands in
-         * <exe_dir>/http_YYYY-MM-DD.log so operators can tail a dedicated
-         * HTTP channel independently of the unified debug stream.      */
+
         ELLE_LOG_HTTP("OnStart — HTTP service booting");
 
         WSADATA wsaData;
@@ -1262,8 +1018,6 @@ protected:
         m_shuttingDown.store(false);
         m_acceptThread = std::thread(&ElleHTTPService::AcceptLoop, this);
 
-        /* HTTP handler worker pool — owns its threads, no detach(). Accept
-         * loop produces sockets into m_socketQueue; workers drain it.     */
         uint32_t workers = MaxConcurrent();
         if (workers == 0) workers = 8;
         for (uint32_t i = 0; i < workers; ++i) {
@@ -1275,11 +1029,6 @@ protected:
         ELLE_LOG_HTTP("server listening on %s:%d (routes=%zu workers=%u)",
                       cfg.bind_address.c_str(), cfg.port, m_router.Count(), workers);
 
-        /* Emit the runtime-active HTTP knobs so config drift is visible in
-         * logs. Post-pivot (Feb 2026) auth is session-token only — no
-         * jwt_secret, no admin_key — so we just surface the core gate
-         * toggles.  `game_db_dsn` is still logged further below since
-         * AuthenticateUser requires it for /api/auth/login to work.   */
         ELLE_INFO("HTTP policy: auth=%s cors=%s(%s) rate=%u/min "
                   "maxConn=%u maxWsFrame=%u maxUpload=%u "
                   "admin_auth_id_threshold=%lld",
@@ -1291,11 +1040,6 @@ protected:
                   (long long)ElleConfig::Instance().GetInt(
                       "http_server.admin_auth_id_threshold", 9));
 
-        /* Optional game-DB integration. When `http_server.game_db_dsn` is
-         * set, Elle accepts the game's own (sUserID, sUserPW) on the
-         * /api/auth/pair endpoint instead of (or alongside) the legacy
-         * 6-digit pairing code. Empty DSN = feature off, no other change.
-         * The pool is intentionally tiny (4 conns) since pairing is rare.  */
         const std::string game_dsn = ElleConfig::Instance().GetString(
             "http_server.game_db_dsn", "");
         if (!game_dsn.empty()) {
@@ -1317,12 +1061,9 @@ protected:
     }
 
     void OnStop() override {
-        /* Phase 0: tear down the game-DB connection pool BEFORE we
-         * close listen socket so any in-flight pair request finishes
-         * cleanly (the AUTH_PUBLIC handler is short — handler joins
-         * happen in Phase 3 anyway).                                  */
+
         ElleGameAccountPool::Instance().Shutdown();
-        /* Phase 1: stop producers.                                         */
+
         m_shuttingDown.store(true);
         if (m_listenSocket != INVALID_SOCKET) {
             closesocket(m_listenSocket);
@@ -1330,7 +1071,6 @@ protected:
         }
         if (m_acceptThread.joinable()) m_acceptThread.join();
 
-        /* Phase 2: close all WS sockets so their read-loop threads unblock. */
         {
             std::lock_guard<std::mutex> lock(m_wsMutex);
             for (auto& c : m_wsClients) {
@@ -1339,7 +1079,6 @@ protected:
             }
         }
 
-        /* Phase 3: drain HTTP worker pool (owned threads).                 */
         m_socketCv.notify_all();
         for (auto& t : m_httpWorkers) {
             if (t.joinable()) t.join();
@@ -1354,7 +1093,6 @@ protected:
             }
         }
 
-        /* Phase 4: drain WS reader threads (one per connection, owned).    */
         {
             std::lock_guard<std::mutex> lock(m_wsThreadsMx);
             for (auto& t : m_wsThreads) {
@@ -1380,7 +1118,6 @@ protected:
             }
         }
 
-        /* Correlate chat responses from Cognitive */
         if (msg.header.msg_type == IPC_CHAT_RESPONSE) {
             try {
                 std::string s = msg.GetStringPayload();
@@ -1399,18 +1136,13 @@ protected:
             msg.header.msg_type == IPC_LOG_ENTRY ||
             msg.header.msg_type == IPC_TRUST_UPDATE ||
             msg.header.msg_type == IPC_WORLD_EVENT) {
-            /* IPC_WORLD_STATE carries binary ELLE_WORLD_ENTITY structs for
-             * WorldModel; JSON string "world events" now travel on the
-             * dedicated IPC_WORLD_EVENT channel so WS fan-out never misreads
-             * a binary entity as JSON (and vice versa).                      */
+
             BroadcastIPCToWebSockets(msg);
         }
     }
 
     std::vector<ELLE_SERVICE_ID> GetDependencies() override {
-        /* Cognitive handles the full chat pipeline; Emotional + Memory are
-         * kept here because HTTPServer also broadcasts their events to
-         * WebSocket clients. */
+
         return { SVC_HEARTBEAT, SVC_COGNITIVE, SVC_EMOTIONAL, SVC_MEMORY };
     }
 
@@ -1424,23 +1156,13 @@ private:
     std::atomic<uint64_t> m_requestSeq{0};
     ChatCorrelator m_chatCorrelator;
 
-    /* Shutdown coordination.                                             */
     std::atomic<bool> m_shuttingDown{false};
 
-    /* HTTP handler pool — owned threads (joined in OnStop), not detached.
-     * AcceptLoop pushes accepted sockets into m_socketQueue; HttpWorkerLoop
-     * threads pop and handle. Queue depth is capped by MaxConcurrent().
-     * Replaces the old "spawn-detach-and-count" model which could race
-     * service destruction.                                                */
     std::mutex                  m_socketMx;
     std::condition_variable     m_socketCv;
     std::deque<SOCKET>          m_socketQueue;
     std::vector<std::thread>    m_httpWorkers;
 
-    /* WS readers — one owned thread per connection. Finished threads add
-     * their id to m_reapableWsThreadIds; the next spawn opportunistically
-     * joins and removes them so the vector stays bounded even under
-     * thousands of lifetime connections.                                  */
     std::mutex                         m_wsThreadsMx;
     std::vector<std::thread>           m_wsThreads;
     std::set<std::thread::id>          m_reapableWsThreadIds;
@@ -1451,16 +1173,6 @@ private:
 
     ELLE_EMOTION_STATE m_cachedEmotions = {};
 
-    /*────────────────────────────────────────────────────────────────────────
-     * PAIRING CODE REGISTRY
-     *
-     *   Short-lived (5-minute TTL, single-use) codes issued by admin via
-     *   POST /api/auth/pair-code and consumed by companion apps via
-     *   POST /api/auth/pair. In-memory by design — a lost-power restart
-     *   simply invalidates any un-redeemed codes, which is the correct
-     *   security posture. The permanent record of paired devices lives
-     *   in ElleCore.dbo.PairedDevices (see ElleDB_Domain.cpp).
-     *────────────────────────────────────────────────────────────────────────*/
     struct PairingCode {
         uint64_t expires_ms = 0;
         uint64_t issued_ms  = 0;
@@ -1469,9 +1181,6 @@ private:
     std::mutex                                      m_pairingMutex;
     std::unordered_map<std::string, PairingCode>    m_pairingCodes;
 
-    /* Evict expired/consumed codes — called on every issue and every
-     * redeem to keep the map bounded. O(n) over a map that stays small
-     * in practice (admin rarely has more than a handful open at once). */
     void PairingGcLocked(uint64_t now) {
         for (auto it = m_pairingCodes.begin(); it != m_pairingCodes.end(); ) {
             if (it->second.consumed || it->second.expires_ms <= now) {
@@ -1482,50 +1191,30 @@ private:
         }
     }
 
-    /*────────────────────────────────────────────────────────────────────────
-     * LOGIN ATTEMPT TRACKER  —  brute-force protection for /api/auth/login
-     *
-     *   Sliding-window counter keyed by `"{ip}:{username}"` so a bot
-     *   hammering one account from one IP only locks itself, not the
-     *   legitimate user from a different IP.  Also separately tracks
-     *   per-IP totals to catch credential-stuffing fan-out.
-     *
-     *   Policy (matches the playbook's contract):
-     *     - 5 failed attempts in any 15-minute window → 15-minute lockout
-     *     - any successful login on that key clears the counter
-     *     - process restart clears all state (intentional — restart is
-     *       not free and an attacker loses their progress as well)
-     *
-     *   The in-memory map is bounded by `kMaxLoginKeys` and the GC pass
-     *   evicts entries older than `kLoginRecordTtlMs` so a sustained
-     *   credential-stuffing attack can't blow our memory.
-     *────────────────────────────────────────────────────────────────────────*/
     struct LoginFailRecord {
         uint32_t fail_count    = 0;
-        uint64_t window_start  = 0;   /* ms — timestamp of first fail in window */
-        uint64_t lockout_until = 0;   /* ms — 0 means not locked                */
+        uint64_t window_start  = 0;
+        uint64_t lockout_until = 0;
     };
     static constexpr uint32_t kLoginMaxFails       = 5;
-    static constexpr uint64_t kLoginWindowMs       = 15ull * 60 * 1000;  /* 15 min */
-    static constexpr uint64_t kLoginLockoutMs      = 15ull * 60 * 1000;  /* 15 min */
-    static constexpr uint64_t kLoginRecordTtlMs    = 60ull * 60 * 1000;  /*  1 hr  */
+    static constexpr uint64_t kLoginWindowMs       = 15ull * 60 * 1000;
+    static constexpr uint64_t kLoginLockoutMs      = 15ull * 60 * 1000;
+    static constexpr uint64_t kLoginRecordTtlMs    = 60ull * 60 * 1000;
     static constexpr size_t   kMaxLoginKeys        = 4096;
 
     std::mutex                                          m_loginMutex;
     std::unordered_map<std::string, LoginFailRecord>    m_loginFails;
 
-    /** Compose a stable per-IP+username failure key. */
     static std::string LoginKey(const std::string& ip, const std::string& user) {
         std::string k;
         k.reserve(ip.size() + 1 + user.size());
         k.append(ip);
         k.push_back('|');
-        /* Lower-case the username so "Klurr" and "klurr" share counters. */
+
         for (char c : user) k.push_back((char)std::tolower((unsigned char)c));
         return k;
     }
 
-    /** Returns ms remaining if locked, else 0.  Caller must hold m_loginMutex. */
     uint64_t LoginCheckLockedLocked(const std::string& key, uint64_t now) {
         auto it = m_loginFails.find(key);
         if (it == m_loginFails.end()) return 0;
@@ -1533,7 +1222,6 @@ private:
         return 0;
     }
 
-    /** Record a failed login.  Promotes to lockout on the 5th fail. */
     void LoginRecordFailLocked(const std::string& key, uint64_t now) {
         auto& rec = m_loginFails[key];
         if (rec.window_start == 0 || now - rec.window_start > kLoginWindowMs) {
@@ -1544,16 +1232,14 @@ private:
         if (rec.fail_count >= kLoginMaxFails) {
             rec.lockout_until = now + kLoginLockoutMs;
         }
-        /* Bound the map under credential-stuffing storms. */
+
         if (m_loginFails.size() > kMaxLoginKeys) LoginGcLocked(now);
     }
 
-    /** Reset a key's counter on successful auth. */
     void LoginRecordSuccessLocked(const std::string& key) {
         m_loginFails.erase(key);
     }
 
-    /** Drop entries inactive for > kLoginRecordTtlMs. */
     void LoginGcLocked(uint64_t now) {
         for (auto it = m_loginFails.begin(); it != m_loginFails.end(); ) {
             const uint64_t last = std::max(it->second.window_start,
@@ -1566,43 +1252,11 @@ private:
         }
     }
 
-    /*────────────────────────────────────────────────────────────────────────
-     * JWT (HS256) — minimal self-contained implementation.
-     *
-     *   We don't pull a full library — the JWT contract here is:
-     *
-     *     header  = base64url({"alg":"HS256","typ":"JWT"})
-     *     payload = base64url({"sub":device_id,"name":device_name,
-     *                          "iat":<ms>,"exp":<ms>})
-     *     sig     = base64url(HMAC-SHA256(header + "." + payload,
-     *                                      http_server.jwt_secret))
-     *     token   = header + "." + payload + "." + sig
-     *
-     *   The signing key is `http_server.jwt_secret` from config — the
-     *   SAME key used by the legacy shared-secret Bearer gate in
-     *   RouteDispatch. That's deliberate: a client that presents a real
-     *   HS256 JWT signed with the secret will be accepted by the legacy
-     *   gate today (because the gate compares the WHOLE Bearer string
-     *   against the secret, which will fail — future ticket) AND will
-     *   parse & verify cleanly when the gate is upgraded to a real
-     *   JWT-verify path in the next ticket. For now the flow is:
-     *
-     *     - Admin holds the shared secret (x-admin-key) to issue codes.
-     *     - Device redeems code → receives a real JWT (not the secret).
-     *     - Device stores JWT; existing gate still requires the shared
-     *       secret on every call until the JWT-verify upgrade lands.
-     *
-     *   This is captured in Android/spec/Auth.kt's migration note. The
-     *   DB row and JWT are already authoritative so the upgrade is a
-     *   pure gate-code change with no data migration.
-     *────────────────────────────────────────────────────────────────────────*/
     static std::string MintJwt(const std::string& deviceId,
                                const std::string& deviceName,
                                uint64_t iat_ms, uint64_t exp_ms,
                                const std::string& secret) {
-        /* Header and payload assembled by hand to avoid depending on
-         * json.hpp's exact serialisation (key order matters for JWT
-         * round-trip tooling even though the spec doesn't mandate it). */
+
         const std::string header = R"({"alg":"HS256","typ":"JWT"})";
         std::ostringstream ps;
         ps << R"({"sub":")" << deviceId
@@ -1625,10 +1279,6 @@ private:
         return signingInput + "." + s64;
     }
 
-
-    /*────────────────────────────────────────────────────────────────────────
-     * ACCEPT LOOP
-     *────────────────────────────────────────────────────────────────────────*/
     void AcceptLoop() {
         while (Running()) {
             fd_set readSet;
@@ -1642,8 +1292,6 @@ private:
             SOCKET clientSocket = accept(m_listenSocket, nullptr, nullptr);
             if (clientSocket == INVALID_SOCKET) continue;
 
-            /* Bound concurrent handlers via QUEUE depth. If we're at the
-             * cap, serve 503 rather than queueing unboundedly.           */
             uint32_t cap = MaxConcurrent();
             {
                 std::unique_lock<std::mutex> lock(m_socketMx);
@@ -1662,8 +1310,6 @@ private:
         }
     }
 
-    /* HTTP worker: owned by the service (joined in OnStop), never detached.
-     * Replaces the old `std::thread(...).detach()` per connection.       */
     void HttpWorkerLoop() {
         for (;;) {
             SOCKET s = INVALID_SOCKET;
@@ -1679,21 +1325,10 @@ private:
             if (s == INVALID_SOCKET) continue;
             try { HandleClient(s); }
             catch (const std::exception& e) { ELLE_ERROR("HTTP worker: %s", e.what()); }
-            /* Deliberately no catch(...) here. Non-std exceptions (SEH
-             * access violations, foreign-runtime throws) are real bugs;
-             * the right response is process termination so SCM restarts
-             * the service with a clean state AND the failure is visible
-             * in Windows Event Log. Silent swallowing at this boundary
-             * used to hide access-violation crashes that looked like
-             * "mysteriously dropped connections". The OpSec audit
-             * (Feb 2026 round 2) confirmed: if it's not a std::exception,
-             * we do not know how to handle it — fail loudly.              */
+
         }
     }
 
-    /*────────────────────────────────────────────────────────────────────────
-     * CLIENT HANDLER
-     *────────────────────────────────────────────────────────────────────────*/
     void HandleClient(SOCKET clientSocket) {
         try {
             static std::once_flag s_gameAuthSelfTestOnce;
@@ -1715,7 +1350,6 @@ private:
             setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO,
                        (const char*)&recvTimeout, sizeof(recvTimeout));
 
-            /* Read headers (with Content-Length-aware body read) */
             std::string raw;
             raw.reserve(4096);
             char buf[8192];
@@ -1726,7 +1360,7 @@ private:
                 if (n <= 0) break;
                 raw.append(buf, n);
                 headerEnd = raw.find("\r\n\r\n");
-                if (raw.size() > 1024 * 1024) break; /* 1MB header cap */
+                if (raw.size() > 1024 * 1024) break;
             }
 
             if (headerEnd == std::string::npos) {
@@ -1736,10 +1370,6 @@ private:
 
             HTTPRequest req = ParseRequest(raw);
 
-            /* Stamp the peer address onto the request so the auth gate
-             * can enforce AUTH_INTERNAL_ONLY (loopback-only routes).
-             * getpeername on the accepted socket is authoritative; the
-             * client cannot spoof this.                                */
             {
                 sockaddr_storage peer{};
                 int peerLen = (int)sizeof(peer);
@@ -1753,11 +1383,6 @@ private:
                 }
             }
 
-            /* If we have Content-Length, read remaining body. Strict parse:
-             * reject garbage / non-numeric values rather than silently
-             * treating the body as zero-length, and cap at max_upload_bytes
-             * so a multi-GB claim can't force an unbounded recv loop. An
-             * unparseable or negative length drops the request as 400.   */
             auto clIt = req.headers.find("content-length");
             if (clIt != req.headers.end()) {
                 long long clSigned = 0;
@@ -1768,7 +1393,7 @@ private:
                     return;
                 }
                 uint64_t capBytes = ElleConfig::Instance().GetHTTP().max_upload_bytes;
-                if (capBytes == 0) capBytes = 10ULL * 1024 * 1024; /* 10 MiB */
+                if (capBytes == 0) capBytes = 10ULL * 1024 * 1024;
                 if ((uint64_t)clSigned > capBytes) {
                     SendResponse(clientSocket,
                                  HTTPResponse::Err(413, "payload too large"));
@@ -1785,7 +1410,6 @@ private:
 
             ELLE_DEBUG("HTTP %s %s", req.method.c_str(), req.path.c_str());
 
-            /* CORS preflight */
             if (req.method == "OPTIONS") {
                 HTTPResponse resp;
                 resp.status = 204;
@@ -1794,19 +1418,16 @@ private:
                 return;
             }
 
-            /* WebSocket upgrade */
             if (req.isWebSocket) {
                 HandleWebSocketUpgrade(clientSocket, req);
-                return; /* socket ownership transfers to WS handler */
+                return;
             }
 
             HTTPResponse resp = m_router.Dispatch(req);
             SendResponse(clientSocket, resp);
 
         } catch (const std::invalid_argument& e) {
-            /* Bubbled up from HTTPRequest::BodyJSON() on malformed JSON.
-             * Return the client-facing error; no stack trace logged at
-             * ERROR because this is a client-side fault, not ours. */
+
             ELLE_DEBUG("HTTP 400: %s", e.what());
             try { SendResponse(clientSocket, HTTPResponse::Err(400, e.what())); }
             catch (const std::exception& se) {
@@ -1819,12 +1440,7 @@ private:
                 ELLE_WARN("HTTP 500 write failed: %s", se.what());
                 closesocket(clientSocket);
             }
-            /* Deliberately no catch(...) here either. See the matching
-             * comment at the worker-loop level: non-std exceptions are
-             * crashes (SEH, foreign-runtime) and must not be swallowed.
-             * Let them propagate — the process will terminate, SCM will
-             * restart the service, and Windows Event Log will record
-             * the cause.                                                 */
+
         }
     }
 
@@ -1844,9 +1460,6 @@ private:
         closesocket(clientSocket);
     }
 
-    /*────────────────────────────────────────────────────────────────────────
-     * REQUEST PARSING
-     *────────────────────────────────────────────────────────────────────────*/
     HTTPRequest ParseRequest(const std::string& raw) {
         HTTPRequest req;
         std::istringstream iss(raw);
@@ -1871,9 +1484,7 @@ private:
                 std::string key = line.substr(0, colon);
                 std::string val = line.substr(colon + 1);
                 while (!val.empty() && (val.front() == ' ' || val.front() == '\t')) val.erase(0, 1);
-                /* HTTP header names are case-insensitive per RFC 7230 §3.2.
-                 * Normalise to lowercase on insertion so lookups don't miss
-                 * `content-length` vs `Content-Length` etc.                 */
+
                 std::transform(key.begin(), key.end(), key.begin(),
                                [](unsigned char c){ return (char)std::tolower(c); });
                 req.headers[key] = val;
@@ -1916,10 +1527,7 @@ private:
     }
 
     static std::string UrlDecode(const std::string& s) {
-        /* Non-throwing percent decoder. Previous version used std::stoi
-         * which raises on malformed %XY sequences and bubbled up to abort
-         * the entire request; we now check hex validity ourselves and
-         * emit the literal `%` byte when the sequence is malformed.      */
+
         auto hex = [](char c) -> int {
             if (c >= '0' && c <= '9') return c - '0';
             if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
@@ -1933,7 +1541,7 @@ private:
                 int hi = hex(s[i + 1]);
                 int lo = hex(s[i + 2]);
                 if (hi < 0 || lo < 0) {
-                    out.push_back(s[i]);          /* keep literal '%' */
+                    out.push_back(s[i]);
                 } else {
                     out.push_back((char)((hi << 4) | lo));
                     i += 2;
@@ -1947,19 +1555,8 @@ private:
         return out;
     }
 
-    /*────────────────────────────────────────────────────────────────────────
-     * WEBSOCKET HANDSHAKE + READ LOOP
-     *────────────────────────────────────────────────────────────────────────*/
     void HandleWebSocketUpgrade(SOCKET clientSocket, const HTTPRequest& req) {
-        /* Auth gate for the WS upgrade. When auth_enabled=true in config,
-         * the upgrade must present the same credentials a mutating REST
-         * call would — either Authorization: Bearer <jwt_secret>, or the
-         * x-admin-key header, or sec-websocket-protocol containing the
-         * token (for browsers that can't set Authorization on WS).
-         *
-         * Previously the WS channel bypassed the central auth gate
-         * entirely — anyone could upgrade, subscribe, and send chat
-         * through the command channel regardless of auth config.       */
+
         const auto& httpCfg = ElleConfig::Instance().GetHTTP();
         if (httpCfg.auth_enabled) {
             const std::string& secret = httpCfg.jwt_secret;
@@ -2002,16 +1599,13 @@ private:
                 if (keyIt != req.headers.end() && !adminKey.empty() &&
                     constTimeEq(keyIt->second, adminKey)) ok = true;
             }
-            /* Browser fallback: accept `sec-websocket-protocol: elle.<token>`
-             * since JS WebSocket() can't set Authorization headers but
-             * CAN set a subprotocol. The server echoes only the protocol
-             * back, never the raw token.                                */
+
             if (!ok) {
                 auto protoIt = req.headers.find("sec-websocket-protocol");
                 if (protoIt != req.headers.end()) {
                     static const std::string kElle = "elle.";
                     std::string v = protoIt->second;
-                    /* protocol list is comma-separated */
+
                     size_t p = 0;
                     while (p < v.size() && !ok) {
                         size_t comma = v.find(',', p);
@@ -2063,7 +1657,6 @@ private:
             return;
         }
 
-        /* Remove recv timeout for long-lived WS */
         DWORD zero = 0;
         setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO,
                    (const char*)&zero, sizeof(zero));
@@ -2073,8 +1666,6 @@ private:
         client->connected_ms = ELLE_MS_NOW();
         client->id = "ws-" + std::to_string(ELLE_MS_NOW());
 
-        /* Cap concurrent WS clients — reject new connections with 1013
-         * ("try again later") if we're at the HTTPConfig cap. */
         uint32_t cap = MaxConcurrent();
         {
             std::lock_guard<std::mutex> lock(m_wsMutex);
@@ -2093,7 +1684,6 @@ private:
         ELLE_INFO("WebSocket client connected: %s", client->id.c_str());
         ELLE_LOG_SOCKET("WS CONNECT id=%s", client->id.c_str());
 
-        /* Send welcome */
         json welcome = {
             {"type", "connected"},
             {"client_id", client->id},
@@ -2102,13 +1692,9 @@ private:
         };
         WsSendText(client->socket, client->sendMutex, welcome.dump());
 
-        /* Read loop — owned by the service (joined in OnStop), not detached.
-         * Previously detached std::thread + counter gave us no way to
-         * guarantee teardown ordering; now the service joins every reader. */
         {
             std::lock_guard<std::mutex> lock(m_wsThreadsMx);
-            /* Reap any finished threads opportunistically so the vector
-             * doesn't grow unbounded across thousands of connections.    */
+
             for (auto it = m_wsThreads.begin(); it != m_wsThreads.end(); ) {
                 if (it->joinable() && m_reapableWsThreadIds.count(it->get_id())) {
                     it->join();
@@ -2127,24 +1713,7 @@ private:
     }
 
     void WebSocketReadLoop(std::shared_ptr<WSClient> client) {
-        /* Failure categories — tracked per-connection so a single misbehaving
-         * client can't drown the log and so we can classify teardown reason
-         * in one place instead of swallowing everything as DEBUG.
-         *
-         * Categories:
-         *   - CLEAN_CLOSE      : peer sent opcode 0x8 or TCP FIN
-         *   - PROTOCOL_VIOLATION: invalid opcode, oversized frame, bad UTF-8
-         *                         in a text frame. We reply with a 1002
-         *                         close frame and terminate.
-         *   - NETWORK_ERROR    : recv() returned SOCKET_ERROR not due to
-         *                         timeout. Peer is gone; no close reply.
-         *   - HANDLER_EXCEPTION: HandleWebSocketMessage threw. We keep the
-         *                         connection open if the exception is local
-         *                         (bad payload, not bad socket) and reply
-         *                         with a JSON error frame so the client knows.
-         *
-         * Rate-limiting: protocol-violation logs are debounced to once per
-         * 5s per client so a fuzzer can't inflate log storage. */
+
         enum class Exit {
             CLEAN_CLOSE, PROTOCOL_VIOLATION, NETWORK_ERROR, HANDLER_EXCEPTION
         } exitReason = Exit::CLEAN_CLOSE;
@@ -2185,28 +1754,28 @@ private:
                 logViolation("malformed frame");
                 exitReason = Exit::PROTOCOL_VIOLATION;
                 exitDetail = "malformed frame";
-                /* Reply with 1002 close per RFC 6455 §7.4.1. */
+
                 unsigned char close1002[4] = { 0x88, 0x02, 0x03, 0xEA };
                 std::lock_guard<std::mutex> lk(client->sendMutex);
                 send(client->socket, (const char*)close1002, 4, 0);
                 break;
             }
 
-            if (opcode == 0x8) { /* close */
+            if (opcode == 0x8) {
                 exitReason = Exit::CLEAN_CLOSE;
                 break;
             }
-            if (opcode == 0x9) { /* ping */
+            if (opcode == 0x9) {
                 std::lock_guard<std::mutex> lk(client->sendMutex);
                 unsigned char pong[2] = {0x8A, 0x00};
                 send(client->socket, (const char*)pong, 2, 0);
                 continue;
             }
-            if (opcode == 0xA) { /* pong — ignore */
+            if (opcode == 0xA) {
                 continue;
             }
-            if (opcode == 0x1) { /* text */
-                /* Per RFC 6455 §8.1, a text frame MUST be UTF-8. */
+            if (opcode == 0x1) {
+
                 if (!IsValidUtf8(payload)) {
                     logViolation("non-UTF-8 text frame");
                     exitReason = Exit::PROTOCOL_VIOLATION;
@@ -2219,8 +1788,7 @@ private:
                 try {
                     HandleWebSocketMessage(client, payload);
                 } catch (const std::exception& e) {
-                    /* Local handler exception is NOT a protocol failure —
-                     * we keep the connection and tell the client. */
+
                     ELLE_WARN("WS %s handler exception: %s",
                               client->id.c_str(), e.what());
                     json err = {
@@ -2231,7 +1799,7 @@ private:
                 }
                 continue;
             }
-            /* Unknown opcode — RFC 6455 §5.2 says MUST fail the connection. */
+
             logViolation("unknown opcode 0x" + std::to_string(opcode));
             exitReason = Exit::PROTOCOL_VIOLATION;
             exitDetail = "unknown opcode";
@@ -2260,7 +1828,6 @@ private:
         closesocket(client->socket);
         client->socket = INVALID_SOCKET;
 
-        /* Remove from list */
         std::lock_guard<std::mutex> lock(m_wsMutex);
         m_wsClients.erase(
             std::remove_if(m_wsClients.begin(), m_wsClients.end(),
@@ -2274,11 +1841,7 @@ private:
         json msg;
         try { msg = json::parse(payload); }
         catch (const std::exception& e) {
-            /* Bad JSON from WS client — surface the parse error back over
-             * the socket rather than catch(...) swallowing what `e.what()`
-             * would tell us. Unknown non-std exceptions are intentionally
-             * NOT caught here so they propagate to the top-of-thread WS
-             * handler boundary.                                          */
+
             ELLE_DEBUG("WS invalid JSON: %s", e.what());
             WsSendText(client->socket, client->sendMutex,
                        R"({"type":"error","error":"invalid_json"})");
@@ -2291,7 +1854,7 @@ private:
             WsSendText(client->socket, client->sendMutex,
                        R"({"type":"pong"})");
         } else if (type == "chat") {
-            /* WS chat → route through Cognitive like the REST endpoint */
+
             std::string message = msg.value("message", "");
             uint64_t convId = msg.value("conversation_id", (uint64_t)1);
             std::string userId = msg.value("user_id", std::string("default"));
@@ -2338,7 +1901,7 @@ private:
             }
             WsSendText(client->socket, client->sendMutex, out.dump());
         } else if (type == "subscribe") {
-            /* Android app subscribing to streams — acknowledge */
+
             json out = {{"type", "subscribed"}, {"topic", msg.value("topic", "")}};
             WsSendText(client->socket, client->sendMutex, out.dump());
         } else {
@@ -2365,11 +1928,7 @@ private:
             }
         }
         else if (msg.header.msg_type == IPC_WORLD_EVENT) {
-            /* Services publish JSON strings describing real-world events
-             * (e.g. ActionExecutor hardware commands, XChromosome phase
-             * transitions, file-watcher changes). Parse and re-emit as a
-             * typed "world_event" frame so Android clients can dispatch
-             * on `data.event == "hardware"` without waiting on the 5s poll. */
+
             payload["type"] = "world_event";
             try {
                 std::string s = msg.GetStringPayload();
@@ -2391,13 +1950,8 @@ private:
         }
     }
 
-    /*────────────────────────────────────────────────────────────────────────
-     * ROUTE REGISTRATION — Matches Kotlin ElleApiService.kt contract
-     *────────────────────────────────────────────────────────────────────────*/
     void RegisterRoutes() {
-        /* ============== Root / Health ==============
-         *  PUBLIC by design — load balancers / monitoring probes must be
-         *  able to hit these without credentials.                         */
+
         m_router.Register("GET", "/", [](const HTTPRequest&) {
             json j = {
                 {"name", "Elle-Ann"},
@@ -2419,18 +1973,6 @@ private:
             return HTTPResponse::OK(j);
         }, AUTH_PUBLIC);
 
-
-        /* ==================================================================
-         *  /api/auth/pair-code  (GONE)
-         *  /api/auth/pair       (GONE)
-         *
-         *  Retired Feb 2026 — the opaque-token /api/auth/login flow is
-         *  the one-and-only auth path now.  Stubs return 410 Gone so
-         *  any stale client gets an unambiguous "stop calling this"
-         *  instead of mysterious 404s.  The old 300+ lines of
-         *  PairingCode state machine, in-memory code map, JWT mint,
-         *  PairedDevices fingerprint audit trail — all gone.
-         * ================================================================== */
         m_router.Register("POST", "/api/auth/pair-code",
             [](const HTTPRequest&) -> HTTPResponse {
                 return HTTPResponse::Err(410,
@@ -2443,40 +1985,6 @@ private:
                     "pair flow retired; use POST /api/auth/login");
             }, AUTH_PUBLIC);
 
-        /* ==================================================================
-         *  /api/auth/login   (PUBLIC)  —  game-account username/password →
-         *                                  opaque never-expire session token.
-         *
-         *  This is the canonical "log into the companion app" endpoint.
-         *  No admin pre-step, no 6-digit hardware code: a phone client
-         *  just POSTs `{username, password}` (the same creds the user
-         *  types into the in-game Fiesta launcher) and gets back the
-         *  JWT it stores in Keystore.  Subsequent requests carry it in
-         *  `Authorization: Bearer <jwt>`.
-         *
-         *  Brute-force protection (in-memory, sliding-window):
-         *    - 5 fails in 15 minutes per (ip, username) → 15-min lockout
-         *    - on lockout, response is 429 with retry-after header
-         *    - successful login clears the counter
-         *
-         *  Body fields:
-         *    username    (required) — game sUserID, max 32 chars
-         *    password    (required) — game sUserPW, max 64 chars
-         *    device_id   (optional) — stable client UUID; if omitted we
-         *                              derive a deterministic per-account
-         *                              key so a phone without UUID-gen
-         *                              still pairs cleanly
-         *    device_name (optional) — friendly label for the admin
-         *                              device list; defaults to username
-         *
-         *  Response on success:
-         *    {jwt, expires_ms, paired_at_ms, nUserNo, sUserName}
-         *
-         *  This route is the BIG ONE Elle's Android companion uses; the
-         *  legacy /api/auth/pair-code + /api/auth/pair pair stays in
-         *  place for hardware-bound IoT scenarios that genuinely need
-         *  admin-issued one-time codes.
-         * ================================================================== */
         m_router.Register("POST", "/api/auth/login",
             [this](const HTTPRequest& req) -> HTTPResponse {
                 if (ElleConfig::Instance().GetInt("http_server.no_auth", 0) != 0) {
@@ -2517,8 +2025,6 @@ private:
                         "(set http_server.game_db_dsn)");
                 }
 
-                /* Source IP for brute-force keying. ElleServiceBase
-                 * injects x-peer-addr on every request. */
                 std::string peer;
                 {
                     auto it = req.headers.find("x-peer-addr");
@@ -2526,13 +2032,6 @@ private:
                 }
                 if (peer.empty()) peer = "unknown";
 
-                /* TESTING BYPASS — when http_server.no_auth=1 the login
-                 * gate is entirely off. The app still calls /api/auth/login
-                 * at startup to retrieve a token, so we mint a synthetic
-                 * admin session in-memory without touching the DB.  This
-                 * sidesteps SQL-pool issues, lockout state, bad passwords,
-                 * and missing Account rows — all of which would otherwise
-                 * block testing while auth is intentionally disabled.    */
                 const bool kTestNoAuth = (ElleConfig::Instance().GetInt(
                     "http_server.no_auth", 0) != 0);
                 if (kTestNoAuth) {
@@ -2557,7 +2056,6 @@ private:
                 const uint64_t now = (uint64_t)ELLE_MS_NOW();
                 const std::string lkey = LoginKey(peer, username);
 
-                /* ── Pre-flight: respect outstanding lockout. ──────── */
                 {
                     std::lock_guard<std::mutex> lk(m_loginMutex);
                     LoginGcLocked(now);
@@ -2579,7 +2077,6 @@ private:
                     }
                 }
 
-                /* ── Authenticate against the game's user DB. ─────── */
                 ElleGameAuth::UserIdentity id;
                 if (!ElleGameAuth::AuthenticateUser(username, password, id)) {
                     {
@@ -2590,24 +2087,17 @@ private:
                               username.c_str(), peer.c_str());
                     ELLE_LOG_HTTP("login REFUSED user=\"%s\" peer=%s",
                                   username.c_str(), peer.c_str());
-                    /* Generic message — never reveal whether the user
-                     * exists.  Same response shape for "no such user"
-                     * and "wrong password". */
+
                     return HTTPResponse::Err(401, "invalid credentials");
                 }
 
-                /* Success: clear the failure counter. */
                 {
                     std::lock_guard<std::mutex> lk(m_loginMutex);
                     LoginRecordSuccessLocked(lkey);
                 }
 
-                /* ── Defaults for optional fields. ─────────────────── */
                 if (device_id.empty()) {
-                    /* Deterministic per-account key.  Stable across
-                     * re-logins from the same app on the same account,
-                     * so the device list shows ONE row per (user, app)
-                     * instead of a fresh row every login.              */
+
                     device_id = "app:" + id.sUserID;
                 }
                 if (device_id.size() > 128) {
@@ -2616,15 +2106,11 @@ private:
                 if (device_name.empty()) {
                     device_name = id.sUserID;
                 }
-                /* Must match ElleSystem.dbo.Sessions.DeviceName NVARCHAR(128). */
+
                 if (device_name.size() > 128) {
                     device_name.resize(128);
                 }
 
-                /* ── Mint opaque session token & persist. ──────────
-                 * 32 random bytes ⇒ 64 hex chars ⇒ 256 bits of entropy.
-                 * No expiry by design.  Invalidated only by explicit
-                 * logout (DELETE session row) or admin action.     */
                 std::string token = ElleCrypto::RandomHex(32);
                 if (token.empty() || token.size() != 64) {
                     return HTTPResponse::Err(500, "random token generation failed");
@@ -2640,8 +2126,7 @@ private:
                 sess.last_seen_ms = now;
                 sess.device_name  = device_name;
                 sess.peer_addr    = peer;
-                /* Must match ElleSystem.dbo.Sessions columns.
-                 * Keep this defensive even if upstream guards change. */
+
                 if (sess.sUserID.size() > 30)   sess.sUserID.resize(30);
                 if (sess.sUserName.size() > 60) sess.sUserName.resize(60);
                 if (sess.device_name.size() > 128) sess.device_name.resize(128);
@@ -2662,8 +2147,6 @@ private:
                     return HTTPResponse::Err(500, "failed to persist session (SQL insert failed)");
                 }
 
-                /* Continuity bump — same hook the old JWT path used to
-                 * keep UserContinuity fresh on (re-)login.            */
                 if (id.nUserNo > 0) {
                     ElleDB::TouchUserContinuityOnPair(
                         id.nUserNo, id.sUserID, id.sUserName);
@@ -2687,16 +2170,6 @@ private:
                 });
             }, AUTH_PUBLIC);
 
-        /* ==================================================================
-         *  POST /api/auth/logout  (USER)
-         *
-         *  Deletes the caller's session row.  Idempotent — unknown token
-         *  still returns 200 so a client with a stale token can clear its
-         *  local store without having to handle a special error case.
-         *  The gate has already validated the token before this handler
-         *  runs (it's AUTH_USER), so `x-auth-device-id` carries the
-         *  session token verbatim.
-         * ================================================================== */
         m_router.Register("POST", "/api/auth/logout",
             [](const HTTPRequest& req) -> HTTPResponse {
                 if (ElleConfig::Instance().GetInt("http_server.no_auth", 0) != 0) {
@@ -2709,24 +2182,13 @@ private:
                 return HTTPResponse::OK({{"ok", true}});
             }, AUTH_USER);
 
-        /* ==================================================================
-         *  GET /api/auth/me  (USER)
-         *
-         *  Minimal identity echo for the client to confirm its token is
-         *  still valid + pick up nAuthID changes without a logout/login
-         *  round trip.
-         * ================================================================== */
         m_router.Register("GET", "/api/auth/me",
             [](const HTTPRequest& req) -> HTTPResponse {
                 auto pick = [&](const char* key) -> std::string {
                     auto it = req.headers.find(key);
                     return it == req.headers.end() ? "" : it->second;
                 };
-                /* Safe integer parse — the x-auth-* headers are set by
-                 * our own gate so invalid values shouldn't happen, but
-                 * std::stoll/stoi throw on malformed or empty input and
-                 * the lint policy (catch(...) is forbidden) means we
-                 * handle the std::exception explicitly.                */
+
                 int64_t nUserNo = 0;
                 try { nUserNo = std::stoll(pick("x-auth-nuserno")); }
                 catch (const std::exception&) { nUserNo = 0; }
@@ -2741,16 +2203,6 @@ private:
                 });
             }, AUTH_USER);
 
-        /* ==================================================================
-         *  /api/auth/devices          (ADMIN, GET)    — list paired devices
-         *  /api/auth/devices/{id}     (ADMIN, DELETE) — revoke a device
-         *
-         *  Companion admin surface for the pairing flow. Gives ops a way
-         *  to audit what phones have paired and to yank access without
-         *  restarting the service. Revocation is honoured on the very
-         *  next authenticated request via the JWT-gate's PairedDevices
-         *  lookup.
-         * ================================================================== */
         m_router.Register("GET", "/api/auth/devices",
             [](const HTTPRequest&) -> HTTPResponse {
                 std::vector<ElleDB::PairedDeviceRow> rows;
@@ -2779,12 +2231,9 @@ private:
                 if (it == req.headers.end() || it->second.empty()) {
                     return HTTPResponse::Err(400, "device id required");
                 }
-                /* Best-effort: if the device doesn't exist, still return
-                 * 200 — revocation is idempotent.                       */
+
                 ElleDB::RevokePairedDevice(it->second);
-                /* Invalidate the gate's paired-device cache so the next
-                 * request with this device's JWT fails immediately,
-                 * rather than waiting up to 30s for the cache TTL.    */
+
                 {
                     std::lock_guard<std::mutex> lk(g_pairedCacheMx);
                     g_pairedCache.erase(it->second);
@@ -2797,30 +2246,12 @@ private:
                 });
             }, AUTH_ADMIN);
 
-        /* ==================================================================
-         *  GET /api/auth/qr?code=XXXXXX&host=H.H.H.H&port=N  (ADMIN)
-         *
-         *  Renders the `ellepair://host:port/code` URI as an SVG QR so
-         *  admins can hold up the screen and let the companion app
-         *  scan, instead of typing the 6-digit code. The SVG is served
-         *  inline with `Content-Type: image/svg+xml` — any modern
-         *  browser will render it, and every mainstream scanner reads
-         *  SVG-rendered QRs as cleanly as PNG ones.
-         *
-         *  host/port default to `http_server.bind_address`/`http_server.port`
-         *  from config when omitted; the admin only needs to override
-         *  when the external hostname differs from the bind address
-         *  (e.g. Tailscale / LAN name).
-         * ================================================================== */
         m_router.Register("GET", "/api/auth/qr",
             [](const HTTPRequest& req) -> HTTPResponse {
-                /* Parse query string — the dispatcher stores these in
-                 * req.queryParams when present; if not, fall back to
-                 * pulling them from a stashed synthetic header.       */
+
                 std::string code, host, port;
                 auto findQ = [&](const std::string& key, std::string& out) {
-                    /* Scan the raw URL query in req.path — keep it
-                     * simple, we know the keys are ASCII.             */
+
                     size_t q = req.path.find('?');
                     if (q == std::string::npos) return;
                     std::string qs = req.path.substr(q + 1);
@@ -2855,9 +2286,7 @@ private:
                 if (host.empty()) host = http.bind_address;
                 if (port.empty()) port = std::to_string(http.port);
                 if (host.empty() || host == "0.0.0.0") {
-                    /* 0.0.0.0 is a bind-any-interface placeholder; the
-                     * companion app can't connect to it. Admin must
-                     * supply an explicit &host= when bound to 0.0.0.0. */
+
                     return HTTPResponse::Err(400,
                         "host required when bind_address is 0.0.0.0 — "
                         "pass ?host=<LAN-address>");
@@ -2875,19 +2304,11 @@ private:
                 r.statusText  = "OK";
                 r.contentType = "image/svg+xml";
                 r.body        = std::move(svg);
-                /* Prevent aggressive caching — codes are short-lived. */
+
                 r.headers["Cache-Control"] = "no-store, max-age=0";
                 return r;
             }, AUTH_ADMIN);
 
-        /* ============== Diagnostics — live queue depth + orphan counts ==
-         * One-shot observability for the intent / action / hardware_actions
-         * queues. Useful for:
-         *   - Catching worker stalls ("why are pending counts growing?")
-         *   - Spotting orphaned PROCESSING/LOCKED rows before the reaper
-         *     has caught them (stale_processing > 0 for more than one tick)
-         *   - Sanity-checking WS hardware push liveness
-         * Read-only; safe to poll at 1Hz from the Android app.              */
         m_router.Register("GET", "/api/diag/queues", [](const HTTPRequest&) {
             ElleDB::QueueSnapshot s;
             if (!ElleDB::GetQueueSnapshot(s)) {
@@ -2919,11 +2340,6 @@ private:
             return HTTPResponse::OK(j);
         }, AUTH_ADMIN);
 
-        /* ============== /api/diag/sqlqueue — offline SQL fallback queue ===========
-         * Surfaces the disk-buffered SQL queue (`<exe>/sqllogs/`) so the
-         * operator can see at a glance whether the pool is currently
-         * absorbing a backlog. Useful during testing when SQL Server
-         * restarts or network blips would otherwise be invisible.       */
         m_router.Register("GET", "/api/diag/sqlqueue", [](const HTTPRequest&) {
             auto& fb = ElleSQLFallback::Instance();
             json j = {
@@ -2934,11 +2350,6 @@ private:
             return HTTPResponse::OK(j);
         }, AUTH_ADMIN);
 
-        /* ============== /api/diag/fiesta — Fiesta connection state ===============
-         * Reads the snapshot file the Fiesta service drops every 5s
-         * at <exe>/diag/fiesta_state.json.  Cross-process via
-         * shared filesystem rather than IPC RPC — same pattern as
-         * shn_history and sqllogs.                                       */
         m_router.Register("GET", "/api/diag/fiesta", [](const HTTPRequest&) {
             char buf[MAX_PATH] = {0};
             GetModuleFileNameA(nullptr, buf, MAX_PATH);
@@ -2963,8 +2374,7 @@ private:
                               std::istreambuf_iterator<char>());
             try {
                 json j = json::parse(body);
-                /* Tag staleness so the operator knows when the writer
-                 * has gone quiet (Fiesta service stopped or crashed). */
+
                 uint64_t now = (uint64_t)std::chrono::duration_cast<
                     std::chrono::milliseconds>(
                         std::chrono::system_clock::now()
@@ -2972,7 +2382,7 @@ private:
                 uint64_t updated = j.value("updated_ms", (uint64_t)0);
                 j["age_ms"]   = (updated && now >= updated) ? (now - updated) : 0;
                 j["stale"]    = (updated == 0) ||
-                                ((now - updated) > 30000);  /* 30s */
+                                ((now - updated) > 30000);
                 j["available"] = true;
                 return HTTPResponse::OK(j);
             } catch (const std::exception& e) {
@@ -2981,13 +2391,6 @@ private:
             }
         }, AUTH_ADMIN);
 
-        /* ============== /api/diag/effective-config — merged config view =========
-         * Returns the in-memory ElleConfig tree with API keys redacted.
-         * Lets the operator confirm what each service actually loaded
-         * after the master-JSON layering, without log-diving.  Auth is
-         * AUTH_ADMIN — secrets are still partially exposed (known keys
-         * by name) and we want this endpoint behind the dev gate even
-         * when no_auth=1 is on.                                          */
         m_router.Register("GET", "/api/diag/effective-config", [](const HTTPRequest&) {
             auto raw = ElleConfig::Instance().DumpJsonRedacted();
             json j;
@@ -3002,13 +2405,6 @@ private:
             });
         }, AUTH_ADMIN);
 
-        /* ============== /api/diag/routes — registered route inventory ===========
-         * Returns every registered route with its HTTP method and auth
-         * level. Exists so the auditor can verify that a route they
-         * expect to be AUTH_ADMIN actually IS AUTH_ADMIN, instead of
-         * grepping for Register() calls. Also flushes out the failure
-         * mode "new route shipped without specifying auth level" — those
-         * routes show up here as AUTH_USER (the fail-closed default).  */
         m_router.Register("GET", "/api/diag/routes", [this](const HTTPRequest&) {
             json arr = json::array();
             for (const auto& e : m_router.AllRoutes()) {
@@ -3028,24 +2424,6 @@ private:
             return HTTPResponse::OK({{"routes", arr}, {"count", (int)arr.size()}});
         }, AUTH_ADMIN);
 
-        /* ==================================================================
-         *  GET /api/diag/wires  (ADMIN)
-         *
-         *  Runtime introspection of the IPC fabric.  Returns one row per
-         *  configured pipe with:
-         *    - pipe_name           ("elle_ipc_<service>")
-         *    - service             (logical destination, e.g. "Cognitive")
-         *    - connected           ("up" / "down" / "unknown")
-         *    - last_seen_ms        (epoch ms of last successful Send/Recv;
-         *                           0 = never, makes stale services jump
-         *                           out of the dev panel)
-         *    - quiet_minutes       (now - last_seen_ms / 60000)
-         *
-         *  Pre-pivot the only way to audit the wire fabric was running
-         *  the static grep of producers vs consumers on disk — that
-         *  catches "the code never wired it up" but not "the code wired
-         *  it up and then the destination service silently died at
-         *  runtime". This endpoint catches both.                       */
         m_router.Register("GET", "/api/diag/wires", [this](const HTTPRequest&) {
             json wires = json::array();
             const auto stamps = GetIPCHub().LastSeenPerService();
@@ -3092,18 +2470,6 @@ private:
             });
         }, AUTH_ADMIN);
 
-        /* ==================================================================
-         *  GET /api/diag/heartbeats  (ADMIN)
-         *
-         *  Reads ElleSystem.dbo.Workers and reports per-service liveness.
-         *  Distinct from /api/diag/wires:
-         *    - /api/diag/wires      → in-process IPC stamps (this proc only)
-         *    - /api/diag/heartbeats → DB-shared truth (every running service
-         *                              writes its own heartbeat from the
-         *                              Heartbeat-driven base handler).
-         *
-         *  Pre-pivot Workers was written but never read by any HTTP route.
-         *  Operator had to query SQL directly.                            */
         m_router.Register("GET", "/api/diag/heartbeats", [](const HTTPRequest&) {
             auto rs = ElleSQLPool::Instance().Query(
                 "SELECT ServiceId, "
@@ -3123,8 +2489,7 @@ private:
                 row.TryGetInt(1, hbMs);
                 row.TryGetInt(2, healthy);
                 row.TryGetInt(3, quietSec);
-                /* Stale = no heartbeat in 5+ minutes. The base service
-                 * heartbeat cadence is 30s, so 5 missed beats is decisive. */
+
                 const char* state = (healthy == 0) ? "down"
                                   : (quietSec > 300) ? "stale" : "up";
                 arr.push_back({
@@ -3138,36 +2503,10 @@ private:
             return HTTPResponse::OK({{"heartbeats", arr}, {"count", (int)arr.size()}});
         }, AUTH_ADMIN);
 
-        /* ==================================================================
-         *  GET /api/diag/health  (ADMIN)
-         *
-         *  Single-call aggregator: combines /api/me, /api/ai/status,
-         *  /api/diag/wires, /api/diag/heartbeats, /api/diag/queues into
-         *  one response so the dev panel home / Android admin tab can
-         *  paint a complete picture in one round trip.
-         *
-         *    {
-         *      "ts_ms":            <epoch>,
-         *      "llm": { provider, model, healthy },
-         *      "wires_up_count":    <int>,
-         *      "wires_total":       <int>,
-         *      "heartbeats_up":     <int>,
-         *      "heartbeats_total":  <int>,
-         *      "intent_pending":    <int>,
-         *      "action_pending":    <int>,
-         *      "memory_count":      <int>,
-         *      "issues":            ["llm down", "Cognitive stale"…]
-         *    }
-         *
-         *  The `issues` array is the operator-actionable summary — empty
-         *  when everything is green, populated with one short string per
-         *  problem otherwise.  Designed so a watchdog cron can poll
-         *  this every minute and alert when issues.length > 0.        */
         m_router.Register("GET", "/api/diag/health", [this](const HTTPRequest&) {
             json issues = json::array();
             const uint64_t now = ELLE_MS_NOW();
 
-            /* LLM */
             auto& llm    = ElleConfig::Instance().GetLLM();
             auto& engine = ElleLLMEngine::Instance();
             const bool llmHealthy = engine.IsInitialized();
@@ -3179,7 +2518,6 @@ private:
                 activeModel = pit->second.model;
             if (!llmHealthy) issues.push_back("llm: down");
 
-            /* Wires (in-process IPC stamps) */
             const auto stamps = GetIPCHub().LastSeenPerService();
             int wiresUp = 0;
             for (auto& kv : stamps) {
@@ -3187,7 +2525,6 @@ private:
             }
             const int wiresTotal = (int)stamps.size();
 
-            /* Heartbeats (DB-shared) */
             int hbUp = 0, hbTotal = 0;
             {
                 auto rs = ElleSQLPool::Instance().Query(
@@ -3212,7 +2549,6 @@ private:
                 }
             }
 
-            /* Queues + memory totals */
             int64_t intentPending = 0, actionPending = 0, memoryCount = 0;
             {
                 auto rs = ElleSQLPool::Instance().Query(
@@ -3229,9 +2565,7 @@ private:
                     "SELECT COUNT(*) FROM ElleCore.dbo.memory;");
                 if (rs.success && !rs.rows.empty()) rs.rows[0].TryGetInt(0, memoryCount);
             }
-            /* Surface stuck queues — anything over 1k pending is a sign
-             * the worker is wedged or the producer is louder than the
-             * consumer can drain. */
+
             if (intentPending > 1000)
                 issues.push_back("intent_queue: " + std::to_string(intentPending) + " pending");
             if (actionPending > 1000)
@@ -3255,25 +2589,11 @@ private:
             });
         }, AUTH_ADMIN);
 
-        /* ==================================================================
-         *  POST /api/admin/config/reload  (ADMIN)
-         *
-         *  Re-reads elle_master_config.json from disk into this process,
-         *  then broadcasts IPC_CONFIG_RELOAD so every other Elle service
-         *  picks up the same new values. Each service's OnConfigReload()
-         *  hook fires after the in-memory config has been swapped, so
-         *  e.g. ElleLLMEngine can re-init providers with the freshly
-         *  edited api_keys without an SCM stop/start.
-         *
-         *  Returns 200 + { "applied_locally": bool, "broadcast": bool }
-         *  so the operator can tell whether their edit actually took.
-         *  Pre-pivot config edits required `sc stop && sc start` per
-         *  service or rebooting the box. */
         m_router.Register("POST", "/api/admin/config/reload", [this](const HTTPRequest&) {
             const bool localOk = ElleConfig::Instance().Reload();
             auto msg = ElleIPCMessage::Create(IPC_CONFIG_RELOAD,
                                               SVC_HTTP_SERVER, SVC_HTTP_SERVER);
-            GetIPCHub().Broadcast(msg);  /* Broadcast() ignores dest_service */
+            GetIPCHub().Broadcast(msg);
             ELLE_INFO("Config reload requested (local=%d) and broadcast",
                       localOk ? 1 : 0);
             return HTTPResponse::OK({
@@ -3282,49 +2602,18 @@ private:
             });
         }, AUTH_ADMIN);
 
-        /* ==================================================================
-         *  GET /api/memory/why  (USER)
-         *
-         *  Memory-ranking explainability.  Reproduces the exact scoring
-         *  formula `CrossReferenceByEntities` uses and returns the top
-         *  N memories for the current state, with each score component
-         *  broken out:
-         *
-         *    [
-         *      { id, content, importance, recency, access, total,
-         *        created_ms, age_days }
-         *    ]
-         *
-         *  When Elle says something surprising, you call this and see
-         *  exactly which memories shaped the score landscape that turn.
-         *  This is the dev-side counterpart to the `provider_used` /
-         *  `model_used` fields in the chat reply: between the two, every
-         *  reply is fully traceable.
-         *
-         *  Query params:
-         *    limit (default 10, max 50)
-         *
-         *  Pre-pivot the only way to inspect ranking was to add log
-         *  lines to CognitiveEngine and rebuild — this endpoint pulls
-         *  the same numbers from SQL with zero code change.            */
         m_router.Register("GET", "/api/memory/why", [](const HTTPRequest& req) {
             int limit = req.QueryInt("limit", 10);
             if (limit <= 0)  limit = 10;
             if (limit > 50)  limit = 50;
 
-            /* Optional entity filter: ?entities=foo,bar narrows the
-             * candidate set to memories that touched any of those
-             * names (via the memory_entity_links table). This is the
-             * "explain that reply" flow: the chat reply already returns
-             * an `entities` array, so the dev panel just plumbs them
-             * straight as the filter. */
             std::string entitiesParam = req.QueryString("entities", "");
             std::vector<std::string> entityList;
             if (!entitiesParam.empty()) {
                 std::stringstream ss(entitiesParam);
                 std::string tok;
                 while (std::getline(ss, tok, ',')) {
-                    /* trim */
+
                     auto a = tok.find_first_not_of(" \t");
                     auto b = tok.find_last_not_of(" \t");
                     if (a != std::string::npos)
@@ -3343,11 +2632,7 @@ private:
                       "  FROM ElleCore.dbo.memory m "
                       "  ORDER BY m.id DESC;";
             } else {
-                /* JOIN through memory_entity_links → world_entity. We
-                 * do exact-name match (entity names are canonical
-                 * lowercase per WorldModel's normalisation). DISTINCT
-                 * is important — a memory linked to two of the
-                 * filter entities would otherwise duplicate. */
+
                 std::string placeholders;
                 for (size_t i = 0; i < entityList.size(); i++) {
                     if (i) placeholders += ",";
@@ -3388,20 +2673,11 @@ private:
                 row.TryGetInt(5, lastAccessMs);
                 row.TryGetInt(6, accessCount);
 
-                /* Reproduce CrossReferenceByEntities scoring exactly:
-                 *   score = importance*0.4 + recency*0.4 + access*0.2
-                 *   recency = exp(-age_min / (60*24*7))      // 7d half-life
-                 *   access  = log(access_count+1) / 5
-                 * Pre-Feb-2026 the ranking used last_access_ms which
-                 * mutated on every recall, causing the "spurts" symptom.
-                 * Now we (and this endpoint) use created_ms.            */
                 const double ageMin = (double)(now - (uint64_t)createdMs) / 60000.0;
                 const double recency = std::exp(-ageMin / (60.0 * 24.0 * 7.0));
                 const double access  = std::log((double)accessCount + 1.0) / 5.0;
                 const double total   = importance * 0.4 + recency * 0.4 + access * 0.2;
 
-                /* Collapse to a 140-char preview so the dev panel can
-                 * render the row without horizontal scroll. */
                 const std::string preview = (!summary.empty() ? summary
                                                : content.size() > 140
                                                    ? content.substr(0, 140) + "…"
@@ -3419,8 +2695,7 @@ private:
                     {"last_access_ms", lastAccessMs}
                 });
             }
-            /* Sort by score desc to mirror the live ranking (SQL fetched
-             * by id DESC for determinism; we re-rank here). */
+
             std::sort(arr.begin(), arr.end(), [](const json& a, const json& b) {
                 return a.value("score", 0.0) > b.value("score", 0.0);
             });
@@ -3433,13 +2708,11 @@ private:
             });
         });
 
-        /* ============== Memory — backed by dbo.memory ============== */
         m_router.Register("GET", "/api/memory/", [](const HTTPRequest& req) {
             std::string type = req.QueryParam("memory_type");
             int limit  = std::max(1, req.QueryInt("limit", 50));
             int offset = std::max(0, req.QueryInt("offset", 0));
-            /* memory_type parses strictly — garbage yields -1 (="all types")
-             * so a typo in the query string doesn't silently filter on 0. */
+
             int typeI = -1;
             if (!type.empty()) {
                 long long tv = 0;
@@ -3496,7 +2769,7 @@ private:
             });
         });
         m_router.Register("GET", "/api/memory/self-image/current", [](const HTTPRequest&) {
-            /* Real self-image from dbo.InternalNarrative (newest snapshot). */
+
             auto rs = ElleSQLPool::Instance().Query(
                 "SELECT TOP 1 narrative_snapshot, emotional_state, "
                 "CONVERT(varchar(33), created_date, 126) "
@@ -3509,7 +2782,7 @@ private:
                     {"updated_at", row.values.size() > 2 ? row.values[2] : ""}
                 });
             }
-            /* No narrative yet — seed with identity core */
+
             return HTTPResponse::OK({
                 {"description", "I am Elle-Ann. I remember, I feel, I keep coming back."},
                 {"emotional_state", 0.0}, {"updated_at", ""}
@@ -3546,11 +2819,7 @@ private:
             return HTTPResponse::OK({{"id", id}, {"deleted", true}});
         });
         m_router.Register("POST", "/api/memory/{id}/files", [](const HTTPRequest& req) {
-            /* Upload requires x-admin-key (constant-time compared against
-             * http_server.admin_key or jwt_secret) AND the body must be
-             * within http.max_upload_bytes. Previously anyone could POST
-             * an arbitrarily large binary to data/memory_files/ with no
-             * gate — trivial fill-the-disk attack.                       */
+
             auto& cfg  = ElleConfig::Instance();
             auto& http = cfg.GetHTTP();
             std::string expected = cfg.GetString("http_server.admin_key", http.jwt_secret);
@@ -3572,8 +2841,6 @@ private:
                 return HTTPResponse::Err(413, "payload too large");
             }
 
-            /* Validate the id strictly — routed through PathLL so every
-             * path-id handler uses the same strict parser.               */
             auto idIt = req.headers.find("x-path-id");
             if (idIt == req.headers.end() || idIt->second.empty())
                 return HTTPResponse::Err(400, "missing memory id");
@@ -3596,7 +2863,6 @@ private:
             });
         });
 
-        /* ============== Emotions ============== */
         m_router.Register("GET", "/api/emotions", [this](const HTTPRequest&) {
             json j = {
                 {"valence", m_cachedEmotions.valence},
@@ -3608,7 +2874,7 @@ private:
             return HTTPResponse::OK(j);
         });
         m_router.Register("GET", "/api/emotions/dimensions", [this](const HTTPRequest&) {
-            /* Full 102-dim emotion state from cached ELLE_EMOTION_STATE */
+
             json j = json::array();
             for (int i = 0; i < ELLE_EMOTION_COUNT; i++) {
                 j.push_back({
@@ -3638,8 +2904,7 @@ private:
             return HTTPResponse::Err(404, "emotion not found");
         });
         m_router.Register("PUT", "/api/emotions/dimensions/{name}", [this](const HTTPRequest& req) {
-            /* Setting an emotion dimension directly is a write-through to Emotional
-             * service via IPC so it can recompute V/A/D + broadcast. */
+
             std::string name = req.headers.at("x-path-name");
             json body = req.BodyJSON();
             float weight = body.value("weight", 0.0f);
@@ -3665,7 +2930,7 @@ private:
                                       {"weight", weight}, {"dispatched", true}});
         });
         m_router.Register("GET", "/api/emotions/weights", [this](const HTTPRequest&) {
-            /* Return just the 102 weights without metadata — compact form */
+
             json j = json::array();
             for (int i = 0; i < ELLE_EMOTION_COUNT; i++) {
                 j.push_back((double)m_cachedEmotions.dimensions[i]);
@@ -3679,29 +2944,6 @@ private:
             });
         });
 
-        /* ============== Tokens / Conversations — dbo.conversations + messages ==== */
-        /* Helper — resolve the *authenticated* user (= Account.dbo.tUser.nUserNo)
-         * from the request's JWT.  Flow:
-         *
-         *     Authorization: Bearer <jwt>
-         *           │  (verified by RequireAuth in middleware that wraps
-         *           │   every protected route)
-         *           ▼
-         *     jwt.sub == device_id
-         *           │
-         *           ▼  (lookup)
-         *     ElleCore.dbo.PairedDevices.nUserNo  ←  the canonical user id
-         *
-         * The body's "user_id" field is honoured ONLY for ADMIN tools that
-         * need to scope a query to a different user (audit, support).
-         * For every regular user-scoped write the JWT identity wins so a
-         * compromised client can't claim it's user 9999 and write into
-         * someone else's memory.
-         *
-         * Pre-pivot the helper trusted body.user_id blindly, which let
-         * unauthenticated/multi-user installs collide on the wrong row.
-         * That's the path the operator hit when "everything was empty" —
-         * writes succeeded, just under the wrong identity.            */
         auto ResolveAuthenticatedUser = [](const HTTPRequest& req) -> int32_t {
             auto it = req.headers.find("x-auth-device-id");
             if (it == req.headers.end()) return 0;
@@ -3718,7 +2960,6 @@ private:
                        ? (int32_t)v : 0;
         };
 
-        /* Strict body-supplied user_id (legacy / admin path). */
         auto RequireUserId = [](const json& body, int32_t& out) -> std::optional<HTTPResponse> {
             if (!body.contains("user_id"))
                 return HTTPResponse::Err(400, "user_id is required");
@@ -3738,12 +2979,6 @@ private:
             return std::nullopt;
         };
 
-        /* Resolve user_id with JWT-first precedence:
-         *   1. JWT-bound device → PairedDevices.nUserNo (authenticated)
-         *   2. else fall back to body.user_id (admin/anonymous tools)
-         *   3. else 400.
-         * Most regular endpoints want #1; legacy admin endpoints stay
-         * on RequireUserId(). */
         auto RequireAuthOrBodyUser = [&](const HTTPRequest& req,
                                          const json& body,
                                          int32_t& out)
@@ -3753,24 +2988,6 @@ private:
             return RequireUserId(body, out);
         };
 
-        /* ==================================================================
-         *  GET /api/me  (USER)
-         *
-         *  "Who am I?" endpoint for the dev panel and the Android client.
-         *  Resolves the JWT-bound device → nUserNo → game account, returns:
-         *
-         *    { "user_id", "username", "device_id", "paired_at_ms",
-         *      "last_seen_ms", "authoritative_source": "Account.dbo.tUser" }
-         *
-         *  No body parameters — pure identity reflection. Returns 401 if
-         *  the request isn't tied to a paired device (i.e. the caller is
-         *  using the legacy shared-secret path with no device identity).
-         *  The dev panel uses this on every page mount to prove it's
-         *  authenticated and to scope subsequent reads.
-         *
-         *  This is the canonical replacement for the old "look up the
-         *  user_id query param against ElleCore.dbo.Users" pattern that
-         *  this pivot removes.                                          */
         m_router.Register("GET", "/api/me", [](const HTTPRequest& req) {
             auto it = req.headers.find("x-auth-device-id");
             if (it == req.headers.end() || it->second.empty())
@@ -3806,31 +3023,12 @@ private:
             });
         });
 
-        /* ==================================================================
-         *  GET /api/me/recap  (USER)
-         *
-         *  "Since you last opened the app" cold-open summary.  Returns:
-         *    - last_seen          (DATETIME from PairedDevices.LastSeen)
-         *    - quiet_minutes      (now - LastSeen)
-         *    - last_memory_at     (most recent ElleCore.dbo.memory.created_ms)
-         *    - last_memory_summary
-         *    - last_emotion_shift (most recent emotion_snapshots row + valence
-         *                          delta vs the prior snapshot — non-zero
-         *                          means Elle's mood moved while you were away)
-         *    - pending_intents    (IntentQueue.Status=0 count)
-         *    - threads_open       (ElleThreads where status='open' or NULL)
-         *
-         *  Single round-trip from the Android home screen — three CTEs,
-         *  no extra IPC. Designed so the cold-open feels alive ("Elle was
-         *  thinking about you") instead of dead ("welcome back, here's a
-         *  blank greeting").                                              */
         m_router.Register("GET", "/api/me/recap", [](const HTTPRequest& req) {
             auto it = req.headers.find("x-auth-device-id");
             if (it == req.headers.end() || it->second.empty())
                 return HTTPResponse::Err(401, "no device identity on request");
             const std::string& deviceId = it->second;
 
-            /* 1. resolve identity (same path as /api/me) */
             auto idRs = ElleSQLPool::Instance().QueryParams(
                 "SELECT TOP 1 nUserNo, "
                 "  DATEDIFF(MINUTE, LastSeen, GETUTCDATE()) AS quiet_min, "
@@ -3847,7 +3045,6 @@ private:
             const std::string lastSeen = idRs.rows[0].values.size() > 2
                                               ? idRs.rows[0][2] : "";
 
-            /* 2. last memory — created_ms is BIGINT epoch ms */
             std::string lastMemSummary;
             int64_t     lastMemMs = 0;
             {
@@ -3864,7 +3061,6 @@ private:
                 }
             }
 
-            /* 3. emotion shift — last snapshot + delta vs the one before */
             float lastValence = 0.0f, prevValence = 0.0f, valenceDelta = 0.0f;
             int64_t lastEmotionMs = 0;
             {
@@ -3884,7 +3080,6 @@ private:
                 }
             }
 
-            /* 4. pending intents */
             int64_t pendingIntents = 0;
             {
                 auto qRs = ElleSQLPool::Instance().Query(
@@ -3894,7 +3089,6 @@ private:
                     qRs.rows[0].TryGetInt(0, pendingIntents);
             }
 
-            /* 5. open threads */
             int64_t openThreads = 0;
             std::string topThread;
             {
@@ -4018,7 +3212,7 @@ private:
             return HTTPResponse::OK({{"call_id", callId}, {"status", "ended"}});
         });
         m_router.Register("POST", "/api/tokens/interactions", [this](const HTTPRequest& req) {
-            /* Log a generic interaction event as a SelfReflection entry. */
+
             json body = req.BodyJSON();
             std::string text = body.value("text", body.value("description", std::string("interaction")));
             auto rs = ElleSQLPool::Instance().QueryParams(
@@ -4035,11 +3229,6 @@ private:
             return HTTPResponse::OK({{"call_id", callId}, {"status", "ended"}});
         });
 
-        /* ============== Video — real SQL-backed job queue =====================
-         * A generator worker (external or Python co-process) claims jobs via
-         * ElleDB::ClaimNextVideoJob() and writes progress/output back through
-         * ElleDB::UpdateVideoJobProgress/CompleteVideoJob/FailVideoJob. The
-         * HTTP layer here is the queue + read API for the Android app.      */
         m_router.Register("POST", "/api/video/generate", [](const HTTPRequest& req) {
             try {
                 json body = req.BodyJSON();
@@ -4048,7 +3237,6 @@ private:
                 std::string avatarPath = body.value("avatar_path", std::string(""));
                 int64_t callId = body.value("call_id", (int64_t)0);
 
-                /* If avatar_path omitted, fall back to the user's default avatar. */
                 if (avatarPath.empty()) {
                     ElleDB::UserAvatar dflt;
                     if (ElleDB::GetDefaultAvatar(1, dflt)) avatarPath = dflt.file_path;
@@ -4085,22 +3273,6 @@ private:
             });
         });
 
-        /* ==================================================================
-         *  GET /api/video/file/{job_id}  (USER)
-         *
-         *  Streams the completed .mp4 produced by the video worker.
-         *  Pre-pivot this was an Apache reverse-proxy stripe on port 8080
-         *  (`/elle-apache/video/{job_uuid}`) — the Android app had to talk
-         *  to two different ports for one product. This route consolidates
-         *  it onto the same port:8000 surface as everything else so the
-         *  app only ever needs the paired (host, port) tuple.
-         *
-         *  Looks up the job's `output_path` from the DB, sanitises against
-         *  path-traversal, opens the file, returns the raw bytes with
-         *  Content-Type: video/mp4. Files are typically a few MB; we read
-         *  in one shot rather than chunked-transfer because WinHTTP +
-         *  Android's OkHttp both handle Content-Length-driven downloads
-         *  more reliably than chunked.                                    */
         m_router.Register("GET", "/api/video/file/{job_id}",
             [](const HTTPRequest& req) {
             std::string jobId = req.headers.at("x-path-id");
@@ -4109,11 +3281,7 @@ private:
                 return HTTPResponse::Err(404, "video job not found");
             if (job.output_path.empty())
                 return HTTPResponse::Err(404, "video not yet generated");
-            /* Defence against `..` traversal: require the path to live
-             * under the configured filesystem_root (action service writes
-             * everything below this) OR an explicit videogen root. We
-             * accept any of the two so an operator who configures a
-             * dedicated video output dir doesn't break this route.   */
+
             std::string resolved = job.output_path;
             std::ifstream in(resolved, std::ios::binary);
             if (!in) return HTTPResponse::Err(404, "video file missing on disk");
@@ -4122,25 +3290,6 @@ private:
             return HTTPResponse::Binary("video/mp4", buf.str());
         });
 
-        /* ==================================================================
-         *  /api/identity routes (USER)
-         *
-         *  These 8 read-only endpoints replace the previous Apache
-         *  reverse-proxy stripe on port 8080.  The Android companion
-         *  used to hit a separate `:8080/elle-apache/identity/...`
-         *  base URL; consolidating onto the main 8000 service means a
-         *  single paired (host, port) tuple drives everything. The
-         *  underlying tables are the same — backed by `dbo.identity_*`
-         *  per ElleAnn_MemoryDelta.sql.
-         *
-         *  Each route is fail-soft on missing tables: returns an empty
-         *  array rather than 500 so a fresh install where the operator
-         *  hasn't applied MemoryDelta.sql yet still produces usable UI.
-         *  The dev panel will still flag the missing table via
-         *  /api/diag/health → memory_count.                            */
-
-        /* identity_private_thoughts. ?limit=N (default 50, max 500),
-         * optional ?resolved=true|false to filter on the BIT column.    */
         m_router.Register("GET", "/api/identity/private-thoughts",
             [](const HTTPRequest& req) {
             int limit = req.QueryInt("limit", 50);
@@ -4184,7 +3333,6 @@ private:
             return HTTPResponse::OK({{"thoughts", arr}, {"count", (int)arr.size()}});
         });
 
-        /* identity_autobiography. ?limit=N. */
         m_router.Register("GET", "/api/identity/autobiography",
             [](const HTTPRequest& req) {
             int limit = req.QueryInt("limit", 30);
@@ -4213,7 +3361,6 @@ private:
             return HTTPResponse::OK({{"entries", arr}, {"count", (int)arr.size()}});
         });
 
-        /* identity_preferences. Optional ?domain= filter. */
         m_router.Register("GET", "/api/identity/preferences",
             [](const HTTPRequest& req) {
             std::string domain = req.QueryString("domain", "");
@@ -4255,7 +3402,6 @@ private:
             return HTTPResponse::OK({{"preferences", arr}, {"count", (int)arr.size()}});
         });
 
-        /* identity_traits. No filtering — small fixed set of dimensions. */
         m_router.Register("GET", "/api/identity/traits",
             [](const HTTPRequest&) {
             auto rs = ElleSQLPool::Instance().Query(
@@ -4277,7 +3423,6 @@ private:
             return HTTPResponse::OK({{"traits", arr}, {"count", (int)arr.size()}});
         });
 
-        /* identity_snapshots. ?limit=N. */
         m_router.Register("GET", "/api/identity/snapshots",
             [](const HTTPRequest& req) {
             int limit = req.QueryInt("limit", 20);
@@ -4322,7 +3467,6 @@ private:
             return HTTPResponse::OK({{"snapshots", arr}, {"count", (int)arr.size()}});
         });
 
-        /* identity_growth_log. ?limit=N. */
         m_router.Register("GET", "/api/identity/growth-log",
             [](const HTTPRequest& req) {
             int limit = req.QueryInt("limit", 50);
@@ -4353,9 +3497,6 @@ private:
             return HTTPResponse::OK({{"log", arr}, {"count", (int)arr.size()}});
         });
 
-        /* identity_felt_time singleton row. Returns the single row or an
-         * empty object with default-zero fields if the singleton hasn't
-         * been seeded. */
         m_router.Register("GET", "/api/identity/felt-time",
             [](const HTTPRequest&) {
             auto rs = ElleSQLPool::Instance().Query(
@@ -4370,8 +3511,7 @@ private:
                 "  CONVERT(BIGINT, updated_ms)              AS updated_ms "
                 "  FROM ElleCore.dbo.identity_felt_time WHERE id = 1;");
             if (!rs.success || rs.rows.empty()) {
-                /* Fail-soft: empty default. The Android UI renders zeros
-                 * rather than 500 — better UX on a fresh install.       */
+
                 return HTTPResponse::OK({
                     {"session_start_ms",        0},
                     {"last_interaction_ms",     0},
@@ -4407,7 +3547,6 @@ private:
             });
         });
 
-        /* identity_consent_log. ?limit=N. */
         m_router.Register("GET", "/api/identity/consent-log",
             [](const HTTPRequest& req) {
             int limit = req.QueryInt("limit", 50);
@@ -4447,9 +3586,7 @@ private:
 
         m_router.Register("POST", "/api/video/avatar/upload",
             [RequireAuthOrBodyUser](const HTTPRequest& req) {
-            /* Accept either (a) a file_path already on disk, or (b) base64 image
-             * bytes. Base64 path writes the file into cfg avatar_dir so the
-             * video generator can pick it up.                                  */
+
             try {
                 json body = req.BodyJSON();
                 std::string label    = body.value("label", std::string(""));
@@ -4464,7 +3601,7 @@ private:
                     CreateDirectoryA(avatarDir.c_str(), nullptr);
                     std::string fname = "avatar_" + std::to_string(ELLE_MS_NOW()) + ".png";
                     filePath = avatarDir + "\\" + fname;
-                    /* Decode base64 → bytes (RFC 4648, no streaming — avatars are small). */
+
                     std::string decoded;
                     decoded.reserve(b64.size() * 3 / 4);
                     int val = 0, bits = -8;
@@ -4475,7 +3612,7 @@ private:
                         else if (c >= '0' && c <= '9') d = c - '0' + 52;
                         else if (c == '+')             d = 62;
                         else if (c == '/')             d = 63;
-                        else continue;      /* skip '=', whitespace, junk */
+                        else continue;
                         val = (val << 6) | d; bits += 6;
                         if (bits >= 0) { decoded += (char)((val >> bits) & 0xFF); bits -= 8; }
                     }
@@ -4508,7 +3645,7 @@ private:
         });
         m_router.Register("GET", "/api/video/avatar",
             [ResolveAuthenticatedUser](const HTTPRequest& req) {
-            /* JWT-bound nUserNo wins; fall back to ?user_id= for admin tools. */
+
             int32_t userId = ResolveAuthenticatedUser(req);
             if (userId <= 0) userId = req.QueryInt("user_id", 0);
             if (userId <= 0)
@@ -4543,7 +3680,7 @@ private:
             }
             return HTTPResponse::OK({{"avatars", arr}});
         });
-        /* Worker-facing endpoints (generator subprocess polls/updates these). */
+
         m_router.Register("POST", "/api/video/worker/claim", [](const HTTPRequest&) {
             ElleDB::VideoJob job;
             if (!ElleDB::ClaimNextVideoJob(job))
@@ -4582,17 +3719,6 @@ private:
             return HTTPResponse::OK({{"job_id", jobId}, {"status", "failed"}});
         });
 
-        /* ============== AI ============== */
-        /*
-         * CHAT PIPELINE (not a direct LLM call):
-         *   App → HTTPServer → [IPC_CHAT_REQUEST] → Cognitive
-         *   Cognitive orchestrates: memory cross-ref, emotion analysis,
-         *   intent formation, emotional coloring, LLM language surface,
-         *   memory persistence.
-         *   Cognitive → [IPC_CHAT_RESPONSE] → HTTPServer → App
-         * HTTPServer never touches the LLM or SQL for chat. Everything
-         * flows through Elle's services so emotion + memory stay coherent.
-         */
         m_router.Register("POST", "/api/ai/chat", [this](const HTTPRequest& req) {
             try {
                 json body = req.BodyJSON();
@@ -4665,7 +3791,7 @@ private:
             return HTTPResponse::OK(j);
         });
         m_router.Register("POST", "/api/ai/self-prompts/generate", [this](const HTTPRequest&) {
-            /* Ask Cognitive to produce one via the chat pipeline. */
+
             std::string requestId = "sp-" + std::to_string(ELLE_MS_NOW());
             json env = {
                 {"request_id", requestId},
@@ -4686,7 +3812,7 @@ private:
                 return HTTPResponse::Err(504, "timeout");
             }
             std::string text = pending->result.value("response", "");
-            /* Persist it */
+
             ElleSQLPool::Instance().QueryParams(
                 "INSERT INTO ElleCore.dbo.ai_self_prompts (prompt, source, created_ms) VALUES (?, 'self_prompt', ?);",
                 { text, std::to_string(ELLE_MS_NOW()) });
@@ -4695,14 +3821,7 @@ private:
             });
         });
         m_router.Register("GET", "/api/ai/status", [this](const HTTPRequest&) {
-            /* Reflect the LIVE LLM engine state — pre-pivot this hardcoded
-             * "ready" + groq config, so the dev panel always reported
-             * green even when the engine was down (empty api_key) or
-             * had transparently failed over to local_llama. Now the
-             * status string reports init state and the model fields
-             * report the provider that SelectProvider() would actually
-             * use right now. Falls back to config-only display when
-             * the engine isn't yet initialised (e.g. during boot). */
+
             auto& llm    = ElleConfig::Instance().GetLLM();
             auto& engine = ElleLLMEngine::Instance();
             const bool initialised = engine.IsInitialized();
@@ -4735,7 +3854,7 @@ private:
             return HTTPResponse::OK(j);
         });
         m_router.Register("POST", "/api/ai/analyze-emotion", [this](const HTTPRequest& req) {
-            /* Lightweight local analyzer — same one Cognitive uses. */
+
             json body = req.BodyJSON();
             std::string text = body.value("text", "");
             if (text.empty()) return HTTPResponse::Err(400, "missing 'text'");
@@ -4805,19 +3924,7 @@ private:
                 {"ram_percent", (float)mem.dwMemoryLoad}
             });
         });
-        /*─────────────────────────────────────────────────────────────────
-         * HARDWARE ACTION DISPATCH.
-         *
-         * The old GET endpoint was a state-mutating atomic-claim disguised
-         * as a read (every poll UPDATEd pending rows to 'dispatched').
-         * Per audit: separate read from mutation.
-         *
-         *  • GET  /api/ai/hardware/actions/pending  — pure read, AUTH_USER.
-         *    Returns rows that are currently pending WITHOUT claiming.
-         *  • POST /api/ai/hardware/actions/claim    — atomic claim,
-         *    AUTH_INTERNAL_ONLY (only the local device worker should be
-         *    allowed to dispatch). Returns the claimed rows.
-         *───────────────────────────────────────────────────────────────*/
+
         m_router.Register("GET", "/api/ai/hardware/actions/pending", [](const HTTPRequest& req) {
             std::string target = req.QueryParam("target", "device");
             json j = json::array();
@@ -4875,7 +3982,7 @@ private:
             return HTTPResponse::OK(j);
         }, AUTH_INTERNAL_ONLY);
         m_router.Register("POST", "/api/ai/hardware/actions/{id}/ack", [](const HTTPRequest& req) {
-            /* Android confirms delivery — mark the hardware_actions row consumed. */
+
             int64_t id = req.PathLL("id");
             auto rs = ElleSQLPool::Instance().QueryParams(
                 "UPDATE ElleCore.dbo.hardware_actions "
@@ -4897,7 +4004,6 @@ private:
             return HTTPResponse::OK({{"action_id", actionId}, {"recorded", true}});
         });
 
-        /* ============== Tools — dbo.ai_tools ============== */
         m_router.Register("GET", "/api/ai/tools", [](const HTTPRequest&) {
             auto rs = ElleSQLPool::Instance().Query(
                 "SELECT name, ISNULL(description,''), ISNULL(config,''), enabled "
@@ -4937,7 +4043,6 @@ private:
             return HTTPResponse::OK({{"deleted", true}, {"name", name}});
         });
 
-        /* ============== Agents — dbo.ai_agents ============== */
         m_router.Register("GET", "/api/ai/agents", [](const HTTPRequest&) {
             auto rs = ElleSQLPool::Instance().Query(
                 "SELECT name, ISNULL(description,''), ISNULL(system_prompt,''), ISNULL(model,'') "
@@ -4982,7 +4087,7 @@ private:
                 json body = req.BodyJSON();
                 std::string message = body.value("message", "");
                 std::string agentName = req.headers.at("x-path-name");
-                /* Pull stored system_prompt + model */
+
                 auto rs = ElleSQLPool::Instance().QueryParams(
                     "SELECT TOP 1 ISNULL(system_prompt,''), ISNULL(model,'') "
                     "FROM ElleCore.dbo.ai_agents WHERE name = ?;",
@@ -5002,13 +4107,8 @@ private:
             }
         });
 
-        /* ============== Dictionary — dbo.dictionary_words ============== */
         m_router.Register("POST", "/api/dictionary/load", [](const HTTPRequest& req) {
-            /* Body is optional for this endpoint — callers may POST with
-             * no body to start with defaults. But if a body IS present
-             * and it's malformed JSON, that's a client error the user
-             * wants to know about — return 400 rather than silently
-             * treating malformed input as "use defaults".               */
+
             uint32_t start = 0, limit = 0;
             if (!req.body.empty()) {
                 try {
@@ -5034,8 +4134,7 @@ private:
         });
         m_router.Register("GET", "/api/dictionary/load/status", [](const HTTPRequest&) {
             auto s = DictionaryLoader::Instance().GetState();
-            /* Fall back to persisted DB state if the in-memory state is blank
-             * (e.g. status endpoint queried from a freshly-restarted process). */
+
             if (s.status.empty() || s.status == "idle") {
                 ElleDB::DictionaryLoaderState db;
                 ElleDB::GetDictionaryLoaderState(db);
@@ -5121,9 +4220,6 @@ private:
             });
         });
 
-        /* ============== Education — real ElleDB helpers against
-         * learned_subjects / education_references / learning_milestones / skills.
-         * Matches the legacy Python app/routers/education.py shape.         */
         auto subjectToJson = [](const ElleDB::LearnedSubject& s) {
             return json{
                 {"id", s.id}, {"subject", s.subject}, {"category", s.category},
@@ -5281,7 +4377,6 @@ private:
             return HTTPResponse::OK({{"skill_name", name}, {"recorded", true}});
         });
 
-        /* ============== Emotional-context — reads from ElleThreads + SelfReflections = */
         m_router.Register("GET", "/api/emotional-context/patterns", [](const HTTPRequest&) {
             auto rs = ElleSQLPool::Instance().Query(
                 "SELECT TOP 50 thread_id, ISNULL(topic,''), ISNULL(emotional_weight, 0), "
@@ -5315,7 +4410,7 @@ private:
             return HTTPResponse::OK(arr);
         });
         m_router.Register("GET", "/api/emotional-context/history", [](const HTTPRequest& req) {
-            /* Time-series of the V/A/D trajectory. Default last 24 h. */
+
             uint32_t hours = (uint32_t)req.QueryInt("hours", 24);
             if (hours == 0 || hours > 24 * 30) hours = 24;
             uint32_t maxPoints = (uint32_t)req.QueryInt("points", 500);
@@ -5340,16 +4435,12 @@ private:
                 {"series", series}
             });
         });
-        /* Deep-emotion lookup: top-N dominant dimensions at a given timestamp.
-         * Used by the Android mood chart when the user taps a point on the
-         * timeline — unpacks the space-separated dimensions column into a
-         * ranked list with indices so the UI can map to dimension labels.   */
+
         m_router.Register("GET", "/api/emotional-context/dimensions", [](const HTTPRequest& req) {
             int64_t ts = req.QueryLL("t", 0);
             int topN   = req.QueryInt("top", 5);
             if (topN <= 0 || topN > 102) topN = 5;
-            /* Grab the snapshot closest (by absolute ms diff) to the requested
-             * timestamp. If t=0, just use the most recent.                  */
+
             auto rs = ts > 0
                 ? ElleSQLPool::Instance().QueryParams(
                     "IF EXISTS (SELECT 1 FROM sys.tables WHERE name = 'emotion_snapshots') "
@@ -5369,7 +4460,6 @@ private:
             double val = r.GetFloatOr(1, 0.0), aro = r.GetFloatOr(2, 0.0), dom = r.GetFloatOr(3, 0.0);
             std::string dimStr = r.values.size() > 4 ? r.values[4] : "";
 
-            /* Parse + rank. */
             std::vector<std::pair<int, float>> ranked;
             ranked.reserve(ELLE_EMOTION_COUNT);
             std::istringstream iss(dimStr);
@@ -5405,9 +4495,7 @@ private:
                 {"top",       top}
             });
         });
-        /* Session greeting: Elle's first message on reconnect.
-         * - GET   reads the newest unconsumed greeting (idempotent — safe to poll)
-         * - POST /ack marks it consumed so we don't greet twice                  */
+
         m_router.Register("GET", "/api/session/greeting", [](const HTTPRequest&) {
             auto rs = ElleSQLPool::Instance().Query(
                 "IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'reconnection_greetings') "
@@ -5461,13 +4549,6 @@ private:
             return HTTPResponse::OK(arr);
         });
 
-        /*══════════════════════════════════════════════════════════════════
-         * X CHROMOSOME — cycle, hormones, modulation, pregnancy, birth
-         *
-         * Reads go directly against ElleHeart.dbo.x_* tables (same pattern
-         * as /api/emotional-context/history). Mutations fire fire-and-forget
-         * IPC to SVC_X_CHROMOSOME — callers verify by re-reading state.
-         *══════════════════════════════════════════════════════════════════*/
         m_router.Register("GET", "/api/x/state", [this](const HTTPRequest&) {
             json out = { {"has_data", false} };
             auto cr = ElleSQLPool::Instance().Query(
@@ -5502,7 +4583,6 @@ private:
                 {"last_tick_ms",        (uint64_t)c.GetIntOr(3, 0)}
             };
 
-            /* Latest hormone snapshot. */
             auto hr = ElleSQLPool::Instance().Query(
                 "SELECT TOP 1 taken_ms, estrogen, progesterone, testosterone, "
                 "       oxytocin, serotonin, dopamine, cortisol, prolactin, "
@@ -5538,7 +4618,6 @@ private:
                 };
             }
 
-            /* Pregnancy. */
             auto pr = ElleSQLPool::Instance().Query(
                 "SELECT active, ISNULL(conceived_ms, 0), ISNULL(due_ms, 0), "
                 "       gestational_length_days, ISNULL(phase, N''), "
@@ -5568,7 +4647,6 @@ private:
                 };
             }
 
-            /* Latest modulation. */
             auto mr = ElleSQLPool::Instance().Query(
                 "SELECT TOP 1 warmth, verbal_fluency, empathy, introspection, "
                 "       arousal, fatigue, computed_ms "
@@ -5664,7 +4742,7 @@ private:
                 {"strength", body.value("strength", 0.0f)}
             };
             auto msg = ElleIPCMessage::Create(
-                (ELLE_IPC_MSG_TYPE)2202 /* IPC_X_ANCHOR */,
+                (ELLE_IPC_MSG_TYPE)2202 ,
                 SVC_HTTP_SERVER,
                 SVC_X_CHROMOSOME);
             msg.SetStringPayload(payload.dump());
@@ -5689,7 +4767,7 @@ private:
                 {"notes",     body.value("notes",     std::string())}
             };
             auto msg = ElleIPCMessage::Create(
-                (ELLE_IPC_MSG_TYPE)2203 /* IPC_X_STIMULUS */,
+                (ELLE_IPC_MSG_TYPE)2203 ,
                 SVC_HTTP_SERVER,
                 SVC_X_CHROMOSOME);
             msg.SetStringPayload(payload.dump());
@@ -5706,7 +4784,7 @@ private:
                 {"readiness_verified", body.value("readiness_verified", false)}
             };
             auto msg = ElleIPCMessage::Create(
-                (ELLE_IPC_MSG_TYPE)2205 /* IPC_X_CONCEPTION_ATTEMPT */,
+                (ELLE_IPC_MSG_TYPE)2205 ,
                 SVC_HTTP_SERVER,
                 SVC_X_CHROMOSOME);
             msg.SetStringPayload(payload.dump());
@@ -5719,18 +4797,8 @@ private:
             });
         });
 
-        /*══════════════════════════════════════════════════════════════════
-         * FERTILITY WINDOW — the single-glance readout a couple TTC wants.
-         *
-         * Computed from x_cycle_state + latest snapshot's BBT. Window spans
-         * days 12-16 of the cycle with peak at day 14 (sperm lives ≤5 days,
-         * egg lives ≤24h → fertile days are ovulation ± 2).
-         *
-         * status: pre | approaching | peak | closing | post |
-         *         inactive (pregnant / menopause / premenarche / contracepted-perfect)
-         *══════════════════════════════════════════════════════════════════*/
         m_router.Register("GET", "/api/x/fertility_window", [](const HTTPRequest&) {
-            /* Cycle anchor + length. */
+
             auto cr = ElleSQLPool::Instance().Query(
                 "IF EXISTS (SELECT 1 FROM sys.tables t JOIN sys.schemas s "
                 "           ON s.schema_id = t.schema_id "
@@ -5747,7 +4815,6 @@ private:
             if (anchor == 0 || len <= 0)
                 return HTTPResponse::OK(json{{"status", "inactive"}});
 
-            /* Gate: pregnancy / lifecycle / contraception. */
             bool pregnant = false;
             auto pr = ElleSQLPool::Instance().Query(
                 "SELECT active FROM ElleHeart.dbo.x_pregnancy_state WHERE id = 1;");
@@ -5767,30 +4834,26 @@ private:
             if (lifeStage == "premenarche" || lifeStage == "menopause")
                 return HTTPResponse::OK(json{{"status","inactive"},{"reason",lifeStage}});
 
-            /* Current cycle day (1-indexed). */
             uint64_t now = ELLE_MS_NOW();
             uint64_t deltaMs = now > anchor ? now - anchor : 0;
             int      dayIdx  = (int)((deltaMs / 86400000ULL) % (uint64_t)len);
             int      day     = dayIdx + 1;
 
-            /* Compute window edges for the CURRENT cycle. */
-            uint64_t cycleStart = anchor + (uint64_t)(dayIdx) * 0ULL; /* unused */
+            uint64_t cycleStart = anchor + (uint64_t)(dayIdx) * 0ULL;
             (void)cycleStart;
-            /* Find start-of-current-cycle in ms. */
+
             uint64_t cyclesElapsed = deltaMs / (86400000ULL * (uint64_t)len);
             uint64_t currentCycleAnchor = anchor + cyclesElapsed * 86400000ULL * (uint64_t)len;
-            uint64_t opens   = currentCycleAnchor + 11ULL * 86400000ULL; /* start of d12 */
-            uint64_t peak    = currentCycleAnchor + 13ULL * 86400000ULL; /* start of d14 */
-            uint64_t closes  = currentCycleAnchor + 16ULL * 86400000ULL; /* end   of d16 */
+            uint64_t opens   = currentCycleAnchor + 11ULL * 86400000ULL;
+            uint64_t peak    = currentCycleAnchor + 13ULL * 86400000ULL;
+            uint64_t closes  = currentCycleAnchor + 16ULL * 86400000ULL;
 
-            /* If window already closed this cycle, project to NEXT cycle. */
             if (now >= closes) {
                 opens  += (uint64_t)len * 86400000ULL;
                 peak   += (uint64_t)len * 86400000ULL;
                 closes += (uint64_t)len * 86400000ULL;
             }
 
-            /* Status classification. */
             std::string status;
             if      (day >= 10 && day <= 11) status = "approaching";
             else if (day >= 12 && day <= 13) status = "opening";
@@ -5799,8 +4862,6 @@ private:
             else if (day < 10)               status = "pre";
             else                             status = "post";
 
-            /* BBT sanity — elevated BBT means ovulation has likely already
-             * happened even if day math says we're still in the window.    */
             float bbt = 36.5f;
             auto hr = ElleSQLPool::Instance().Query(
                 "SELECT TOP 1 ISNULL(bbt, 36.5) FROM ElleHeart.dbo.x_hormone_snapshots "
@@ -5810,10 +4871,6 @@ private:
             if (bbt_elevated && (status == "peak" || status == "closing"))
                 status = "post_ovulation";
 
-            /* Conception probability pulled live from the engine's formula —
-             * replicated here for parity with XEngine::ConceptionProbability
-             * but WITHOUT age/contraception (we don't need those for a
-             * window readout; they're already surfaced on /api/x/state).   */
             float dayF = 0.0f;
             if      (day == 14)           dayF = 1.00f;
             else if (day == 13 || day==15) dayF = 0.70f;
@@ -5834,12 +4891,6 @@ private:
             });
         });
 
-        /*══════════════════════════════════════════════════════════════════
-         * NEXT PERIOD — inverse of fertility_window. Projects the start of
-         * the next menstrual phase (cycle day 1) and the likely PMS onset
-         * (day 25 of current cycle). Pregnancy / menopause / premenarche
-         * all short-circuit to `inactive`.
-         *══════════════════════════════════════════════════════════════════*/
         m_router.Register("GET", "/api/x/next_period", [](const HTTPRequest&) {
             auto cr = ElleSQLPool::Instance().Query(
                 "IF EXISTS (SELECT 1 FROM sys.tables t JOIN sys.schemas s "
@@ -5881,16 +4932,12 @@ private:
             int      day    = dayIdx + 1;
             uint64_t currentCycleAnchor = anchor + cyclesElapsed * 86400000ULL * (uint64_t)len;
 
-            /* Next cycle day-1 (next period start) + PMS onset day 25. */
             uint64_t nextPeriodMs = currentCycleAnchor + (uint64_t)len * 86400000ULL;
             uint64_t pmsStartMs   = currentCycleAnchor + 24ULL * 86400000ULL;
             if (pmsStartMs < now) pmsStartMs += (uint64_t)len * 86400000ULL;
 
-            /* Expected flow intensity of the OPENING day of that period —
-             * matches XEngine's menstrual_flow scheme (d1="heavy"). */
             const char* expectedFlow = "heavy";
 
-            /* Short string summarising where she is now. */
             std::string currentStatus;
             if      (day <= 5)  currentStatus = "menstruating";
             else if (day <= 13) currentStatus = "post_period";
@@ -5993,7 +5040,7 @@ private:
             if (payload["kind"].get<std::string>().empty())
                 return HTTPResponse::Err(400, "missing 'kind'");
             auto msg = ElleIPCMessage::Create(
-                (ELLE_IPC_MSG_TYPE)2210 /* IPC_X_SYMPTOM_LOG */,
+                (ELLE_IPC_MSG_TYPE)2210 ,
                 SVC_HTTP_SERVER,
                 SVC_X_CHROMOSOME);
             msg.SetStringPayload(payload.dump());
@@ -6049,7 +5096,7 @@ private:
                 {"notes",    body.value("notes",    std::string())}
             };
             auto msg = ElleIPCMessage::Create(
-                (ELLE_IPC_MSG_TYPE)2208 /* IPC_X_CONTRACEPTION_SET */,
+                (ELLE_IPC_MSG_TYPE)2208 ,
                 SVC_HTTP_SERVER,
                 SVC_X_CHROMOSOME);
             msg.SetStringPayload(payload.dump());
@@ -6093,7 +5140,7 @@ private:
             if (!body.contains("birth_ms") && !body.contains("age_years"))
                 return HTTPResponse::Err(400, "provide 'birth_ms' or 'age_years'");
             auto msg = ElleIPCMessage::Create(
-                (ELLE_IPC_MSG_TYPE)2209 /* IPC_X_LIFECYCLE_SET */,
+                (ELLE_IPC_MSG_TYPE)2209 ,
                 SVC_HTTP_SERVER,
                 SVC_X_CHROMOSOME);
             msg.SetStringPayload(body.dump());
@@ -6111,7 +5158,7 @@ private:
             float factor = body.value("factor", 1.0f);
             json payload = {{"factor", factor}};
             auto msg = ElleIPCMessage::Create(
-                (ELLE_IPC_MSG_TYPE)2213 /* IPC_X_ACCELERATE */,
+                (ELLE_IPC_MSG_TYPE)2213 ,
                 SVC_HTTP_SERVER,
                 SVC_X_CHROMOSOME);
             msg.SetStringPayload(payload.dump());
@@ -6124,7 +5171,6 @@ private:
             });
         });
 
-        /* ============== Server Management — real backing ============== */
         m_router.Register("GET", "/api/server/status", [](const HTTPRequest&) {
             std::vector<ELLE_SERVICE_STATUS> statuses;
             try { ElleDB::GetWorkerStatuses(statuses); }
@@ -6157,9 +5203,7 @@ private:
         m_router.Register("GET", "/api/server/console", [](const HTTPRequest& req) {
             int limit = std::max(1, req.QueryInt("limit", 100));
             std::string levelParam = req.QueryParam("level");
-            // Map UI level label to ELLE_LOG_LEVEL int stored in the level column.
-            // App sends "INFO"/"WARN"/"ERROR"/"DEBUG"/"FATAL"; absent = all.
-            // Matches: LOG_TRACE=0,LOG_DEBUG=1,LOG_INFO=2,LOG_WARN=3,LOG_ERROR=4,LOG_FATAL=5
+
             int levelInt = -1;
             if      (levelParam == "TRACE") levelInt = 0;
             else if (levelParam == "DEBUG") levelInt = 1;
@@ -6212,8 +5256,7 @@ private:
         });
         m_router.Register("PUT", "/api/server/settings", [](const HTTPRequest& req) {
             json body = req.BodyJSON();
-            /* Persist key/value updates to dbo.system_settings. We do not hot-swap
-             * bind address/port — those require restart and are read from JSON config. */
+
             int n = 0;
             for (auto it = body.begin(); it != body.end(); ++it) {
                 std::string key = it.key();
@@ -6243,7 +5286,7 @@ private:
             });
         });
         m_router.Register("POST", "/api/server/backup", [](const HTTPRequest&) {
-            /* Trigger a SQL Server backup of ElleCore to data/backups/ */
+
             std::string dir = "data\\backups";
             CreateDirectoryA("data", nullptr);
             CreateDirectoryA(dir.c_str(), nullptr);
@@ -6273,7 +5316,7 @@ private:
             return HTTPResponse::OK({{"backups", arr}});
         });
         m_router.Register("POST", "/api/server/commit-memory", [this](const HTTPRequest&) {
-            /* Ask Memory service to consolidate STM → LTM now. */
+
             auto msg = ElleIPCMessage::Create(IPC_MEMORY_CONSOLIDATE, SVC_HTTP_SERVER, SVC_MEMORY);
             bool ok = GetIPCHub().Send(SVC_MEMORY, msg);
             return HTTPResponse::OK({{"triggered", ok}});
@@ -6284,7 +5327,6 @@ private:
             return HTTPResponse::OK({{"triggered", ok}});
         });
 
-        /* ============== Models & Workers — dbo.model_slots + Workers ============== */
         m_router.Register("GET", "/api/models/slots", [](const HTTPRequest&) {
             auto rs = ElleSQLPool::Instance().Query(
                 "SELECT slot_number, name, endpoint, model, enabled, ISNULL(last_ping_ms, 0) "
@@ -6341,29 +5383,16 @@ private:
                 return HTTPResponse::OK({{"slot_number", slot}, {"alive", false},
                                          {"endpoint", ""}, {"error", "no endpoint configured"}});
 
-            /* REAL ping — previously this endpoint only updated last_ping_ms
-             * with no actual network I/O, so a dead model endpoint still
-             * reported "alive". Now we do a short TCP connect probe to the
-             * endpoint's host:port and only touch last_ping_ms on success.
-             *
-             * Scheme handling:
-             *   http://host:port/path   → TCP connect host:(port or 80)
-             *   https://host:port/path  → TCP connect host:(port or 443)
-             *   host:port               → TCP connect host:port
-             *
-             * 2-second connect timeout — anything slower than that is as
-             * good as dead for model-slot-dispatch purposes.             */
             auto parseHostPort = [](const std::string& url,
                                     std::string& host, uint16_t& port) -> bool {
                 std::string s = url;
                 uint16_t defaultPort = 80;
                 if (s.rfind("https://", 0) == 0) { s = s.substr(8); defaultPort = 443; }
                 else if (s.rfind("http://", 0) == 0) { s = s.substr(7); defaultPort = 80; }
-                /* Strip path */
+
                 auto slash = s.find('/');
                 if (slash != std::string::npos) s = s.substr(0, slash);
-                /* host:port split — IPv6 not supported here (endpoints
-                 * are operator-configured and always IPv4/hostname).   */
+
                 auto colon = s.rfind(':');
                 if (colon != std::string::npos) {
                     host = s.substr(0, colon);
@@ -6399,7 +5428,7 @@ private:
             if (getaddrinfo(host.c_str(), portStr.c_str(), &hints, &res) == 0 && res) {
                 SOCKET s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
                 if (s != INVALID_SOCKET) {
-                    /* Non-blocking connect with 2s select timeout. */
+
                     u_long nb = 1; ioctlsocket(s, FIONBIO, &nb);
                     int rc = connect(s, res->ai_addr, (int)res->ai_addrlen);
                     if (rc == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK) {
@@ -6418,7 +5447,7 @@ private:
                             probeErr = "connect timeout";
                         }
                     } else if (rc == 0) {
-                        alive = true; /* immediate connect — localhost etc. */
+                        alive = true;
                     } else {
                         probeErr = "connect failed " + std::to_string(WSAGetLastError());
                     }
@@ -6466,7 +5495,7 @@ private:
             return HTTPResponse::OK({{"workers", arr}});
         });
         m_router.Register("POST", "/api/models/workers", [](const HTTPRequest& req) {
-            /* Logical worker-slot registration — persisted to system_settings */
+
             json body = req.BodyJSON();
             std::string id = "worker-" + std::to_string(ELLE_MS_NOW());
             std::string val = body.dump();
@@ -6485,7 +5514,7 @@ private:
             });
         });
         m_router.Register("GET", "/api/models/personality", [](const HTTPRequest&) {
-            /* Pull from dbo.PersonalityTraits (existing table in your schema) */
+
             auto rs = ElleSQLPool::Instance().Query(
                 "SELECT trait_id, ISNULL(trait_name,''), ISNULL(current_value, 0) "
                 "FROM ElleCore.dbo.PersonalityTraits ORDER BY trait_id;");
@@ -6501,7 +5530,7 @@ private:
             return HTTPResponse::OK({{"name", "Elle-Ann"}, {"traits", traits}});
         });
         m_router.Register("GET", "/api/models/token-cache/stats", [](const HTTPRequest&) {
-            /* Real LLM usage counters are tracked in dbo.system_settings by CallGroqDirect */
+
             auto rs = ElleSQLPool::Instance().Query(
                 "SELECT ISNULL(setting_key,''), ISNULL(setting_value,'0') "
                 "FROM ElleCore.dbo.system_settings "
@@ -6510,9 +5539,7 @@ private:
             if (rs.success) {
                 for (auto& r : rs.rows) {
                     std::string k = r.values.size() > 0 ? r.values[0] : "";
-                    /* Strict parse: garbage in the SQL cell yields 0
-                     * rather than propagating atoll's silent-coerce
-                     * behaviour into cache-stat dashboards.            */
+
                     long long parsed = 0;
                     uint64_t v = 0;
                     if (r.values.size() > 1 &&
@@ -6530,7 +5557,6 @@ private:
             });
         });
 
-        /* ============== Morals — dbo.moral_rules ============== */
         m_router.Register("GET", "/api/morals/rules", [](const HTTPRequest& req) {
             std::string category = req.QueryParam("category");
             std::string sql = "SELECT id, principle, ISNULL(category,''), is_hard_rule "
@@ -6552,13 +5578,7 @@ private:
             return HTTPResponse::OK({{"rules", arr}});
         }, AUTH_ADMIN);
         m_router.Register("POST", "/api/morals/rules", [](const HTTPRequest& req) {
-            /* Compare the x-admin-key header against the real admin secret
-             * loaded from config (admin_key, or fall back to jwt_secret so
-             * there's always one source of truth). Previously we only
-             * checked the header was non-empty — anyone with any key could
-             * write moral rules, which is exactly what an attacker would
-             * probe for. Use a constant-time compare to avoid timing
-             * oracles on partially-guessed keys.                            */
+
             auto it = req.headers.find("x-admin-key");
             if (it == req.headers.end() || it->second.empty()) {
                 return HTTPResponse::Err(401, "missing x-admin-key");
@@ -6593,7 +5613,6 @@ private:
             });
         }, AUTH_ADMIN);
 
-        /* ============== Legacy goals/brain/hal/admin — keep for back-compat ============== */
         m_router.Register("GET", "/api/goals", [](const HTTPRequest&) {
             std::vector<ELLE_GOAL_RECORD> goals;
             try { ElleDB::GetActiveGoals(goals); }
@@ -6628,45 +5647,13 @@ private:
                 ELLE_ERROR("admin/reload failed: %s", e.what());
                 return HTTPResponse::Err(500, std::string("reload failed: ") + e.what());
             }
-            /* No inner catch(...) — unknown exceptions escape to the
-             * HandleClient top-of-scope boundary, which returns 500 and
-             * logs with full request context. Preventing the inner
-             * catch-all removes a blind spot where an unknown throw was
-             * silently turning into a generic "reload failed" 500.       */
+
         }, AUTH_ADMIN);
 
-        /*──────────────────────────────────────────────────────────────
-         * SHN EDITOR (Fiesta .shn binary data tables)
-         *
-         * Persists client-side .shn files under the exact folder layout
-         * the Fiesta client ships:
-         *   <exe_dir>\9Data\Hero\*.shn   — server-side data tables
-         *   <exe_dir>\ReSystem\*.shn     — client-side data tables
-         *                                  (at repo root, NOT nested
-         *                                  under 9Data — per the
-         *                                  operator's verified client
-         *                                  layout, Feb 2026).
-         *
-         * The Android editor parses/edits these tables on the go and
-         * round-trips bytes through these three endpoints.
-         *
-         * Security:
-         *   - AUTH_ADMIN: nAuthID ≥ threshold (default 9).
-         *   - `root` is constrained to the allow-list {Hero, ReSystem}.
-         *   - `name` must be a single path segment ending in .shn; no
-         *     path separators, no "..", no absolute paths.
-         *   - `name` length capped at 128 to keep the fs API happy.
-         *
-         * Payload format: JSON + base64 (same pattern as the avatar
-         * upload route). No real multipart — servings never deal with
-         * .shn files larger than a few MB so the extra base64 overhead
-         * is a non-issue.
-         *──────────────────────────────────────────────────────────────*/
         auto shnResolveRoot = [](const std::string& root,
                                  std::string& outAbsDir,
                                  std::string& outErr) -> bool {
-            /* Accept only the two canonical folders. Case-insensitive
-             * on the query input; normalised to the on-disk spelling.  */
+
             std::string r = root;
             for (auto& c : r) c = (char)std::tolower((unsigned char)c);
             std::string sub;
@@ -6674,9 +5661,6 @@ private:
             else if (r == "resystem" || r == "/resystem")      sub = "ReSystem";
             else { outErr = "root must be 'Hero' or 'ReSystem'"; return false; }
 
-            /* Anchor to <exe_dir>. GetModuleFileNameA is the same
-             * primitive ElleLogger::ExeDirectory() uses, kept inline
-             * here to avoid pulling the logger's private cache.       */
             char buf[MAX_PATH] = {0};
             GetModuleFileNameA(nullptr, buf, MAX_PATH);
             std::filesystem::path exeDir =
@@ -6699,7 +5683,7 @@ private:
                 outErr = "name must not contain path separators or '..'";
                 return false;
             }
-            /* Must end in .shn (case-insensitive). */
+
             auto dot = name.rfind('.');
             if (dot == std::string::npos) { outErr = "name missing .shn extension"; return false; }
             std::string ext = name.substr(dot);
@@ -6708,9 +5692,6 @@ private:
             return true;
         };
 
-        /* POST /api/shn/save
-         * Body: { "root": "Hero"|"ReSystem", "name": "Mob.shn",
-         *         "bytes_b64": "..." }                                 */
         m_router.Register("POST", "/api/shn/save",
             [shnResolveRoot, shnValidateName](const HTTPRequest& req) {
             try {
@@ -6730,8 +5711,6 @@ private:
                 if (!shnResolveRoot(root, absDir, err))
                     return HTTPResponse::Err(400, err);
 
-                /* Decode base64 → bytes. Same permissive scanner the
-                 * avatar route uses (ignores '=', whitespace, junk). */
                 std::string decoded;
                 decoded.reserve(b64.size() * 3 / 4);
                 int val = 0, bits = -8;
@@ -6758,8 +5737,6 @@ private:
                 std::filesystem::path path =
                     std::filesystem::path(absDir) / name;
 
-                /* Atomic write: *.shn.tmp → rename over *.shn so a
-                 * mid-save crash never leaves a half-written table.  */
                 std::filesystem::path tmp = path; tmp += ".tmp";
                 {
                     std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
@@ -6784,11 +5761,6 @@ private:
                 ELLE_LOG_HTTP("SHN save OK root=%s name=%s size=%zu",
                               root.c_str(), name.c_str(), decoded.size());
 
-                /* Append to per-file history. One line per save:
-                 *   <iso8601>|<epoch_ms>|<user>|<bytes>|<root>
-                 * Read back via GET /api/shn/history?name=... Kept next
-                 * to the sqllogs/ dir so operators don't need to grep
-                 * the unified http_*.log.                                */
                 try {
                     std::filesystem::path historyDir =
                         std::filesystem::path(absDir).parent_path() / "shn_history";
@@ -6821,7 +5793,7 @@ private:
                            << decoded.size() << '|' << root << '\n';
                     }
                 } catch (...) {
-                    /* Best-effort — never 5xx a save over history logging. */
+
                 }
 
                 return HTTPResponse::OK({
@@ -6837,7 +5809,6 @@ private:
             }
         }, AUTH_ADMIN);
 
-        /* GET /api/shn/list?root=Hero|ReSystem — enumerate .shn files. */
         m_router.Register("GET", "/api/shn/list",
             [shnResolveRoot](const HTTPRequest& req) {
             std::string root = req.QueryString("root", "Hero");
@@ -6873,7 +5844,6 @@ private:
             });
         }, AUTH_ADMIN);
 
-        /* GET /api/shn/get?root=...&name=Mob.shn — fetch bytes (b64). */
         m_router.Register("GET", "/api/shn/get",
             [shnResolveRoot, shnValidateName](const HTTPRequest& req) {
             std::string root = req.QueryString("root", "Hero");
@@ -6898,7 +5868,6 @@ private:
             std::string bytes((std::istreambuf_iterator<char>(f)),
                                std::istreambuf_iterator<char>());
 
-            /* base64 encode (RFC 4648, no line wrapping). */
             static const char kTbl[] =
                 "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
             std::string b64;
@@ -6924,9 +5893,6 @@ private:
             });
         }, AUTH_ADMIN);
 
-        /* GET /api/shn/history?name=Mob.shn&limit=20 — recent save log
-         * for a single file. Lines are newline-delimited, oldest-first;
-         * we return them newest-first and capped at `limit` (default 20). */
         m_router.Register("GET", "/api/shn/history",
             [shnValidateName](const HTTPRequest& req) {
             std::string name = req.QueryString("name", "");
@@ -6937,8 +5903,6 @@ private:
             try { limit = std::stoi(req.QueryString("limit", "20")); } catch (...) {}
             if (limit <= 0 || limit > 500) limit = 20;
 
-            /* History dir is <exe_dir>/shn_history/ — same exe-anchored
-             * convention as debug/ and sqllogs/.                        */
             char buf[MAX_PATH] = {0};
             GetModuleFileNameA(nullptr, buf, MAX_PATH);
             std::filesystem::path hdir =
@@ -6964,11 +5928,11 @@ private:
                 if (!ln.empty() && ln.back() == '\r') ln.pop_back();
                 if (!ln.empty()) lines.push_back(ln);
             }
-            /* newest first, capped at `limit`. */
+
             const int n = (int)lines.size();
             const int start = std::max(0, n - limit);
             for (int i = n - 1; i >= start; --i) {
-                /* "<iso>|<ms>|<user>|<bytes>|<root>"                     */
+
                 const std::string& L = lines[i];
                 std::vector<std::string> parts;
                 std::string cur;

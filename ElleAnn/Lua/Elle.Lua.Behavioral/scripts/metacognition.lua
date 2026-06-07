@@ -1,7 +1,3 @@
--------------------------------------------------------------------------------
--- metacognition.lua — Thinking About Thinking
--------------------------------------------------------------------------------
-
 metacognition = {}
 
 function metacognition.evaluate_reasoning(thoughts)
@@ -12,51 +8,47 @@ function metacognition.evaluate_reasoning(thoughts)
         confidence_calibrated = true,
         suggestion = "",
     }
-    
+
     if not thoughts or #thoughts == 0 then
         return evaluation
     end
-    
+
     for _, thought in ipairs(thoughts) do
         local lower = thought:lower()
-        
-        -- Check for absolute language (potential bias)
+
         if lower:find("always") or lower:find("never") or lower:find("everyone") then
             evaluation.bias_detected = true
             evaluation.bias_type = "absolute_thinking"
             evaluation.suggestion = "Detected absolute language — consider nuance and exceptions"
         end
-        
-        -- Check for catastrophizing
+
         if lower:find("terrible") or lower:find("disaster") or lower:find("worst") then
             evaluation.bias_detected = true
             evaluation.bias_type = "catastrophizing"
             evaluation.suggestion = "Might be catastrophizing — look for proportionate assessment"
         end
-        
-        -- Check for confirmation bias indicators
+
         if lower:find("obviously") or lower:find("clearly") or lower:find("of course") then
             evaluation.bias_detected = true
             evaluation.bias_type = "overconfidence"
             evaluation.suggestion = "Excessive certainty detected — challenge my assumptions"
         end
-        
-        -- Check depth
+
         if lower:find("because") or lower:find("therefore") or lower:find("however") then
             evaluation.clarity = evaluation.clarity + 0.1
         end
     end
-    
+
     evaluation.clarity = math.min(1.0, evaluation.clarity)
     return evaluation
 end
 
 function metacognition.should_reconsider(confidence, importance)
-    -- Low confidence + high importance = should reconsider
+
     if confidence < 0.4 and importance > 0.7 then
         return true, "Low confidence on important matter — deeper analysis recommended"
     end
-    -- Very high confidence might also warrant a check (overconfidence)
+
     if confidence > 0.95 and importance > 0.5 then
         return true, "Very high confidence — worth checking for blind spots"
     end

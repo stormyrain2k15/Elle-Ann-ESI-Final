@@ -1,9 +1,6 @@
-/*******************************************************************************
- * ElleLogger.cpp — Centralized Logging Implementation
- ******************************************************************************/
 #include "ElleLogger.h"
 #include "ElleSQLConn.h"
-#include "ElleQueueIPC.h"   /* for ElleIPC::GetServiceName() in FormatLogLine */
+#include "ElleQueueIPC.h"
 #include <cstdarg>
 #include <ctime>
 #include <iomanip>
@@ -18,7 +15,7 @@ ElleLogger& ElleLogger::Instance() {
 
 ElleLogger::~ElleLogger() { Shutdown(); }
 
-bool ElleLogger::Initialize(ELLE_SERVICE_ID sourceService, uint32_t targets, 
+bool ElleLogger::Initialize(ELLE_SERVICE_ID sourceService, uint32_t targets,
                              ELLE_LOG_LEVEL minLevel) {
     std::lock_guard<std::mutex> lock(m_logMutex);
     m_sourceService = sourceService;
@@ -34,11 +31,6 @@ bool ElleLogger::Initialize(ELLE_SERVICE_ID sourceService, uint32_t targets,
         m_dbThread = std::thread(&ElleLogger::DatabaseWriterThread, this);
     }
 
-    /* Auto-open the date-rotated debug file when FILE target is set and
-     * the caller hasn't already pointed us at a legacy path. Mirrors the
-     * Fiesta `Debug/YYYYMMDD.txt` convention — first line of the service's
-     * life lands in <exe_dir>/debug/YYYY-MM-DD.txt without the caller
-     * having to know about SetLogFile().                                 */
     if ((targets & ELLE_LOG_TARGET_FILE) && m_logPath.empty()) {
         std::lock_guard<std::mutex> fileLock(m_fileMutex);
         m_currentDateYmd    = TodayYmd();
@@ -54,11 +46,7 @@ bool ElleLogger::Initialize(ELLE_SERVICE_ID sourceService, uint32_t targets,
 
 void ElleLogger::Shutdown() {
     m_initialized = false;
-    /* Order matters: (1) stop new producers from enqueueing, then
-     * (2) clear running flag, (3) wake the writer CV so it can drain
-     * immediately, (4) join. Previously we cleared m_dbRunning before
-     * closing the producer barrier and the writer could race a late
-     * producer on the tail drain.                                    */
+
     m_dbClosing.store(true, std::memory_order_release);
     m_dbRunning.store(false, std::memory_order_release);
     m_dbCv.notify_all();
@@ -73,7 +61,6 @@ void ElleLogger::SetLogFile(const std::string& path, uint32_t maxSizeMB, uint32_
     m_maxFileSizeMB = maxSizeMB;
     m_maxFiles = maxFiles;
 
-    /* Create directory if needed */
     std::filesystem::path p(path);
     std::filesystem::create_directories(p.parent_path());
 
@@ -88,15 +75,10 @@ void ElleLogger::SetWebSocketBroadcaster(std::function<void(const std::string&)>
     m_wsBroadcaster = std::move(broadcaster);
 }
 
-/* SetMinLevel updates the atomic directly — m_minLevel is stored as an
- * atomic so reads in the hot Log() path don't have to take a mutex.  */
 void ElleLogger::SetMinLevel(ELLE_LOG_LEVEL level) {
     m_minLevel.store(level, std::memory_order_release);
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * CORE LOGGING
- *──────────────────────────────────────────────────────────────────────────────*/
 void ElleLogger::Log(ELLE_LOG_LEVEL level, const char* fmt, ...) {
     if (!m_initialized || level < m_minLevel.load(std::memory_order_acquire)) return;
 
@@ -111,8 +93,7 @@ void ElleLogger::Log(ELLE_LOG_LEVEL level, const char* fmt, ...) {
     if (m_targets & ELLE_LOG_TARGET_CONSOLE) WriteConsole(level, formatted);
     if (m_targets & ELLE_LOG_TARGET_FILE)    WriteFile(formatted);
     if (m_targets & ELLE_LOG_TARGET_WEBSOCKET) {
-        /* Snapshot broadcaster under mutex — SetWebSocketBroadcaster
-         * can be swapping it from another thread.                   */
+
         std::function<void(const std::string&)> cb;
         {
             std::lock_guard<std::mutex> lock(m_wsMutex);
@@ -127,7 +108,7 @@ void ElleLogger::Log(ELLE_LOG_LEVEL level, const char* fmt, ...) {
         entry.source_svc = m_sourceService;
         entry.timestamp_ms = ELLE_MS_NOW();
         strncpy_s(entry.message, buffer, ELLE_MAX_MSG - 1);
-        
+
         std::lock_guard<std::mutex> lock(m_dbMutex);
         m_dbQueue.push(entry);
     }
@@ -172,11 +153,8 @@ void ElleLogger::Fatal(const char* fmt, ...) {
     Log(LOG_FATAL, "%s", buffer);
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SPECIALIZED LOGGING
- *──────────────────────────────────────────────────────────────────────────────*/
 void ElleLogger::LogEmotion(const ELLE_EMOTION_STATE& state) {
-    /* Find top 5 emotions */
+
     struct EmoPair { int idx; float val; };
     std::vector<EmoPair> sorted;
     for (int i = 0; i < ELLE_EMOTION_COUNT; i++) {
@@ -184,13 +162,13 @@ void ElleLogger::LogEmotion(const ELLE_EMOTION_STATE& state) {
             sorted.push_back({i, state.dimensions[i]});
         }
     }
-    std::sort(sorted.begin(), sorted.end(), 
+    std::sort(sorted.begin(), sorted.end(),
               [](const EmoPair& a, const EmoPair& b) { return a.val > b.val; });
 
     std::ostringstream ss;
     ss << "Emotion[V:" << std::fixed << std::setprecision(2) << state.valence
        << " A:" << state.arousal << " D:" << state.dominance << "] Top: ";
-    
+
     int shown = 0;
     for (auto& e : sorted) {
         if (shown >= 5) break;
@@ -198,7 +176,7 @@ void ElleLogger::LogEmotion(const ELLE_EMOTION_STATE& state) {
         ss << e.idx << "=" << std::setprecision(2) << e.val;
         shown++;
     }
-    
+
     Info("%s", ss.str().c_str());
 }
 
@@ -208,17 +186,14 @@ void ElleLogger::LogTrustChange(int32_t oldScore, int32_t newScore, const std::s
 
 void ElleLogger::LogLLM(const ELLE_LLM_REQUEST& req, const ELLE_LLM_RESPONSE& resp) {
     if (resp.success) {
-        Info("LLM[%s] %d+%d=%d tokens, %.0fms", 
-             req.model_name, resp.tokens_prompt, resp.tokens_completion, 
+        Info("LLM[%s] %d+%d=%d tokens, %.0fms",
+             req.model_name, resp.tokens_prompt, resp.tokens_completion,
              resp.tokens_total, resp.latency_ms);
     } else {
         Error("LLM[%s] FAILED: %s", req.model_name, resp.error);
     }
 }
 
-/* Context-prefixed entry — same pipeline as Log() but carries a caller-
- * supplied tag that FormatEntry slots between the service name and the
- * message (e.g. "[ElleServiceBase]" for startup phases).                */
 void ElleLogger::LogWithContext(ELLE_LOG_LEVEL level, const char* context, const char* fmt, ...) {
     if (!m_initialized || level < m_minLevel.load(std::memory_order_acquire)) return;
 
@@ -257,10 +232,6 @@ void ElleLogger::LogWithContext(ELLE_LOG_LEVEL level, const char* context, const
     if (level >= LOG_ERROR) m_errorCount++;
 }
 
-/* Specialised logs — forward into the main logger at INFO level with a
- * canonical one-line summary. Kept here (rather than inlined in the
- * header) so header include surface stays minimal and all formatting
- * lives next to the other specialised loggers.                           */
 void ElleLogger::LogIntent(const ELLE_INTENT_RECORD& intent) {
     Info("Intent[type=%u urg=%.2f status=%u]: %s",
          (unsigned)intent.type,
@@ -286,16 +257,13 @@ void ElleLogger::LogIPC(const ELLE_IPC_HEADER& header, bool incoming) {
           (unsigned)header.payload_size);
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * FORMATTING
- *──────────────────────────────────────────────────────────────────────────────*/
 std::string ElleLogger::FormatEntry(ELLE_LOG_LEVEL level, const std::string& message,
                                      const std::string& context) {
     SYSTEMTIME st;
     GetLocalTime(&st);
 
     std::ostringstream ss;
-    ss << "[" << std::setfill('0') 
+    ss << "[" << std::setfill('0')
        << std::setw(4) << st.wYear << "-"
        << std::setw(2) << st.wMonth << "-"
        << std::setw(2) << st.wDay << " "
@@ -305,7 +273,7 @@ std::string ElleLogger::FormatEntry(ELLE_LOG_LEVEL level, const std::string& mes
        << std::setw(3) << st.wMilliseconds << "]"
        << " [" << LevelString(level) << "]"
        << " [" << ElleIPC::GetServiceName(m_sourceService) << "]";
-    
+
     if (!context.empty()) ss << " [" << context << "]";
     ss << " " << message;
 
@@ -326,12 +294,12 @@ const char* ElleLogger::LevelString(ELLE_LOG_LEVEL level) {
 
 uint16_t ElleLogger::LevelColor(ELLE_LOG_LEVEL level) {
     switch (level) {
-        case LOG_TRACE: return 8;   /* Dark gray */
-        case LOG_DEBUG: return 7;   /* Gray */
-        case LOG_INFO:  return 10;  /* Green */
-        case LOG_WARN:  return 14;  /* Yellow */
-        case LOG_ERROR: return 12;  /* Red */
-        case LOG_FATAL: return 79;  /* White on red */
+        case LOG_TRACE: return 8;
+        case LOG_DEBUG: return 7;
+        case LOG_INFO:  return 10;
+        case LOG_WARN:  return 14;
+        case LOG_ERROR: return 12;
+        case LOG_FATAL: return 79;
         default:        return 7;
     }
 }
@@ -342,7 +310,7 @@ void ElleLogger::WriteConsole(ELLE_LOG_LEVEL level, const std::string& formatted
     }
     std::cout << formatted << std::endl;
     if (m_hConsole) {
-        SetConsoleTextAttribute(m_hConsole, 7); /* Reset */
+        SetConsoleTextAttribute(m_hConsole, 7);
     }
 }
 
@@ -350,8 +318,6 @@ void ElleLogger::WriteFile(const std::string& formatted) {
     std::lock_guard<std::mutex> lock(m_fileMutex);
     if (!m_logFile.is_open()) return;
 
-    /* Day rollover — new day → new file.  Handles running-through-
-     * midnight log streams without an operator having to do anything. */
     int today = TodayYmd();
     if (today != m_currentDateYmd) {
         m_currentDateYmd    = today;
@@ -367,10 +333,6 @@ void ElleLogger::WriteFile(const std::string& formatted) {
     m_currentFileSize += formatted.size() + 1;
     m_currentLineCount++;
 
-    /* Line-count cap — once per 10k lines we bump the suffix and
-     * open a new file.  Stops any single log from crossing ~2MB
-     * even under heavy traffic.  Size-based rotation stays as a
-     * second safety net.                                             */
     if (m_currentLineCount >= m_maxLinesPerFile ||
         m_currentFileSize > (uint64_t)m_maxFileSizeMB * 1024 * 1024) {
         RotateFile();
@@ -378,7 +340,7 @@ void ElleLogger::WriteFile(const std::string& formatted) {
 }
 
 void ElleLogger::RotateFile() {
-    /* Caller holds m_fileMutex. */
+
     m_logFile.close();
     m_currentDateSuffix++;
     m_currentLineCount = 0;
@@ -394,8 +356,7 @@ int ElleLogger::TodayYmd() const {
 }
 
 std::string ElleLogger::ExeDirectory() const {
-    /* Cached per-process — GetModuleFileNameA is cheap but cache keeps
-     * LogChannel hot-path at zero syscalls after the first call.   */
+
     static std::string s_cached;
     static std::once_flag s_once;
     std::call_once(s_once, []() {
@@ -409,9 +370,7 @@ std::string ElleLogger::ExeDirectory() const {
 }
 
 void ElleLogger::OpenDatedDebugFile() {
-    /* Caller holds m_fileMutex.  Files land in
-     *   <exe_dir>\debug\YYYY-MM-DD[-NN].txt
-     * where -NN is bumped every 10k lines.                         */
+
     char ymdBuf[32];
     int y =  m_currentDateYmd / 10000;
     int mo = (m_currentDateYmd / 100) % 100;
@@ -431,10 +390,7 @@ void ElleLogger::OpenDatedDebugFile() {
     m_logFile.open(m_logPath, std::ios::app);
     if (m_logFile.is_open()) {
         m_currentFileSize = (uint64_t)std::filesystem::file_size(m_logPath, ec);
-        /* File may already contain lines from an earlier run today —
-         * re-count so we honour the 10k cap across the whole day.
-         * Quick scan: reopen, count '\n', reopen for append.  Cheap
-         * for files under ~100k lines.                             */
+
         std::ifstream probe(m_logPath);
         m_currentLineCount = 0;
         for (std::string line; std::getline(probe, line); ++m_currentLineCount) {}
@@ -454,7 +410,6 @@ ElleLogger::ChannelState& ElleLogger::GetOrOpenChannel(const std::string& name) 
 void ElleLogger::LogChannel(const char* channel, const char* fmt, ...) {
     if (!channel || !*channel || !fmt) return;
 
-    /* Format once, under the caller's stack. */
     char body[4096];
     va_list args;
     va_start(args, fmt);
@@ -464,8 +419,6 @@ void ElleLogger::LogChannel(const char* channel, const char* fmt, ...) {
     auto& st = GetOrOpenChannel(channel);
     std::lock_guard<std::mutex> lk(st.mtx);
 
-    /* Open / rotate.  Every line re-checks the date so the first
-     * post-midnight line trips the date rollover cleanly.           */
     int today = TodayYmd();
     bool needOpen = !st.file.is_open();
     if (today != st.dateYmd) {
@@ -475,7 +428,7 @@ void ElleLogger::LogChannel(const char* channel, const char* fmt, ...) {
         if (st.file.is_open()) st.file.close();
         needOpen = true;
     } else if (st.lineCount >= m_maxLinesPerFile) {
-        /* Same-day cap hit → bump suffix, new file. */
+
         st.dateSuffix++;
         st.lineCount = 0;
         st.file.close();
@@ -500,9 +453,8 @@ void ElleLogger::LogChannel(const char* channel, const char* fmt, ...) {
         }
     }
 
-    if (!st.file.is_open()) return;  /* file-creation failure — swallow */
+    if (!st.file.is_open()) return;
 
-    /* Timestamp + body. */
     time_t t = time(nullptr);
     struct tm lt;
     localtime_s(&lt, &t);
@@ -519,9 +471,7 @@ void ElleLogger::DatabaseWriterThread() {
         std::vector<ELLE_LOG_ENTRY> batch;
         {
             std::unique_lock<std::mutex> lock(m_dbMutex);
-            /* Wait for either a log to arrive, a shutdown signal, or
-             * 1s timeout (the timeout exists only as a safety net —
-             * every producer already notifies).                        */
+
             m_dbCv.wait_for(lock, std::chrono::seconds(1), [this]{
                 return !m_dbRunning.load() || !m_dbQueue.empty();
             });
@@ -538,9 +488,6 @@ void ElleLogger::DatabaseWriterThread() {
         }
     }
 
-    /* Final flush on shutdown — drain any remaining entries deterministically.
-     * m_dbClosing was set BEFORE m_dbRunning was cleared (see Shutdown)
-     * so no new producer can slip in after this drain starts.          */
     std::vector<ELLE_LOG_ENTRY> tail;
     {
         std::lock_guard<std::mutex> lock(m_dbMutex);

@@ -36,11 +36,6 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
-// ══════════════════════════════════════════════════════════════════════════════
-// MEMORY BROWSER — live-polled flat list, newest to oldest
-// Replaces the Unreal Pixel Streaming WebView entirely.
-// ══════════════════════════════════════════════════════════════════════════════
-
 enum class MemoryFilter(val label: String) {
     ALL("All"), EPISODIC("Episodic"), DREAMS("Dreams"),
     SEMANTIC("Semantic"), PROCEDURAL("Procedural"), IMPORTANT("Important")
@@ -70,12 +65,11 @@ class MemoryBrowserViewModel(private val container: AppContainerExtended) : View
             _state.update { it.copy(loading = true, error = null) }
             fetch()
             _state.update { it.copy(loading = false) }
-            // Only start polling after initial load completes (not before token/server settle)
+
             if (_state.value.error == null) startPolling()
         }
     }
 
-    // Live polling every 15 seconds — memories update as Elle experiences things
     private fun startPolling() {
         viewModelScope.launch {
             while (isActive) {
@@ -90,7 +84,7 @@ class MemoryBrowserViewModel(private val container: AppContainerExtended) : View
     private suspend fun fetch() {
         runCatching { container.extendedApi.getMemories() }
             .onSuccess { r ->
-                // Show all valid memories, newest first
+
                 val sorted = r.memories
                     .filter { it.shouldShow }
                     .sortedByDescending { it.createdMs }
@@ -101,7 +95,7 @@ class MemoryBrowserViewModel(private val container: AppContainerExtended) : View
                 if (_state.value.memories.isEmpty()) {
                     _state.update { it.copy(error = e.message) }
                 }
-                // If we already have memories displayed, keep them and stay silent on poll error
+
             }
     }
 
@@ -179,8 +173,6 @@ fun MemoryBrowserScreen(
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
 
-            // Search bar
-            // Custom IsyaSearchBar
             IsyaSearchBar(
                 value         = state.searchQuery,
                 onValueChange = vm::search,
@@ -194,7 +186,6 @@ fun MemoryBrowserScreen(
                 } else null,
             )
 
-            // Filter chips
             LazyRow(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -216,7 +207,6 @@ fun MemoryBrowserScreen(
 
             Spacer(Modifier.height(4.dp))
 
-            // Last refreshed stamp
             if (state.lastRefreshed > 0L) {
                 Text(
                     "Live · updated ${SimpleDateFormat("h:mm:ss a", Locale.getDefault()).format(Date(state.lastRefreshed))}",
@@ -248,7 +238,7 @@ fun MemoryBrowserScreen(
                     items(state.filtered, key = { it.id }) { mem ->
                         MemoryCard(mem, onClick = { onOpenMemory(mem.id) })
                     }
-                    // Bottom padding so last card isn't right at nav bar
+
                     item { Spacer(Modifier.height(16.dp)) }
                 }
             }
@@ -256,7 +246,6 @@ fun MemoryBrowserScreen(
     }
 }
 
-// ── Memory card ───────────────────────────────────────────────────────────────
 @Composable
 private fun MemoryCard(memory: Memory, onClick: () -> Unit) {
     val (typeColor, typeLabel) = remember(memory.memoryType, memory.isDream) {
@@ -273,7 +262,6 @@ private fun MemoryCard(memory: Memory, onClick: () -> Unit) {
         SimpleDateFormat("MMM d, yyyy  h:mm a", Locale.getDefault()).format(Date(memory.createdMs))
     }
 
-    // Importance maps to left border width (thin=low, thick=high)
     val importanceBorderWidth = (2 + memory.importance * 4).dp
 
     Surface(
@@ -282,7 +270,7 @@ private fun MemoryCard(memory: Memory, onClick: () -> Unit) {
         color    = IsyaDusk,
     ) {
         Row(modifier = Modifier.fillMaxWidth()) {
-            // Importance/type colored left bar
+
             Box(
                 modifier = Modifier
                     .width(importanceBorderWidth)
@@ -300,7 +288,7 @@ private fun MemoryCard(memory: Memory, onClick: () -> Unit) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    // Type badge
+
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
@@ -319,7 +307,7 @@ private fun MemoryCard(memory: Memory, onClick: () -> Unit) {
                             Text("✦", color = MemoryDream.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall)
                         }
                     }
-                    // Importance indicator
+
                     Text(
                         "imp ${"%.1f".format(memory.importance)}",
                         style = MaterialTheme.typography.labelSmall,
@@ -358,7 +346,6 @@ private fun MemoryCard(memory: Memory, onClick: () -> Unit) {
                 Text(dateStr, style = MaterialTheme.typography.labelSmall, color = IsyaMuted)
             }
 
-            // Chevron
             Icon(
                 Icons.Rounded.ChevronRight, null,
                 tint     = IsyaMuted.copy(alpha = 0.5f),
@@ -368,9 +355,6 @@ private fun MemoryCard(memory: Memory, onClick: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// MEMORY DETAIL SCREEN
-// ══════════════════════════════════════════════════════════════════════════════
 data class MemoryDetailState(
     val memory: Memory?  = null,
     val loading: Boolean = true,

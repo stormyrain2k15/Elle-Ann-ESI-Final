@@ -39,13 +39,12 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
-// ─── State ───────────────────────────────────────────────────────────────────
 data class ChatState(
     val messages: List<Message>      = emptyList(),
     val inputText: String            = "",
     val loading: Boolean             = true,
-    val cacheLoaded: Boolean         = false,  // true once cache is shown
-    val serverVerified: Boolean      = false,  // true once SQL confirmed
+    val cacheLoaded: Boolean         = false,
+    val serverVerified: Boolean      = false,
     val sending: Boolean             = false,
     val error: String?               = null,
     val streamingResponse: String    = "",
@@ -54,7 +53,6 @@ data class ChatState(
     val ttsWordIndex: Int            = -1,
 )
 
-// ─── ViewModel ───────────────────────────────────────────────────────────────
 class ChatViewModel(
     private val conversationId: Long,
     private val container: AppContainerExtended,
@@ -66,8 +64,7 @@ class ChatViewModel(
     val state: StateFlow<ChatState> = _state.asStateFlow()
 
     init {
-        /* Mirror state mutations into the cache manager's tracked map so
-         * the global crash-flush always has the latest list to write. */
+
         viewModelScope.launch {
             _state.collect { st ->
                 cacheManager.track(conversationId, st.messages)
@@ -78,28 +75,20 @@ class ChatViewModel(
     }
 
     override fun onCleared() {
-        /* Final flush + untrack when the chat screen is gone for good
-         * (process-survives, not crash). The crash path is handled
-         * separately in ElleApp.                                       */
+
         cacheManager.writeCacheSync(conversationId, _state.value.messages)
         cacheManager.untrack(conversationId)
         super.onCleared()
     }
 
-    /**
-     * Two-phase load:
-     *   Phase 1 — read local file cache instantly, show to user
-     *   Phase 2 — verify against SQL via REST, update if different
-     */
     private fun loadCacheThenVerify() {
         viewModelScope.launch {
-            // Phase 1: local cache (fast, no network)
+
             val cached = cacheManager.loadCache(conversationId)
             if (cached.isNotEmpty()) {
                 _state.update { it.copy(messages = cached, cacheLoaded = true, loading = false) }
             }
 
-            // Phase 2: verify with server SQL (Named Pipes transport, invisible to us)
             val api = container.pairedExtendedApi() ?: run {
                 _state.update { it.copy(loading = false, error = "Not paired") }
                 return@launch
@@ -117,14 +106,13 @@ class ChatViewModel(
                     cacheManager.writeCache(conversationId, result.messages)
                 }
                 is ChatCacheManager.VerifyResult.Error -> {
-                    // Cache stays visible even if server verify fails
+
                     _state.update { it.copy(serverVerified = false, loading = false) }
                 }
             }
         }
     }
 
-    /** Write cache to disk — call on app pause/stop */
     fun flushCache() {
         viewModelScope.launch {
             cacheManager.writeCache(conversationId, _state.value.messages)
@@ -141,7 +129,7 @@ class ChatViewModel(
                                 streamingResponse = event.response,
                                 sending = false,
                             )}
-                            // Refresh from server after streaming completes
+
                             refreshMessages()
                         }
                     }
@@ -169,12 +157,10 @@ class ChatViewModel(
         if (text.isBlank() || _state.value.sending) return
         val requestId = java.util.UUID.randomUUID().toString()
 
-        // Optimistic user message — appended immediately and flushed to cache
-        // so app-close between send and server-refresh doesn't lose the outgoing message
         val optimisticMsg = Message(
-            messageId      = -System.nanoTime(),  // guaranteed-unique negative ID; server ID replaces on verify
+            messageId      = -System.nanoTime(),
             conversationId = conversationId,
-            role           = 1,           // user
+            role           = 1,
             content        = text,
             timestampMs    = System.currentTimeMillis(),
         )
@@ -189,10 +175,10 @@ class ChatViewModel(
         )}
 
         viewModelScope.launch {
-            cacheManager.writeAfterMessage(conversationId, withOptimistic)  // immediate flush
+            cacheManager.writeAfterMessage(conversationId, withOptimistic)
             val sent = webSocket.sendChat(text, requestId, conversationId)
             if (!sent) {
-                // Socket refused the message — remove optimistic entry, surface error
+
                 _state.update { s ->
                     s.copy(
                         messages  = s.messages.filterNot { it.messageId < 0 },
@@ -221,7 +207,6 @@ class ChatViewModel(
     fun updateTtsWord(idx: Int) = _state.update { it.copy(ttsWordIndex = idx) }
 }
 
-// ─── Screen ──────────────────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
@@ -233,14 +218,11 @@ fun ChatScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val tts = remember { TtsController(context) }
-    /* Use the process-wide singleton so the crash-handler in ElleApp can
-     * see this conversation's in-memory state and flush it on a hard
-     * crash. Re-creating per-screen would defeat the crash-flush.       */
+
     val cacheManager = remember {
         (context.applicationContext as com.elleann.android.ElleApp).chatCacheManager
     }
 
-    // Guard webSocket access — show error state instead of crashing on uninitialized WS
     val ws = containerExtended.webSocketOrNull
     if (ws == null) {
         Box(
@@ -266,7 +248,6 @@ fun ChatScreen(
         }
     )
 
-    // Flush cache to disk on lifecycle pause/stop
     DisposableEffect(lifecycleOwner) {
         val observer = object : DefaultLifecycleObserver {
             override fun onPause(owner: LifecycleOwner)  { vm.flushCache() }
@@ -315,7 +296,7 @@ fun ChatScreen(
                     }
                 },
                 actions = {
-                    // ColorCode cycle
+
                     IconButton(onClick = { vm.cycleColorCode() }) {
                         Icon(Icons.Rounded.Palette, "ColorCode", tint = when (state.colorCodeMode) {
                             ColorCodeMode.OFF      -> IsyaMuted

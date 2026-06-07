@@ -1,45 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * FiestaConsoleTrace.h — live-watch console for Elle's headless Fiesta client.
- *
- *   When the service is launched with `--console`, this header's hooks
- *   spit a one-line summary of every packet (RX and TX) plus key
- *   lifecycle events to STDOUT in colour-coded form:
- *
- *       12:34:56.789  RX  0x0207  NC_MISC_SEED_ACK            (   2 B)  1F 03
- *       12:34:56.812  TX  0x0306  NC_USER_LOGIN_REQ           ( 272 B)
- *       12:34:56.834  >>  state -> LOGIN_AWAIT_LOGIN_ACK
- *       12:34:56.997  RX  0x030A  NC_USER_LOGIN_ACK           (  43 B)  03 0A 00 …
- *       12:34:57.250  RX  0x0420  NC_BRIEFINFO_BRIEFINFO_CMD  (  76 B)  …
- *       12:34:57.250  ★   chat   "Crystal" → "hi"
- *
- *   ────────────────────────────────────────────────────────────────────
- *   STRICT NO-STUB POLICY
- *   ────────────────────────────────────────────────────────────────────
- *   Every line printed here corresponds to a REAL packet or REAL state
- *   transition.  When the console isn't allocated (service mode), the
- *   functions are still callable but write nothing — there is no
- *   per-call branch on whether a console exists; we just write to stdout
- *   and rely on the parent's stdout sink (NUL when run as a Windows
- *   service, attached console when launched via `--console`).
- *
- *   ────────────────────────────────────────────────────────────────────
- *   USAGE
- *   ────────────────────────────────────────────────────────────────────
- *   #include "FiestaConsoleTrace.h"
- *
- *   // In FiestaClient::HandlePacket, first line:
- *   Fiesta::Trace::OnRx(pkt.opcode, pkt.payload);
- *
- *   // In Connection::Send, after cipher applied:
- *   Fiesta::Trace::OnTx(opcode, payload);
- *
- *   // In Client::SetState transition handler:
- *   Fiesta::Trace::OnStateChange(prev_name, new_name);
- *
- *   // For decoded events, pretty-print as they are emitted:
- *   Fiesta::Trace::OnChat(sender, text);
- *   Fiesta::Trace::OnMove(handle, fromX, fromY, toX, toY, type);
- *══════════════════════════════════════════════════════════════════════════════*/
 #pragma once
 #ifndef ELLE_FIESTA_CONSOLE_TRACE_H
 #define ELLE_FIESTA_CONSOLE_TRACE_H
@@ -63,11 +21,6 @@
 namespace Fiesta {
 namespace Trace {
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Toggle set by the launcher.  When false the helpers are a near no-op
- * (one atomic load + early return), so leaving the trace calls compiled
- * into release builds costs ~5 ns per call when not in console mode.
- *──────────────────────────────────────────────────────────────────────────────*/
 inline std::atomic<bool>& EnabledFlag() {
     static std::atomic<bool> g{false};
     return g;
@@ -76,19 +29,11 @@ inline std::atomic<bool>& EnabledFlag() {
 inline void SetEnabled(bool on) { EnabledFlag().store(on); }
 inline bool IsEnabled()          { return EnabledFlag().load(std::memory_order_relaxed); }
 
-
-/*──────────────────────────────────────────────────────────────────────────────
- * Stdout serialisation guard — multiple worker threads emit traces.
- *──────────────────────────────────────────────────────────────────────────────*/
 inline std::mutex& TraceMutex() {
     static std::mutex m;
     return m;
 }
 
-
-/*──────────────────────────────────────────────────────────────────────────────
- * Cheap millisecond timestamp:  HH:MM:SS.mmm
- *──────────────────────────────────────────────────────────────────────────────*/
 inline void WriteTimestamp(char buf[16]) {
     using namespace std::chrono;
     auto now = system_clock::now();
@@ -105,10 +50,6 @@ inline void WriteTimestamp(char buf[16]) {
                   static_cast<long long>(ms));
 }
 
-
-/*──────────────────────────────────────────────────────────────────────────────
- * Hex preview — writes up to `max_bytes` hex pairs.
- *──────────────────────────────────────────────────────────────────────────────*/
 inline std::string HexPreview(const std::vector<uint8_t>& bytes,
                               std::size_t max_bytes = 16) {
     std::string s;
@@ -124,26 +65,12 @@ inline std::string HexPreview(const std::vector<uint8_t>& bytes,
     return s;
 }
 
-
-/*──────────────────────────────────────────────────────────────────────────────
- * Direction / event prefixes (ANSI-coloured if stdout is a TTY/console).
- *
- *   RX  cyan    [server → Elle]
- *   TX  yellow  [Elle → server]
- *   >>  green   [state transition]
- *   ★   magenta [decoded high-level event: chat / whisper / move]
- *   !   red     [error / refusal / disconnect]
- *──────────────────────────────────────────────────────────────────────────────*/
 inline const char* RX_PFX() { return "\x1b[36mRX\x1b[0m"; }
 inline const char* TX_PFX() { return "\x1b[33mTX\x1b[0m"; }
 inline const char* ST_PFX() { return "\x1b[32m>>\x1b[0m"; }
 inline const char* HI_PFX() { return "\x1b[35m★\x1b[0m"; }
 inline const char* ER_PFX() { return "\x1b[31m!\x1b[0m"; }
 
-
-/*──────────────────────────────────────────────────────────────────────────────
- * Hooks
- *──────────────────────────────────────────────────────────────────────────────*/
 inline void OnRx(uint16_t opcode, const std::vector<uint8_t>& payload) {
     if (!IsEnabled()) return;
     std::string_view name = OpcodeName(opcode);
@@ -214,10 +141,6 @@ inline void OnError(std::string_view what) {
     std::fflush(stdout);
 }
 
-
-/*──────────────────────────────────────────────────────────────────────────────
- * Banner — printed once at console-mode startup.
- *──────────────────────────────────────────────────────────────────────────────*/
 inline void Banner(std::string_view who) {
     if (!IsEnabled()) return;
     std::lock_guard<std::mutex> lk(TraceMutex());
@@ -236,28 +159,20 @@ inline void Banner(std::string_view who) {
     std::fflush(stdout);
 }
 
-
-/*──────────────────────────────────────────────────────────────────────────────
- * One-time launcher attaches a Windows console window when the service
- * is started with `--console` / `-c`.  If a console is already attached
- * (parent shell on cmd.exe / Powershell), AllocConsole() is a no-op
- * for us — we just bind stdout to the existing one.
- *──────────────────────────────────────────────────────────────────────────────*/
 #ifdef _WIN32
 inline void EnsureWindowsConsole() {
-    /* Attempt to attach to the parent console first (preferred — keeps
-     * `Elle.Service.Fiesta.exe --console > log.txt` redirection working). */
+
     if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
-        /* No parent → spawn a fresh console window. */
+
         AllocConsole();
         SetConsoleTitleA("Elle.Service.Fiesta — live trace");
     }
-    /* Rebind C runtime streams to the now-attached console. */
+
     FILE* f;
     freopen_s(&f, "CONOUT$", "w", stdout);
     freopen_s(&f, "CONOUT$", "w", stderr);
     freopen_s(&f, "CONIN$",  "r", stdin);
-    /* Enable ANSI colour escapes (Windows 10+). */
+
     HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD mode = 0;
     if (GetConsoleMode(h, &mode)) {
@@ -265,10 +180,10 @@ inline void EnsureWindowsConsole() {
     }
 }
 #else
-inline void EnsureWindowsConsole() { /* POSIX: stdout is the console. */ }
+inline void EnsureWindowsConsole() {  }
 #endif
 
-}  /* namespace Trace */
-}  /* namespace Fiesta */
+}
+}
 
-#endif  /* ELLE_FIESTA_CONSOLE_TRACE_H */
+#endif

@@ -1,32 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * test_jwt_and_emotion_map.cpp
- *
- *   Portable (Linux g++) regression tests for two pieces of auth/emotional
- *   engine work that were added in this session:
- *
- *     1. The HS256 JWT composition logic used by
- *        Services/Elle.Service.HTTP/HTTPServer.cpp::MintJwt() — validated
- *        here against a reference HMAC-SHA256 + base64url implementation
- *        to prove the wire format round-trips cleanly.
- *
- *     2. The O(1) emotion-name lookup map used by
- *        Services/Elle.Service.Emotional/EmotionalEngine.cpp::ProcessTriggers()
- *        — validated here by rebuilding the same map against the same
- *        reference emotion list and proving that lookups land on the
- *        expected IDs.
- *
- *   Why a portable test?
- *     The real MintJwt() depends on Windows CNG (bcrypt.h) which this
- *     container can't compile. We compile a reference HMAC-SHA256 here
- *     (RFC 2104) purely to SERVE AS AN ORACLE — we compute the expected
- *     token offline, then assert the exact byte sequence our production
- *     code WOULD emit. On the user's Windows PC, BCryptHmac is the one
- *     signing; here, we're asserting the agreement.
- *
- *   Build (Linux, in /app/ElleAnn/Debug):
- *     g++ -std=c++17 -O2 test_jwt_and_emotion_map.cpp \
- *         -o test_jwt_and_emotion_map && ./test_jwt_and_emotion_map
- *══════════════════════════════════════════════════════════════════════════════*/
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -38,9 +9,6 @@
 #include <algorithm>
 #include <cctype>
 
-/*══════════════════════════════════════════════════════════════════════════════
- * Reference SHA-256 (RFC 6234) — compact, self-contained
- *══════════════════════════════════════════════════════════════════════════════*/
 namespace refsha {
 
 static inline uint32_t rotr(uint32_t x, uint32_t n) { return (x >> n) | (x << (32 - n)); }
@@ -113,11 +81,8 @@ void hmac_sha256(const uint8_t* key, size_t klen,
     sha256(outer.data(), outer.size(), out);
 }
 
-} /* namespace refsha */
+}
 
-/*══════════════════════════════════════════════════════════════════════════════
- * Reference base64url (must byte-match ElleCrypto::Base64UrlEncode)
- *══════════════════════════════════════════════════════════════════════════════*/
 static const char kB64[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 static std::string b64url(const uint8_t* data, size_t len) {
@@ -141,9 +106,6 @@ static std::string b64url(const uint8_t* data, size_t len) {
     return out;
 }
 
-/*══════════════════════════════════════════════════════════════════════════════
- * Mirror of HTTPServer.cpp::MintJwt — must be byte-identical.
- *══════════════════════════════════════════════════════════════════════════════*/
 static std::string mint_jwt(const std::string& deviceId,
                             const std::string& deviceName,
                             uint64_t iat, uint64_t exp,
@@ -165,9 +127,6 @@ static std::string mint_jwt(const std::string& deviceId,
     return signing + "." + b64url(mac, 32);
 }
 
-/*══════════════════════════════════════════════════════════════════════════════
- * Tests
- *══════════════════════════════════════════════════════════════════════════════*/
 static int g_pass = 0, g_fail = 0;
 #define CHECK(cond) do { \
     if (cond) { g_pass++; } \
@@ -175,8 +134,7 @@ static int g_pass = 0, g_fail = 0;
 } while (0)
 
 static void test_hmac_sha256_vector() {
-    /* RFC 4231 test case 1: key=0x0b*20, data="Hi There"
-     * expected = b0344c6... (full vector below)                            */
+
     uint8_t key[20]; std::memset(key, 0x0b, 20);
     const char* msg = "Hi There";
     uint8_t mac[32];
@@ -191,28 +149,25 @@ static void test_hmac_sha256_vector() {
 static void test_jwt_roundtrip() {
     std::string tok = mint_jwt("dev-1234", "Pixel 9",
                                1700000000000ull, 1707776000000ull, "shh-secret");
-    /* Structure: three dot-separated base64url segments, no padding. */
+
     int dots = 0; for (char c : tok) if (c == '.') dots++;
     CHECK(dots == 2);
-    /* Header decodes to {"alg":"HS256","typ":"JWT"}. Decode first segment. */
+
     size_t d1 = tok.find('.');
     CHECK(d1 != std::string::npos);
     std::string h = tok.substr(0, d1);
-    /* Base64url of 27 bytes → 36 chars unpadded.                            */
+
     CHECK(h.size() == 36);
-    /* Stable: same inputs → same output.                                    */
+
     std::string tok2 = mint_jwt("dev-1234", "Pixel 9",
                                 1700000000000ull, 1707776000000ull, "shh-secret");
     CHECK(tok == tok2);
-    /* Different secret → different token.                                   */
+
     std::string tok3 = mint_jwt("dev-1234", "Pixel 9",
                                 1700000000000ull, 1707776000000ull, "other");
     CHECK(tok != tok3);
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Simulate the emotion-name lookup map
- *──────────────────────────────────────────────────────────────────────────────*/
 static void test_emotion_map_lookup() {
     static const char* names[] = {
         "Joy","Sadness","Anger","Fear","Disgust","Surprise","Contempt","Trust",
@@ -227,20 +182,16 @@ static void test_emotion_map_lookup() {
                        [](unsigned char c){ return (char)std::tolower(c); });
         m.emplace(std::move(key), (uint32_t)i);
     }
-    /* Present keys → correct IDs. */
+
     CHECK(m.at("joy") == 0);
     CHECK(m.at("empathy") == 10);
     CHECK(m.at("compassion") == 11);
-    /* Absent keys → not found. */
+
     CHECK(m.find("not-a-real-emotion") == m.end());
-    /* Case sensitivity of the map itself: we only store lowercase,
-     * so a mixed-case probe must miss (callers must lower first).          */
+
     CHECK(m.find("Joy") == m.end());
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Reference base64url decoder — mirror of ElleCrypto::Base64UrlDecode.
- *──────────────────────────────────────────────────────────────────────────────*/
 static std::vector<uint8_t> b64url_decode(const std::string& s) {
     static int8_t rev[256];
     static bool init = false;
@@ -265,10 +216,6 @@ static std::vector<uint8_t> b64url_decode(const std::string& s) {
     return out;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Mirror of HTTPServer.cpp::VerifyJwtHs256 — used to prove the gate logic
- * accepts what MintJwt emits and rejects forged / expired / wrong-alg.
- *──────────────────────────────────────────────────────────────────────────────*/
 struct JwtV { bool ok=false; std::string sub; uint64_t exp=0; std::string why; };
 
 static JwtV verify_jwt(const std::string& tok, const std::string& secret, uint64_t now) {
@@ -285,7 +232,7 @@ static JwtV verify_jwt(const std::string& tok, const std::string& secret, uint64
     auto h = b64url_decode(h64);
     if (h.empty()) { r.why="bad header b64"; return r; }
     std::string hs(h.begin(), h.end());
-    /* crude "alg":"HS256" presence check — real code uses JSON parser */
+
     if (hs.find("\"alg\":\"HS256\"") == std::string::npos) { r.why="bad alg"; return r; }
     uint8_t mac[32];
     std::string signing = h64 + "." + p64;
@@ -299,7 +246,7 @@ static JwtV verify_jwt(const std::string& tok, const std::string& secret, uint64
     auto p = b64url_decode(p64);
     if (p.empty()) { r.why="bad payload b64"; return r; }
     std::string ps(p.begin(), p.end());
-    /* crude sub + exp extract — real code uses JSON parser */
+
     auto subStart = ps.find("\"sub\":\"");
     if (subStart == std::string::npos) { r.why="no sub"; return r; }
     subStart += 7;
@@ -326,30 +273,24 @@ static void test_jwt_verify_paths() {
     uint64_t exp = now + 5000;
     std::string tok = mint_jwt("dev-1234", "Pixel 9", now, exp, secret);
 
-    /* Happy path. */
     auto v = verify_jwt(tok, secret, now);
     CHECK(v.ok);
     CHECK(v.sub == "dev-1234");
     CHECK(v.exp == exp);
 
-    /* Wrong secret → signature mismatch. */
     auto v2 = verify_jwt(tok, "other-secret", now);
     CHECK(!v2.ok);
 
-    /* Expired. */
     auto v3 = verify_jwt(tok, secret, exp + 1);
     CHECK(!v3.ok);
 
-    /* Mangled middle byte → signature mismatch (proves Base64URL/HMAC is
-     * actually validating content, not just structure). */
     std::string tampered = tok;
-    /* Flip a single bit in the payload segment. */
+
     auto d1 = tampered.find('.');
     tampered[d1 + 3] = (tampered[d1 + 3] == 'A') ? 'B' : 'A';
     auto v4 = verify_jwt(tampered, secret, now);
     CHECK(!v4.ok);
 
-    /* Not-a-JWT (no dots). */
     auto v5 = verify_jwt("just-some-bearer-token", secret, now);
     CHECK(!v5.ok);
 }

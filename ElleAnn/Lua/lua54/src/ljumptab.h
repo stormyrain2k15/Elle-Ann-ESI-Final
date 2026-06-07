@@ -1,10 +1,3 @@
-/*
-** $Id: ljumptab.h $
-** Jump Table for the Lua interpreter
-** See Copyright Notice in lua.h
-*/
-
-
 #undef vmdispatch
 #undef vmcase
 #undef vmbreak
@@ -14,7 +7,6 @@
 #define vmcase(l)     L_##l:
 
 #define vmbreak		vmfetch(); vmdispatch(GET_OPCODE(i));
-
 
 static const void *const disptab[NUM_OPCODES] = {
 

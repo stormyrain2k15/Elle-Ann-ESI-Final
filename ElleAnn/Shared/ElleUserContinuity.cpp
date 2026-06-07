@@ -1,6 +1,3 @@
-/*******************************************************************************
- * ElleUserContinuity.cpp — UserContinuity + GameSessionState DAO.
- ******************************************************************************/
 #include "ElleUserContinuity.h"
 #include "ElleSQLConn.h"
 #include "ElleLogger.h"
@@ -10,18 +7,12 @@
 
 namespace ElleDB {
 
-/*──────────────────────────────────────────────────────────────────────────────
- *  UserContinuity DAO
- *──────────────────────────────────────────────────────────────────────────────*/
 bool TouchUserContinuityOnPair(int64_t nUserNo,
                                const std::string& sUserID,
                                const std::string& sUserName) {
     if (nUserNo <= 0) return false;
     const uint64_t now = (uint64_t)ELLE_MS_NOW();
 
-    /* Atomic upsert via MERGE. WHEN MATCHED bumps the counters, WHEN
-     * NOT MATCHED creates the row with first_met_ms = now. SQL Server
-     * supports MERGE since 2008.                                       */
     static constexpr const char* kSql =
         "MERGE ElleCore.dbo.UserContinuity AS t "
         "USING (SELECT ? AS nUserNo, ? AS sUserID, ? AS sUserName, ? AS now_ms) AS s "
@@ -75,13 +66,13 @@ bool UpdateUserBond(int64_t nUserNo, double bondScore,
 
 bool AppendUserNote(int64_t nUserNo, const std::string& note) {
     if (nUserNo <= 0 || note.empty()) return false;
-    /* Two-step: read current, append + truncate-from-front, write. */
+
     UserContinuityRow row;
     if (!GetUserContinuity(nUserNo, row)) return false;
     std::string merged = row.private_note;
     if (!merged.empty()) merged += "\n";
     merged += note;
-    /* Cap from the FRONT — newest survives. */
+
     if (merged.size() > 4000) {
         merged.erase(0, merged.size() - 4000);
     }
@@ -130,9 +121,6 @@ bool GetUserContinuity(int64_t nUserNo, UserContinuityRow& out) {
     return true;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- *  GameSessionState DAO
- *──────────────────────────────────────────────────────────────────────────────*/
 bool UpsertGameSession(const GameSessionStateRow& row) {
     if (row.nUserNo <= 0) return false;
     static constexpr const char* kSql =
@@ -157,19 +145,15 @@ bool UpsertGameSession(const GameSessionStateRow& row) {
     std::snprintf(ys, sizeof(ys), "%.6f", row.last_y);
     std::snprintf(zs, sizeof(zs), "%.6f", row.last_z);
 
-    /* Same value-list passed twice — once for UPDATE, once for INSERT.
-     * Repeating the params keeps the SQL portable (some MERGE flavours
-     * don't allow referencing the matched-source row in INSERT
-     * directly without re-listing).                                    */
     std::vector<std::string> p = {
         std::to_string(row.nUserNo),
-        /* UPDATE list */
+
         std::to_string(row.char_index), row.char_name,
         std::to_string(row.zone_id),    row.zone_name,
         xs, ys, zs,
         std::to_string(row.last_hp), std::to_string(row.last_hp_max),
         std::to_string(row.last_session_ms),
-        /* INSERT list */
+
         std::to_string(row.char_index), row.char_name,
         std::to_string(row.zone_id),    row.zone_name,
         xs, ys, zs,
@@ -192,7 +176,7 @@ bool MarkGameSessionDisconnected(int64_t nUserNo,
     auto& pool = ElleSQLPool::Instance();
     auto rs = pool.QueryParams(kSql, {
         std::to_string((uint64_t)ELLE_MS_NOW()),
-        reason.substr(0, 64),  /* schema cap */
+        reason.substr(0, 64),
         std::to_string(nUserNo)
     });
     return rs.success;
@@ -229,4 +213,4 @@ bool GetGameSession(int64_t nUserNo, GameSessionStateRow& out) {
     return true;
 }
 
-}  /* namespace ElleDB */
+}

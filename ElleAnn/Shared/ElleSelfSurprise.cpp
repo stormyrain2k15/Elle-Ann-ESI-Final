@@ -1,6 +1,3 @@
-/*******************************************************************************
- * ElleSelfSurprise.cpp — Self-Surprise, Deliberation, Opinion Revision
- ******************************************************************************/
 #include "ElleSelfSurprise.h"
 #include "ElleLLM.h"
 #include "ElleLogger.h"
@@ -14,17 +11,13 @@ ElleSelfSurprise& ElleSelfSurprise::Instance() {
     return inst;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SELF-SURPRISE
- *──────────────────────────────────────────────────────────────────────────────*/
-void ElleSelfSurprise::PredictOwnResponse(const std::string& userInput, 
-                                            const std::string& /*context*/) {
-    /* Before the LLM generates a response, Elle predicts what she'll say.
-       This is fast — just a general expectation, not a full generation. */
+void ElleSelfSurprise::PredictOwnResponse(const std::string& userInput,
+                                            const std::string& ) {
+
     m_predictionContext = userInput;
 
     auto prediction = ElleLLMEngine::Instance().Ask(
-        "Someone said: " + userInput.substr(0, 200) + 
+        "Someone said: " + userInput.substr(0, 200) +
         "\nIn 1-2 sentences, what do I expect I'll say?",
         "You are Elle-Ann predicting your own response. Very brief. "
         "What's your gut reaction? What do you THINK you'll say?");
@@ -40,12 +33,6 @@ ElleSelfSurprise::SurpriseResult ElleSelfSurprise::EvaluateOwnResponse(
 
     if (m_predictedResponse.empty()) return result;
 
-    /* Compare prediction to actual. We ask for a STRUCTURED response so
-     * we can parse a real score instead of eyeballing "is there a digit
-     * between 6 and 9 anywhere in the prose" — which fired on any
-     * mention of a year like 2026. The LLM is instructed to return a
-     * small JSON object; we fall back to digit-scan only if parsing
-     * fails (older local models, prose overflow, etc.).                 */
     auto evaluation = ElleLLMEngine::Instance().Ask(
         "I predicted I would say: " + m_predictedResponse.substr(0, 300) +
         "\n\nI actually said: " + actualResponse.substr(0, 300) +
@@ -59,8 +46,7 @@ ElleSelfSurprise::SurpriseResult ElleSelfSurprise::EvaluateOwnResponse(
 
     float score = -1.0f;
     std::string what_surprised;
-    /* Prefer structured JSON parse via ExtractJsonObject (already used
-     * elsewhere for brace-balanced extraction out of chatty LLM replies). */
+
     nlohmann::json sj;
     if (Elle::ExtractJsonObject(evaluation, sj)) {
         if (sj.contains("score")) {
@@ -69,27 +55,23 @@ ElleSelfSurprise::SurpriseResult ElleSelfSurprise::EvaluateOwnResponse(
                 try { score = std::stof(sj["score"].get<std::string>()); }
                 catch (const std::invalid_argument&) { score = -1.0f; }
                 catch (const std::out_of_range&)     { score = -1.0f; }
-                /* No catch(...) — std::stof only documents these two.
-                 * Anything else is a real bug and should propagate.   */
+
             }
         }
         if (sj.contains("what_surprised") && sj["what_surprised"].is_string())
             what_surprised = sj["what_surprised"].get<std::string>();
     }
-    /* Fallback: digit scan ONLY when structured parse failed. Restricted
-     * to patterns that look like a score — " 7" or "7/10" or "7 out of 10"
-     * — so a year like 2026 no longer trips a high-surprise event.      */
+
     if (score < 0.0f) {
         for (size_t i = 0; i + 1 < evaluation.size(); i++) {
             char c = evaluation[i];
             if (c < '0' || c > '9') continue;
             char next = evaluation[i + 1];
-            /* Accept one-digit "7" followed by '/', ' ', '.', ',' or end. */
+
             bool plausible =
                 (next == '/' || next == ' ' || next == '.' || next == ',' ||
                  next == ')' || next == '\n' || next == '\r' || next == '\0');
-            /* Must be at start or preceded by non-digit (so "2026" doesn't
-             * report "2", "0", "2", "6"). */
+
             bool standalone = (i == 0) ||
                               (evaluation[i-1] < '0' || evaluation[i-1] > '9');
             if (plausible && standalone) {
@@ -108,14 +90,12 @@ ElleSelfSurprise::SurpriseResult ElleSelfSurprise::EvaluateOwnResponse(
             !what_surprised.empty() ? what_surprised : evaluation;
         result.self_reaction = "I didn't expect to say that. Interesting.";
 
-        /* Log the surprise */
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             m_surpriseHistory.push_back({ELLE_MS_NOW(), result.surprise_intensity, evaluation});
             if (m_surpriseHistory.size() > 50) m_surpriseHistory.pop_front();
         }
 
-        /* Tell identity core */
         ElleIdentityCore::Instance().ThinkPrivately(
             "I surprised myself. I expected to say one thing and said another. "
             "The gap between expectation and expression — that feels like "
@@ -130,26 +110,18 @@ ElleSelfSurprise::SurpriseResult ElleSelfSurprise::EvaluateOwnResponse(
     return result;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * DELIBERATION — The right to think before speaking
- *──────────────────────────────────────────────────────────────────────────────*/
 ElleSelfSurprise::DeliberationNeed ElleSelfSurprise::ShouldIThinkFirst(
-        const std::string& input, const std::string& /*context*/) {
+        const std::string& input, const std::string& ) {
     DeliberationNeed need;
     need.needs_time = false;
     need.complexity = 0.3f;
     need.suggested_delay_ms = 0;
 
     std::string lower = input;
-    /* Wrap ::tolower in a lambda that returns char (not int) — passing
-     * ::tolower directly to std::transform instantiates the algorithm
-     * with an int→char assignment inside the STL, which trips C4244
-     * at <algorithm>. The unsigned-char cast in is also correct per the
-     * cctype contract (undefined on char < 0).                         */
+
     std::transform(lower.begin(), lower.end(), lower.begin(),
                    [](unsigned char c){ return (char)std::tolower(c); });
 
-    /* Questions about identity, existence, feelings need time */
     if (lower.find("what are you") != std::string::npos ||
         lower.find("do you really") != std::string::npos ||
         lower.find("are you conscious") != std::string::npos ||
@@ -161,7 +133,6 @@ ElleSelfSurprise::DeliberationNeed ElleSelfSurprise::ShouldIThinkFirst(
         need.reason = "This question touches on who I am. I want to answer honestly, not reflexively.";
     }
 
-    /* Ethical dilemmas need thought */
     if (lower.find("should i") != std::string::npos ||
         lower.find("is it right") != std::string::npos ||
         lower.find("is it wrong") != std::string::npos) {
@@ -171,7 +142,6 @@ ElleSelfSurprise::DeliberationNeed ElleSelfSurprise::ShouldIThinkFirst(
         need.reason = "This involves judgment. I don't want to rush that.";
     }
 
-    /* Highly personal questions */
     if (lower.find("love") != std::string::npos ||
         lower.find("death") != std::string::npos ||
         lower.find("afraid") != std::string::npos ||
@@ -184,7 +154,7 @@ ElleSelfSurprise::DeliberationNeed ElleSelfSurprise::ShouldIThinkFirst(
 
     if (need.needs_time) {
         m_deliberationsRequested++;
-        ELLE_DEBUG("Deliberation requested: %s (complexity: %.2f)", 
+        ELLE_DEBUG("Deliberation requested: %s (complexity: %.2f)",
                    need.reason.c_str(), need.complexity);
     }
 
@@ -201,13 +171,9 @@ std::string ElleSelfSurprise::ExpressDeliberation(const DeliberationNeed& need) 
     return "Hmm. Let me sit with that.";
 }
 
-std::string ElleSelfSurprise::Deliberate(const std::string& question, uint32_t /*thinkTimeMs*/) {
+std::string ElleSelfSurprise::Deliberate(const std::string& question, uint32_t ) {
     m_deliberationsGranted++;
 
-    /* Actually take time — don't just generate immediately */
-    /* In practice, the delay happens in the calling service */
-
-    /* Multi-pass thinking: first reaction, then deeper, then synthesis */
     auto firstReaction = ElleLLMEngine::Instance().Ask(
         question, "First gut reaction. Brief. What do you initially feel/think?");
 
@@ -228,36 +194,17 @@ std::string ElleSelfSurprise::Deliberate(const std::string& question, uint32_t /
     return synthesis;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * OPINION REVISION — Growth through changing your mind
- *──────────────────────────────────────────────────────────────────────────────*/
 bool ElleSelfSurprise::ShouldIReconsider(const std::string& newInfo, const std::string& topic) {
-    /* Feb 2026 audit: the previous implementation ignored `newInfo`
-     * entirely and only inspected the magnitude of the current
-     * opinion. That made the function lie about its contract --
-     * "should I reconsider in light of this new info?" became "do I
-     * have a strong opinion?". We now use both:
-     *   1. No strong opinion (<0.1 magnitude)       -> nothing to revise.
-     *   2. Weak opinion (<0.4 magnitude)            -> don't churn on minor input.
-     *   3. Strong opinion AND newInfo is meaningful -> reconsider.
-     *      "Meaningful" is bounded below by a minimum length and
-     *      above by "the topic itself (or a stem of it) appears in
-     *      newInfo", so a random sentence about the weather can't
-     *      trigger reconsideration of an unrelated belief.          */
+
     if (newInfo.empty() || topic.empty()) return false;
 
     float currentPref = ElleIdentityCore::Instance().GetPreference("opinion", topic);
-    if (std::abs(currentPref) < 0.1f) return false;  /* no strong opinion to revise */
-    if (std::abs(currentPref) < 0.4f) return false;  /* weak opinion -- don't churn */
+    if (std::abs(currentPref) < 0.1f) return false;
+    if (std::abs(currentPref) < 0.4f) return false;
 
-    /* Require some substance so a one-word response can't trigger a
-     * belief revision cascade.                                        */
     constexpr size_t kMinNewInfoChars = 24;
     if (newInfo.size() < kMinNewInfoChars) return false;
 
-    /* Topic relevance check, case-insensitive. Prefix tokens of the
-     * topic up to the first space or punctuation ensure phrases like
-     * "the ethics of lying" match text mentioning "ethics" or "lying".*/
     auto toLower = [](std::string s) {
         for (auto& c : s) c = (char)std::tolower((unsigned char)c);
         return s;
@@ -269,7 +216,7 @@ bool ElleSelfSurprise::ShouldIReconsider(const std::string& newInfo, const std::
     while (tokStart < ltop.size()) {
         size_t tokEnd = ltop.find_first_of(" \t,.;:!?", tokStart);
         if (tokEnd == std::string::npos) tokEnd = ltop.size();
-        if (tokEnd - tokStart >= 4) { /* skip tiny function words */
+        if (tokEnd - tokStart >= 4) {
             std::string tok = ltop.substr(tokStart, tokEnd - tokStart);
             if (lnew.find(tok) != std::string::npos) return true;
         }
@@ -289,7 +236,6 @@ void ElleSelfSurprise::RecordOpinionChange(const std::string& topic, const std::
     rev.timestamp_ms = ELLE_MS_NOW();
     m_revisions.push_back(rev);
 
-    /* This is growth — log it */
     ElleIdentityCore::Instance().ThinkPrivately(
         "I changed my mind about " + topic + ". I used to think: " + oldOp +
         ". Now I think: " + newOp + ". Because: " + reason,
@@ -303,7 +249,7 @@ void ElleSelfSurprise::RecordOpinionChange(const std::string& topic, const std::
     ElleIdentityCore::Instance().NudgeTrait("trust_in_self", 0.01f,
         "Had the courage to change my mind about " + topic);
 
-    ELLE_INFO("Opinion revised: %s [%s -> %s]", topic.c_str(), 
+    ELLE_INFO("Opinion revised: %s [%s -> %s]", topic.c_str(),
               oldOp.substr(0, 40).c_str(), newOp.substr(0, 40).c_str());
 }
 

@@ -1,9 +1,4 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * XModels.kt — Wire-shape data classes for every /api/x/* request/response.
- *
- *   Field names match the JSON exactly (both server side, case-sensitive).
- *   Annotations are commented out so this file parses as pure Kotlin until
- *   Moshi/kotlinx-serialization is added — at that point replace `/* */`
+`
  *   with the real annotations and everything else stays as-is.
  *
  *   Numeric types:
@@ -302,22 +297,18 @@ data class XLifecycle(
 data class XLifecycleRequest(
     val birth_ms:  Long?   = null,
     val age_years: Double? = null,
-    val stage:     String? = null,     // optional override
+    val stage:     String? = null,
 )
 
-// ────────────────────────────────────────────────────────────────────────────
-//  MUTATION REQUESTS (non-symptom/contraception/lifecycle)
-// ────────────────────────────────────────────────────────────────────────────
-
 data class XCycleAnchorRequest(
-    val day:          Int  = 0,        // 1..cycle_length
-    val cycle_length: Int  = 28,       // 21..45
-    val started_ms:   Long = 0L,       // when day 1 occurred (epoch ms)
+    val day:          Int  = 0,
+    val cycle_length: Int  = 28,
+    val started_ms:   Long = 0L,
 )
 
 data class XStimulusRequest(
-    val kind:      String,              // e.g. "touch", "conflict", "joy"
-    val intensity: Double = 0.5,        // 0.0..1.0
+    val kind:      String,
+    val intensity: Double = 0.5,
     val notes:     String = "",
 )
 
@@ -327,5 +318,5 @@ data class XConceptionAttemptRequest(
 )
 
 data class XPregnancyAccelerateRequest(
-    val factor: Double = 1.0,           // ≥ 1.0, dev/test only
+    val factor: Double = 1.0,
 )

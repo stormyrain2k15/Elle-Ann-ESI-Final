@@ -1,15 +1,10 @@
-/*******************************************************************************
- * ElleServiceBase.cpp — Windows Service Scaffold Implementation
- * 
- * Handles SCM lifecycle, double-click install, console mode, core init.
- ******************************************************************************/
 #include "ElleServiceBase.h"
 #include "ElleIdentityCore.h"
-#include "ElleLLM.h"         /* ElleLLMEngine::Instance() used in InitializeCore */
-#include "ElleSQLConn.h"     /* ElleSQLPool::Instance().Reinitialize() in OnConfigReload */
-#include "ElleConfig.h"      /* ElleConfig::Instance().GetService() in OnConfigReload */
+#include "ElleLLM.h"
+#include "ElleSQLConn.h"
+#include "ElleConfig.h"
 #include "ElleGameAccountDB.h"
-#include <tlhelp32.h>        /* CreateToolhelp32Snapshot / PROCESSENTRY32 */
+#include <tlhelp32.h>
 #include <iostream>
 #include <sstream>
 #include <chrono>
@@ -48,11 +43,8 @@ ElleServiceBase::~ElleServiceBase() {
     if (s_instance == this) s_instance = nullptr;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * ENTRY POINT
- *──────────────────────────────────────────────────────────────────────────────*/
 int ElleServiceBase::Run(int argc, char* argv[]) {
-    /* Parse command line */
+
     if (argc > 1) {
         std::string arg = argv[1];
         if (arg == "--install" || arg == "-i" || arg == "/install") {
@@ -75,12 +67,10 @@ int ElleServiceBase::Run(int argc, char* argv[]) {
         }
     }
 
-    /* No args: check if running from SCM or double-click */
     if (!IsRunningFromSCM()) {
         return DoubleClickInstall();
     }
 
-    /* Running from SCM — register service */
     std::wstring wName(m_serviceName.begin(), m_serviceName.end());
     SERVICE_TABLE_ENTRYW dispatchTable[] = {
         { const_cast<LPWSTR>(wName.c_str()), ServiceMain },
@@ -90,7 +80,7 @@ int ElleServiceBase::Run(int argc, char* argv[]) {
     if (!StartServiceCtrlDispatcherW(dispatchTable)) {
         DWORD err = GetLastError();
         if (err == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
-            /* Not actually from SCM, run console */
+
             return RunConsole();
         }
         return 1;
@@ -98,19 +88,9 @@ int ElleServiceBase::Run(int argc, char* argv[]) {
     return 0;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SCM CALLBACKS
- *──────────────────────────────────────────────────────────────────────────────*/
 void WINAPI ElleServiceBase::ServiceMain(DWORD argc, LPWSTR* argv) {
     if (!s_instance) return;
 
-    /*──────────────────────────────────────────────────────────────────
-     * SCM CWD FIX — Windows starts services with CWD=C:\Windows\System32
-     * which silently breaks every relative path in the service (config,
-     * Lua scripts, ServerInfo.txt, debug/ logs, sqllogs/ queues, etc.).
-     * Pivot to the exe's own directory BEFORE anything else runs so all
-     * relative resolution Just Works™ matching the dev/console mode.
-     *────────────────────────────────────────────────────────────────*/
     {
         char exePath[MAX_PATH] = {0};
         GetModuleFileNameA(nullptr, exePath, MAX_PATH);
@@ -122,8 +102,6 @@ void WINAPI ElleServiceBase::ServiceMain(DWORD argc, LPWSTR* argv) {
         }
     }
 
-    /* SCM-passed argv (if any) takes priority for explicit config path
-     * overrides via `sc start <svc> -config <path>` style invocation. */
     if (argc > 1 && argv[1]) {
         std::wstring w(argv[1]);
         std::string a(w.begin(), w.end());
@@ -159,16 +137,10 @@ DWORD WINAPI ElleServiceBase::ServiceCtrlHandler(DWORD control, DWORD eventType,
     switch (control) {
         case SERVICE_CONTROL_STOP:
         case SERVICE_CONTROL_SHUTDOWN:
-            /* Fast-stop. Pre-pivot the wait hint here was 10s per
-             * service × 21 services ≈ 3.5 min of cumulative SCM
-             * timeout just telling Windows we were pending. The real
-             * shutdown path is bounded by InterruptibleSleep which
-             * completes in ≤ a tick interval (<= 1s) once m_running
-             * flips; 2s is plenty of headroom with no drama.      */
+
             svc->ReportStatus(SERVICE_STOP_PENDING, NO_ERROR, kStopHintMs);
             svc->m_running = false;
-            /* Wake every thread in InterruptibleSleep so stop latency is
-             * bounded by OnTick duration instead of m_tickIntervalMs. */
+
             svc->m_stopCv.notify_all();
             svc->OnStop();
             svc->ShutdownCore();
@@ -213,9 +185,6 @@ void ElleServiceBase::ReportStatus(DWORD currentState, DWORD exitCode, DWORD wai
     SetServiceStatus(m_svcStatusHandle, &m_svcStatus);
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * INSTALL / UNINSTALL
- *──────────────────────────────────────────────────────────────────────────────*/
 bool ElleServiceBase::InstallService() {
     char exePath[MAX_PATH];
     GetModuleFileNameA(nullptr, exePath, MAX_PATH);
@@ -256,20 +225,10 @@ bool ElleServiceBase::InstallService() {
         }
     }
 
-    /* Set description */
     SERVICE_DESCRIPTIONA desc;
     desc.lpDescription = const_cast<LPSTR>(m_description.c_str());
     ChangeServiceConfig2A(hService, SERVICE_CONFIG_DESCRIPTION, &desc);
 
-    /* Recovery: restart on failure, small delays.
-     *
-     * Pre-pivot the third retry sat at 30s; combined with the per-
-     * attempt SCM StartPending 10s timeout and 21 services, a worst-
-     * case failing deploy blocked for >10 min before SCM gave up on
-     * the last service. Shortened to 1s / 2s / 5s (reset window
-     * unchanged at 1 day). A service that keeps crashing within 5s
-     * repeatedly is a config bug the operator should see and fix,
-     * not a condition we want to paper over with long backoffs.     */
     SC_ACTION actions[3] = {
         { SC_ACTION_RESTART, 1000 },
         { SC_ACTION_RESTART, 2000 },
@@ -315,30 +274,13 @@ bool ElleServiceBase::UninstallService() {
         return false;
     }
 
-    /* Stop if running — poll service status until SERVICE_STOPPED or a
-     * 30-second ceiling, instead of a blind fixed wait. A `Sleep(2000)`
-     * here was both arbitrary and semantically wrong: too long on a
-     * responsive service (annoys the admin), too short on a slow one
-     * (makes DeleteService fail with ERROR_SERVICE_MARKED_FOR_DELETE).
-     *
-     * Wait primitive: `WaitForSingleObject(GetCurrentProcess(), pollMs)`
-     * rather than `Sleep(pollMs)`. Functionally identical for "just
-     * block for N ms" but (a) not a raw Sleep, (b) consistent with the
-     * rest of the Windows-wait idioms in this codebase, (c) makes the
-     * intent — "wait, with a timeout" — explicit at the call site.    */
     SERVICE_STATUS status;
     if (ControlService(hService, SERVICE_CONTROL_STOP, &status)) {
         std::cout << "Stopping service...";
         const DWORD pollMs = 100;
-        const DWORD ceilMs = 5000;   /* 30s → 5s: the service itself
-                                      * only needs <= 2s to stop cleanly
-                                      * (see kStopHintMs). 5s is pure
-                                      * safety margin; if it can't stop
-                                      * in that, DeleteService after this
-                                      * will still succeed as MARKED_FOR
-                                      * _DELETE on the next reboot.     */
+        const DWORD ceilMs = 5000;
         DWORD waited = 0;
-        HANDLE hSelf = GetCurrentProcess(); /* never signals — timeout-only */
+        HANDLE hSelf = GetCurrentProcess();
         while (status.dwCurrentState != SERVICE_STOPPED && waited < ceilMs) {
             WaitForSingleObject(hSelf, pollMs);
             waited += pollMs;
@@ -362,40 +304,12 @@ bool ElleServiceBase::UninstallService() {
     return true;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * DOUBLE-CLICK INSTALL — Fiesta Zone.exe style.
- *
- *   The operator double-clicks the exe. It silently registers the
- *   service with SCM (CreateServiceA → start it → exit), showing a
- *   single modal MessageBox on the way out:
- *
- *       "<SERVICE UPLOAD ONLY OK>"       on success
- *       "<SERVICE UPLOAD FAILED>"        on any failure
- *
- *   Same phrasing as Fiesta's own Zone.exe so it's instantly familiar.
- *   After the OK dialog, the exe exits and the operator controls the
- *   service from services.msc the rest of its life. No batch, no
- *   PowerShell, no install/uninstall switches needed — though the
- *   `--install` / `--uninstall` / `--console` flags still work for
- *   CI and dev loops.
- *
- *   Explicitly: NO "Yes/No/Cancel" menu. The pre-pivot version asked
- *   the user whether they wanted console vs service mode; on a fresh
- *   deploy-to-server machine that's noise. If you want console mode,
- *   run `exe --console`.
- *──────────────────────────────────────────────────────────────────────────────*/
 int ElleServiceBase::DoubleClickInstall() {
-    /* Hide the transient console window Windows opened when the exe
-     * was double-clicked from Explorer. FreeConsole() detaches; the
-     * MessageBox renders cleanly without a black box behind it. On a
-     * console-launched install (Admin cmd, CI) there's nothing to
-     * detach and the call is a no-op.                                */
+
     FreeConsole();
 
     bool ok = InstallService();
-    /* Hide stdout — the parent console (if any) may have printed during
-     * InstallService(); the MessageBox alone is the operator-visible
-     * cue, identical to Zone.exe's behaviour.                           */
+
     const char* msg = ok
         ? "<SERVICE UPLOAD ONLY OK>"
         : "<SERVICE UPLOAD FAILED>\n\n"
@@ -407,15 +321,7 @@ int ElleServiceBase::DoubleClickInstall() {
 }
 
 bool ElleServiceBase::IsRunningFromSCM() {
-    /* Heuristic: if parent process is services.exe, we're from SCM. Use
-     * the explicit wide-char variants (`PROCESSENTRY32W` / `Process32FirstW`
-     * / `Process32NextW`) instead of the unsuffixed macros. On this SDK
-     * the unsuffixed `PROCESSENTRY32` expands (via #define) to the A-
-     * suffix identifier, but the SDK declares only the struct tag and
-     * the W-suffix typedef — there is no `PROCESSENTRY32A` symbol, which
-     * is why earlier attempts failed with C2065. The W variant is always
-     * present and needs no conditional compilation. szExeFile is WCHAR[]
-     * there, compared against L"services.exe" with _wcsicmp.           */
+
     DWORD parentPid = 0;
     HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (hSnap != INVALID_HANDLE_VALUE) {
@@ -431,7 +337,6 @@ bool ElleServiceBase::IsRunningFromSCM() {
             } while (Process32NextW(hSnap, &pe));
         }
 
-        /* Check if parent is services.exe */
         if (parentPid) {
             if (Process32FirstW(hSnap, &pe)) {
                 do {
@@ -449,14 +354,10 @@ bool ElleServiceBase::IsRunningFromSCM() {
     return false;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * CONSOLE MODE
- *──────────────────────────────────────────────────────────────────────────────*/
 int ElleServiceBase::RunConsole() {
     std::cout << "=== " << m_displayName << " v" << ELLE_VERSION_STRING << " ===\n";
     std::cout << "Running in console mode. Press Ctrl+C to stop.\n\n";
 
-    /* Handle Ctrl+C */
     SetConsoleCtrlHandler([](DWORD type) -> BOOL {
         if (s_instance) {
             s_instance->m_running = false;
@@ -480,7 +381,6 @@ int ElleServiceBase::RunConsole() {
     m_running = true;
     std::cout << "Service running. Type 'quit' to exit.\n";
 
-    /* Console input loop */
     std::string input;
     while (m_running) {
         if (std::cin.peek() != EOF) {
@@ -510,9 +410,6 @@ int ElleServiceBase::RunConsole() {
     return 0;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * INTERRUPTIBLE SLEEP — wakes on shutdown signal for prompt stop latency
- *──────────────────────────────────────────────────────────────────────────────*/
 void ElleServiceBase::InterruptibleSleep(uint32_t ms) {
     if (ms == 0) return;
     if (!m_running.load(std::memory_order_acquire)) return;
@@ -521,9 +418,6 @@ void ElleServiceBase::InterruptibleSleep(uint32_t ms) {
                       [this]{ return !m_running.load(std::memory_order_acquire); });
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SERVICE MAIN LOOP
- *──────────────────────────────────────────────────────────────────────────────*/
 void ElleServiceBase::ServiceLoop() {
     m_running = true;
     while (m_running) {
@@ -532,41 +426,11 @@ void ElleServiceBase::ServiceLoop() {
     }
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * CORE INITIALIZATION
- *──────────────────────────────────────────────────────────────────────────────*/
 bool ElleServiceBase::InitializeCore() {
     ELLE_INFO("Initializing %s...", m_displayName.c_str());
 
-    /* Arm m_running at the *start* of init so InterruptibleSleep() calls
-     * inside ConnectDependencies() (and any other init-time waits) block
-     * the full interval unless SCM asks us to stop mid-init. Previously
-     * m_running stayed false until ServiceLoop, which meant the new
-     * InterruptibleSleep(1s/2s/3s) in the retry loop degenerated to a
-     * zero-wait tight loop during normal boot. Shutdown requests during
-     * init still work: ServiceCtrlHandler flips it to false and
-     * notifies, and the next InterruptibleSleep returns immediately.   */
     m_running.store(true, std::memory_order_release);
 
-    /* 1. Load config — robust multi-path search.
-     *
-     *  Order of preference:
-     *    a) Explicit path from SCM argv  (m_argConfigPath)
-     *    b) <exe>\9Data\ServerInfo\_<ShortName>serverinfo.txt   (Fiesta-style)
-     *    c) <exe>\9Data\ServerInfo\_ServerInfo.txt              (master grammar)
-     *    d) <exe>\<anything>ServerInfo*.txt                     (legacy)
-     *    e) <exe>\elle_master_config.json                       (dev fallback)
-     *
-     *  After loading per-service identity from a-d (Fiesta grammar), we
-     *  ALSO best-effort merge in elle_master_config.json so the LLM /
-     *  emotion / behavioral keys are available — the user's "1 main config
-     *  + per-service stub" architecture.
-     *
-     *  If everything fails we DO NOT 1067 the service: instead we install
-     *  minimal defaults (bind 0.0.0.0, no_auth=1, port = 8000) so the
-     *  service comes up and the operator can fix the path via the API.
-     *  This was the #1 cause of code-1067 silent service-exit cascades.
-     *────────────────────────────────────────────────────────────────────*/
     char exePath[MAX_PATH] = {0};
     GetModuleFileNameA(nullptr, exePath, MAX_PATH);
     std::string exeDir(exePath);
@@ -578,7 +442,6 @@ bool ElleServiceBase::InitializeCore() {
         return (a != INVALID_FILE_ATTRIBUTES) && !(a & FILE_ATTRIBUTE_DIRECTORY);
     };
 
-    /* Short service name (no "Elle.Service." prefix) for ServerInfo lookup. */
     std::string shortName = m_serviceName;
     static const std::string kPfx = "Elle.Service.";
     if (shortName.rfind(kPfx, 0) == 0) shortName = shortName.substr(kPfx.size());
@@ -592,18 +455,16 @@ bool ElleServiceBase::InitializeCore() {
         return false;
     };
 
-    /* (a) explicit override from SCM args. */
     if (!m_argConfigPath.empty()) tryPath(m_argConfigPath);
 
-    /* (b) per-service ServerInfo in 9Data\ServerInfo\. */
     if (configPath.empty()) {
         tryPath(exeDir + "9Data\\ServerInfo\\_" + shortName + "serverinfo.txt");
     }
-    /* (c) master ServerInfo in 9Data\ServerInfo\. */
+
     if (configPath.empty()) {
         tryPath(exeDir + "9Data\\ServerInfo\\_ServerInfo.txt");
     }
-    /* (d) legacy: any *ServerInfo*.txt next to the exe. */
+
     if (configPath.empty()) {
         WIN32_FIND_DATAA fd{};
         HANDLE h = FindFirstFileA((exeDir + "*ServerInfo*.txt").c_str(), &fd);
@@ -618,7 +479,7 @@ bool ElleServiceBase::InitializeCore() {
             FindClose(h);
         }
     }
-    /* (e) JSON dev fallback — same dir as exe. */
+
     if (configPath.empty()) tryPath(exeDir + "elle_master_config.json");
     if (configPath.empty()) tryPath(exeDir + "9Data\\ServerInfo\\elle_master_config.json");
 
@@ -627,10 +488,7 @@ bool ElleServiceBase::InitializeCore() {
                      "Tried:\n";
         for (auto& p : tried) std::cerr << "  - " << p << "\n";
         ELLE_WARN("ElleServiceBase: no config file located, defaults applied");
-        /* Do NOT return false — load nothing, defaults stand, and the
-         * service can still come up to expose /api/diag/health for the
-         * operator. Auth defaults to off in this state via the JSON
-         * default below.                                                 */
+
         ElleConfig::Instance().LoadDefaults();
     } else if (!ElleConfig::Instance().Load(configPath)) {
         const DWORD gle = GetLastError();
@@ -643,17 +501,12 @@ bool ElleServiceBase::InitializeCore() {
         ELLE_INFO("Config loaded from: %s", configPath.c_str());
     }
 
-    /* MASTER LAYER — if the loaded config was a ServerInfo .txt (which
-     * only carries identity + ODBC), best-effort merge the JSON master
-     * for behavioral keys (LLM, emotions, http_server.no_auth, etc).
-     * Failure here is logged but NOT fatal — services like Memory or
-     * Cognitive can still operate without the LLM section.             */
     {
         std::string master;
         if (tryPath(exeDir + "elle_master_config.json")) master = configPath;
         else if (tryPath(exeDir + "9Data\\ServerInfo\\elle_master_config.json"))
             master = configPath;
-        configPath = ""; /* tryPath wrote into configPath as a side effect */
+        configPath = "";
         if (!master.empty() && master.size() >= 5 &&
             master.substr(master.size() - 5) == ".json") {
             if (!ElleConfig::Instance().LayerJsonOver(master)) {
@@ -664,8 +517,6 @@ bool ElleServiceBase::InitializeCore() {
         }
     }
 
-
-    /* 2. Initialize logger */
     const auto& logCfg = ElleConfig::Instance().GetString("logging.level", "info");
     ELLE_LOG_LEVEL logLevel = LOG_INFO;
     if (logCfg == "trace") logLevel = LOG_TRACE;
@@ -688,7 +539,6 @@ bool ElleServiceBase::InitializeCore() {
         );
     }
 
-    /* 3. Initialize SQL connection pool */
     auto& svcCfg = ElleConfig::Instance().GetService();
     if (!ElleSQLPool::Instance().Initialize(svcCfg.sql_connection_string, svcCfg.sql_pool_size)) {
         std::cerr << "FATAL: SQL pool init failed. Connection string: "
@@ -698,9 +548,6 @@ bool ElleServiceBase::InitializeCore() {
     }
     ELLE_INFO("SQL pool initialized (%d connections)", svcCfg.sql_pool_size);
 
-    /* 3b. Initialize optional game Account DB pool (used by /api/auth/login).
-     * If not configured, endpoints will return 503 with a clear message.
-     * Do not fail service startup on this optional dependency. */
     {
         const std::string gameDsn = ElleConfig::Instance().GetString(
             "http_server.game_db_dsn", "");
@@ -714,10 +561,8 @@ bool ElleServiceBase::InitializeCore() {
         }
     }
 
-    /* 4. Register this worker in database */
     ElleDB::RegisterWorker(m_serviceId, m_serviceName);
 
-    /* 5. Initialize IPC hub */
     if (!m_ipcHub.Initialize(m_serviceId, svcCfg.iocp_threads)) {
         std::cerr << "FATAL: IPC hub init failed (threads=" << svcCfg.iocp_threads << ")\n";
         ELLE_ERROR("Failed to initialize IPC hub");
@@ -725,62 +570,32 @@ bool ElleServiceBase::InitializeCore() {
     }
     ELLE_INFO("IPC hub initialized (%d IOCP threads)", svcCfg.iocp_threads);
 
-    /* 5b. Register our hub with ElleIdentityCore so its free-function
-     * mutate/broadcast helpers can dispatch. Without this registration
-     * the helpers no-op (useful in unit tests, harmful in production —
-     * the identity fabric would silently drop every delta).             */
     ElleIdentityCore::SetIPCHub(&m_ipcHub);
 
-    /* 6. Set IPC message handler */
     m_ipcHub.SetMessageHandler([this](const ElleIPCMessage& msg, ELLE_SERVICE_ID sender) {
-        /* Heartbeat plumbing:
-         *   - If we are NOT the Heartbeat service and we receive an IPC_HEARTBEAT
-         *     from the Heartbeat service, auto-respond with our own heartbeat.
-         *   - Always forward to OnMessage so services (especially Heartbeat)
-         *     can track liveness of their peers.
-         */
+
         if (msg.header.msg_type == IPC_HEARTBEAT &&
             m_serviceId != SVC_HEARTBEAT &&
             sender == SVC_HEARTBEAT) {
             auto reply = ElleIPCMessage::Create(IPC_HEARTBEAT, m_serviceId, SVC_HEARTBEAT);
             m_ipcHub.Send(SVC_HEARTBEAT, reply);
-            /* Also update our own heartbeat in DB */
+
             ElleDB::UpdateWorkerHeartbeat(m_serviceId);
         }
-        /* Identity single-writer fabric: every IPC_IDENTITY_DELTA is
-         * applied to this process's local mirror before the service-
-         * specific handler sees it. Deltas are keyed by a monotonic seq
-         * so optimistic local applies are not double-counted. This is
-         * the push-based replacement for RefreshFromDatabase polling —
-         * peers see identity mutations within milliseconds, not 60s.   */
+
         if (msg.header.msg_type == IPC_IDENTITY_DELTA) {
             ElleIdentityCore::Instance().ApplyDelta(msg.GetStringPayload());
         }
-        /* Config hot-reload fabric: any service may broadcast
-         * IPC_CONFIG_RELOAD when it has rewritten elle_master_config.json
-         * (or the operator nudged the dev panel "reload config" button).
-         * Every service re-pulls the on-disk config into the singleton
-         * BEFORE its own OnConfigReload override runs, so derived
-         * services see fresh values when they grab them. Pre-pivot
-         * this message had no consumer and config edits required a
-         * full service restart.                                       */
+
         if (msg.header.msg_type == IPC_CONFIG_RELOAD) {
             const bool ok = ElleConfig::Instance().Reload();
-            /* If this service had the LLM engine initialised, re-roll
-             * it under the new config so e.g. a freshly-pasted Groq
-             * api_key takes effect without a service restart. Services
-             * that don't use LLM are unaffected — IsInitialized() is
-             * false on those processes. */
+
             if (ok && ElleLLMEngine::Instance().IsInitialized()) {
                 const bool llmOk = ElleLLMEngine::Instance().Reinitialize();
                 ELLE_INFO("IPC_CONFIG_RELOAD: LLM engine re-init %s",
                           llmOk ? "succeeded" : "FAILED");
             }
-            /* Database credentials may have changed too. The DB block
-             * lives at config.database.connection_string in the master
-             * file; rebuild the pool with whatever's there now. We do
-             * this AFTER the LLM re-init so a flapping DB doesn't
-             * starve the LLM warmup of its own SQL needs.            */
+
             if (ok) {
                 const auto& svc = ElleConfig::Instance().GetService();
                 if (!svc.sql_connection_string.empty()) {
@@ -795,21 +610,16 @@ bool ElleServiceBase::InitializeCore() {
                       "calling OnConfigReload()", (int)sender, ok ? 1 : 0);
             this->OnConfigReload();
         }
-        /* Forward to service-specific handler */
+
         this->OnMessage(msg, sender);
     });
 
-    /* 7. Connect to dependency services — non-blocking, with a background
-     *    reconnector thread that handles peers that come up later. Service
-     *    init no longer waits 5×backoff on missing peers; the reconnector
-     *    handles them as they appear, in any startup order. */
     ConnectDependenciesNonBlocking();
     if (!m_reconnectThread.joinable()) {
         m_reconnectThread = std::thread([this]{ this->RunReconnectorLoop(); });
     }
 
-    /* 8. Initialize LLM engine if this service needs it */
-    if (m_serviceId == SVC_COGNITIVE || m_serviceId == SVC_SELF_PROMPT || 
+    if (m_serviceId == SVC_COGNITIVE || m_serviceId == SVC_SELF_PROMPT ||
         m_serviceId == SVC_DREAM || m_serviceId == SVC_GOAL_ENGINE ||
         m_serviceId == SVC_HTTP_SERVER) {
         if (!ElleLLMEngine::Instance().Initialize()) {
@@ -826,11 +636,6 @@ bool ElleServiceBase::InitializeCore() {
 void ElleServiceBase::ShutdownCore() {
     ELLE_INFO("Shutting down %s...", m_displayName.c_str());
 
-    /* Wake + join the reconnector before tearing the IPC hub down so it
-     * never touches a half-destroyed hub. m_running has already been
-     * flipped false by the dispatcher path; m_stopCv.notify_all() in
-     * the InterruptibleSleep used inside the loop means the join is
-     * fast (≤ tickIntervalMs, not the full 5s reconnect period).      */
     {
         std::lock_guard<std::mutex> lk(m_stopMutex);
         m_running = false;
@@ -838,8 +643,6 @@ void ElleServiceBase::ShutdownCore() {
     m_stopCv.notify_all();
     if (m_reconnectThread.joinable()) m_reconnectThread.join();
 
-    /* Deregister before we tear the hub down so any racing identity
-     * callers see nullptr and no-op rather than touching freed memory. */
     ElleIdentityCore::SetIPCHub(nullptr);
     m_ipcHub.Shutdown();
     ElleLLMEngine::Instance().Shutdown();
@@ -851,8 +654,7 @@ void ElleServiceBase::ConnectDependenciesNonBlocking() {
     auto deps = GetDependencies();
     for (auto dep : deps) {
         if (!m_running.load()) break;
-        /* Short timeout — we do NOT want service init to block on a peer
-         * that hasn't started yet. The reconnector will retry every 5 s. */
+
         if (m_ipcHub.ConnectTo(dep, 1500)) {
             ELLE_INFO("Connected to %s", ElleIPC::GetServiceName(dep));
         } else {
@@ -863,10 +665,7 @@ void ElleServiceBase::ConnectDependenciesNonBlocking() {
 }
 
 void ElleServiceBase::RunReconnectorLoop() {
-    /* First pass IMMEDIATELY — if a peer came up between the
-     * non-blocking init attempt (1500ms) and now, we want it bound
-     * within sub-second latency, not after the 5s reconnect interval.
-     * Subsequent passes are throttled to kReconnectIntervalMs.       */
+
     if (m_running.load()) TickReconnector();
 
     while (m_running.load()) {
@@ -875,22 +674,10 @@ void ElleServiceBase::RunReconnectorLoop() {
         TickReconnector();
     }
 
-    /* Final tick on shutdown is intentionally skipped — we don't want
-     * to open new pipes while the hub is being torn down. The existing
-     * connections drain via m_ipcHub.Shutdown() in ShutdownCore.     */
 }
 
 void ElleServiceBase::TickReconnector() {
-    /* One pass over declared dependencies. For each peer, classify:
-     *   was-up + still-up   → no-op (silent)
-     *   was-up + now-down   → "lost peer X" + remove from tracker
-     *                         (next ConnectTo call will rebuild)
-     *   was-down + now-up   → "first contact with X" + remember
-     *   was-down + still-down → silent (don't spam the log every 5s
-     *                          for a peer that's still booting)
-     *
-     * The mutex on m_everConnectedTo guards against a future caller
-     * (e.g. a status endpoint) wanting to read the live set.        */
+
     auto deps = GetDependencies();
     for (auto dep : deps) {
         if (!m_running.load()) break;
@@ -907,14 +694,11 @@ void ElleServiceBase::TickReconnector() {
             ELLE_LOG_SOCKET("IPC LOST %s — reattempt", ElleIPC::GetServiceName(dep));
             std::lock_guard<std::mutex> lk(m_reconnectMutex);
             m_everConnectedTo.erase(dep);
-            /* Fall through to the ConnectTo attempt below so we rebuild
-             * on the same tick — no need to wait another 5s.          */
+
         }
 
         if (aliveNow) continue;
 
-        /* 1s timeout: short enough that all 20 peers fit in a single
-         * tick budget even if every one of them is missing.          */
         if (m_ipcHub.ConnectTo(dep, 1000)) {
             bool first = false;
             {
@@ -925,9 +709,7 @@ void ElleServiceBase::TickReconnector() {
                 const uint64_t now = (uint64_t)std::chrono::duration_cast<
                     std::chrono::milliseconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count();
-                /* The "+T" is local elapsed time since this service
-                 * started, not wall clock — operator-friendly for
-                 * watching the mesh converge. */
+
                 ELLE_INFO("Mesh: first contact with %s (epoch %llu)",
                           ElleIPC::GetServiceName(dep),
                           (unsigned long long)now);

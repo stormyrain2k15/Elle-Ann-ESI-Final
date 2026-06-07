@@ -1,6 +1,3 @@
-/*******************************************************************************
- * GoalEngine.cpp — Autonomous Goal Formation, Tracking, and Pursuit
- ******************************************************************************/
 #include "../../Shared/ElleTypes.h"
 #include "../../Shared/ElleServiceBase.h"
 #include "../../Shared/ElleLLM.h"
@@ -21,7 +18,7 @@ static std::string GoalsFallbackPath() {
         "goals.fallback_prefix", "Goals");
     const uint64_t ms = (uint64_t)ELLE_MS_NOW();
     const uint64_t day = ms / 86400000ULL;
-    const uint64_t chunk = (ms / 1000ULL) / (100000ULL); /* ~100k lines heuristic slot */
+    const uint64_t chunk = (ms / 1000ULL) / (100000ULL);
     std::ostringstream fn;
     fn << prefix << "-" << day << "-" << chunk << ".txt";
     std::filesystem::path p(base);
@@ -37,28 +34,23 @@ static void AppendGoalFallback(const std::string& line) {
         if (!out) return;
         out << line << "\n";
     } catch (...) {
-        /* best-effort */
+
     }
 }
 
 class GoalEngine {
 public:
     bool Initialize() {
-        /* Load active goals from database */
+
         ElleDB::GetActiveGoals(m_goals);
         ELLE_INFO("Goal engine initialized: %d active goals", (int)m_goals.size());
         return true;
     }
 
-    /* Create a new goal. Dedupes against any ACTIVE goal with the same
-     * normalised (lowercased, trimmed) description so that repeated
-     * self-prompt proposals don't pile up identical rows — previously
-     * "learn about {topic}" could be issued every few minutes and would
-     * accumulate as many ACTIVE copies, all racing to write progress. */
     uint64_t CreateGoal(const std::string& description, ELLE_GOAL_PRIORITY priority,
                          ELLE_DRIVE_ID sourceDrive, const std::string& successCriteria = "",
                          uint64_t parentGoalId = 0) {
-        /* Normalise: lowercase + trim surrounding whitespace. */
+
         auto norm = [](const std::string& s) {
             size_t a = 0, b = s.size();
             while (a < b && (s[a] == ' ' || s[a] == '\t' || s[a] == '\n' || s[a] == '\r')) a++;
@@ -90,13 +82,9 @@ public:
         goal.created_ms = ELLE_MS_NOW();
         strncpy_s(goal.success_criteria, successCriteria.c_str(), ELLE_MAX_MSG - 1);
 
-        /* Let the DB assign the authoritative id. Previously we minted
-         * goal.id = m_nextId++ locally and relied on SQL matching — it
-         * didn't, and UpdateProgress then wrote to row IDs that either
-         * didn't exist or belonged to a different goal.                */
         uint64_t dbId = ElleDB::StoreGoalReturningId(goal);
         if (dbId == 0) {
-            /* SQL optional: fall back to file persistence. */
+
             goal.id = ELLE_MS_NOW();
             ELLE_WARN("StoreGoal failed; falling back to file (id=%llu)",
                       (unsigned long long)goal.id);
@@ -110,7 +98,6 @@ public:
         return goal.id;
     }
 
-    /* Update goal progress */
     void UpdateProgress(uint64_t goalId, float progress) {
         for (auto& g : m_goals) {
             if (g.id == goalId) {
@@ -122,11 +109,7 @@ public:
 
                 if (progress >= 1.0f) {
                     g.status = GOAL_COMPLETED;
-                    /* Durable — matches the auto-abandon path at line 178.
-                     * Without this, Elle would "complete" goals in memory
-                     * but they'd come back ACTIVE on the next service
-                     * restart and UpdateProgress would happily push them
-                     * over 100% again.                                   */
+
                     if (!ElleDB::UpdateGoalStatus(goalId, GOAL_COMPLETED)) {
                         AppendGoalFallback(std::string("STATUS ") + std::to_string(goalId) + " COMPLETED");
                     }
@@ -137,7 +120,6 @@ public:
         }
     }
 
-    /* Autonomous goal generation based on drives and emotions */
     void GenerateGoals(const ELLE_DRIVE_STATE& drives, const ELLE_EMOTION_STATE& emotions) {
         auto maxGoals = (uint32_t)ElleConfig::Instance().GetInt("goals.max_active_goals", 16);
         uint32_t activeCount = 0;
@@ -147,27 +129,26 @@ public:
 
         if (activeCount >= maxGoals) return;
 
-        /* Build context for LLM-based goal generation */
         std::ostringstream ctx;
         ctx << "Active drives:\n";
         const char* driveNames[] = {"Curiosity", "Boredom", "Attachment", "Anxiety",
             "SelfPreservation", "Exploration", "Creativity", "SocialBonding",
             "Mastery", "Autonomy", "Purpose", "Homeostasis"};
-        
+
         for (int i = 0; i < ELLE_DRIVE_COUNT; i++) {
             if (drives.intensity[i] > drives.threshold[i]) {
-                ctx << "  - " << driveNames[i] << ": " << drives.intensity[i] 
+                ctx << "  - " << driveNames[i] << ": " << drives.intensity[i]
                     << " (threshold: " << drives.threshold[i] << ")\n";
             }
         }
 
-        ctx << "\nCurrent emotions: V=" << emotions.valence 
+        ctx << "\nCurrent emotions: V=" << emotions.valence
             << " A=" << emotions.arousal << " D=" << emotions.dominance << "\n";
 
         ctx << "\nExisting goals:\n";
         for (auto& g : m_goals) {
             if (g.status == GOAL_ACTIVE) {
-                ctx << "  - " << g.description << " (progress: " 
+                ctx << "  - " << g.description << " (progress: "
                     << (int)(g.progress * 100) << "%)\n";
             }
         }
@@ -177,8 +158,7 @@ public:
 
         if (!suggestion.empty()) {
             ELLE_INFO("Auto-generated goal suggestion: %.80s...", suggestion.c_str());
-            /* Auto-create if config permits; otherwise the suggestion is logged
-             * and a human (or a future approval UI) can promote it manually.  */
+
             bool autoCreate = ElleConfig::Instance().GetBool("goals.allow_self_generated_goals", true);
             if (autoCreate) {
                 CreateGoal(suggestion, GOAL_MEDIUM, DRIVE_PURPOSE);
@@ -186,10 +166,6 @@ public:
         }
     }
 
-    /* Tick: decay motivation, check stale goals, and credit autonomous
-     * progress whenever the drive a goal was spawned from has eased below
-     * its threshold (the drive being satisfied IS the goal being served).
-     * This gives UpdateProgress() a real caller — previously it was dead. */
     void Tick(const ELLE_DRIVE_STATE* drives = nullptr) {
         uint64_t now = ELLE_MS_NOW();
         float decayRate = (float)ElleConfig::Instance().GetFloat("goals.motivation_decay_rate", 0.01);
@@ -199,13 +175,8 @@ public:
         for (auto& g : m_goals) {
             if (g.status != GOAL_ACTIVE) continue;
 
-            /* Decay motivation */
             g.motivation = std::max(0.0f, g.motivation - decayRate);
 
-            /* Autonomous progress: if the drive this goal serves is now
-             * satisfied (below its threshold), credit a small progress step
-             * so long-standing intents actually complete instead of sitting
-             * at 0% forever.                                               */
             if (drives && g.source_drive < (uint32_t)ELLE_DRIVE_COUNT) {
                 float intensity = drives->intensity[g.source_drive];
                 float threshold = drives->threshold[g.source_drive];
@@ -214,11 +185,10 @@ public:
                 }
             }
 
-            /* Check for stale goals */
             if (g.last_progress_ms > 0 && (now - g.last_progress_ms) > staleMs) {
                 g.status = GOAL_ABANDONED;
                 ELLE_INFO("Goal auto-abandoned (stale): [%llu] %s", g.id, g.description);
-                /* Durable — see UpdateProgress for rationale. */
+
                 if (!ElleDB::UpdateGoalStatus(g.id, GOAL_ABANDONED)) {
                     AppendGoalFallback(std::string("STATUS ") + std::to_string((unsigned long long)g.id) + " ABANDONED");
                 }
@@ -250,15 +220,9 @@ public:
 
 private:
     std::vector<ELLE_GOAL_RECORD> m_goals;
-    /* m_nextId removed — the DB owns goal ids via IDENTITY; CreateGoal now
-     * reads the id back from StoreGoalReturningId so in-memory and row ids
-     * always agree. The old m_nextId silently drifted from the DB's
-     * IDENTITY sequence, and UpdateProgress was writing to the wrong row. */
+
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * GOAL SERVICE
- *──────────────────────────────────────────────────────────────────────────────*/
 class ElleGoalService : public ElleServiceBase {
 public:
     ElleGoalService()
@@ -277,16 +241,13 @@ protected:
     void OnStop() override { ELLE_INFO("Goal service stopped"); }
 
     void OnTick() override {
-        /* Refresh drive state each tick so autonomous progress credit has
-         * fresh intensity data; Tick() uses it to credit satisfied drives. */
+
         ElleDB::DeriveDriveState(m_drives);
         m_engine.Tick(&m_drives);
         m_tickCount++;
 
-        /* Periodic goal generation (every 5 minutes) */
         if (m_tickCount % 60 == 0) {
-            /* Drives are already refreshed at tick start; just pull the
-             * latest emotion snapshot for GenerateGoals().                */
+
             ElleDB::LoadLatestEmotionSnapshot(m_emotions);
             m_engine.GenerateGoals(m_drives, m_emotions);
         }
@@ -297,12 +258,7 @@ protected:
             case IPC_GOAL_UPDATE: {
                 ELLE_GOAL_RECORD goal;
                 if (msg.GetPayload(goal)) {
-                    /* id == 0 → create new goal (bootstrapping path).
-                     * id > 0  → progress/status update for an existing
-                     * DB row. Previously the handler always called
-                     * CreateGoal, so external progress updates just
-                     * created duplicate goals and UpdateProgress never
-                     * ran live.                                         */
+
                     if (goal.id == 0) {
                         m_engine.CreateGoal(goal.description,
                                             (ELLE_GOAL_PRIORITY)goal.priority,

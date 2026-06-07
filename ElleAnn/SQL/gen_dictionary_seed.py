@@ -1,32 +1,11 @@
-"""
-gen_dictionary_seed.py — fetch definitions for a curated word list from
-api.dictionaryapi.dev and emit a pre-baked dictionary_seed.sql that
-populates ElleCore.dbo.dictionary_words on first install.
-
-Why: the runtime DictionaryLoader walks CORE_WORDS at ~120 ms per word
-(≈ 25 seconds for 200 words, idle & online). A seed gives a working
-vocabulary the moment install completes — no network needed at runtime.
-
-Run ONCE on any machine with internet:
-
-    pip install requests
-    python gen_dictionary_seed.py > dictionary_seed.sql
-
-Commit the resulting file alongside the SQL schema deltas. Apply with
-sqlcmd after ElleAnn_MemoryDelta.sql.
-"""
-
 import sys
 import time
 import json
 import requests
 
 API = "https://api.dictionaryapi.dev/api/v2/entries/en/{}"
-DELAY = 0.2   # 200 ms — polite to the free API
+DELAY = 0.2
 
-
-# ─── word list ──────────────────────────────────────────────────────────────
-# Mirrors C++ DictionaryLoader's CORE_WORDS. Keep in sync.
 WORDS = [
     "love","trust","remember","forget","hope","fear","joy","sadness","anger",
     "curious","patient","kind","brave","honest","wise","gentle","fierce","calm",
@@ -52,14 +31,10 @@ WORDS = [
     "perhaps","maybe","certainly","obviously","probably","hopefully","unfortunately"
 ]
 
-
 def esc(s: str) -> str:
-    """SQL string escape (single quotes doubled)."""
     return s.replace("'", "''")
 
-
 def fetch(word: str):
-    """Returns list of (word, pos, definition, example) tuples, or [] on miss."""
     try:
         r = requests.get(API.format(word), timeout=10)
         if r.status_code != 200:
@@ -82,7 +57,6 @@ def fetch(word: str):
                 if defn:
                     rows.append((word, pos, defn.strip(), ex.strip()))
     return rows
-
 
 def main() -> int:
     print("/*" + "─" * 70)
@@ -111,7 +85,7 @@ def main() -> int:
             time.sleep(DELAY)
             continue
         for (word, pos, defn, example) in rows:
-            # Truncate overly-long definitions to keep the seed compact.
+
             if len(defn) > 400:
                 defn = defn[:400].rsplit(" ", 1)[0] + "..."
             if len(example) > 200:
@@ -137,7 +111,6 @@ def main() -> int:
     print(f"\n-- DONE: {written} rows written, {missed} words missing.",
           file=sys.stderr)
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main() or 0)

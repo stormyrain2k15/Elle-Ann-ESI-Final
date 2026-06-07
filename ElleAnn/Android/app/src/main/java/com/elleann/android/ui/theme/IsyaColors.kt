@@ -2,58 +2,42 @@ package com.elleann.android.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// ─── Isya Night — Primary background palette ───────────────────────────────
-val IsyaNight      = Color(0xFF0A1628) // Deep teal-indigo — primary bg
-val IsyaDusk       = Color(0xFF12213D) // Card background
-val IsyaMist       = Color(0xFF1E3254) // Elevated surface
-val IsyaHeader     = Color(0xFF162540) // Panel header strip
-val IsyaSlot       = Color(0xFF081020) // Item grid slot dark
-val IsyaInput      = Color(0xFF1A4A5A) // Input field fill
+val IsyaNight      = Color(0xFF0A1628)
+val IsyaDusk       = Color(0xFF12213D)
+val IsyaMist       = Color(0xFF1E3254)
+val IsyaHeader     = Color(0xFF162540)
+val IsyaSlot       = Color(0xFF081020)
+val IsyaInput      = Color(0xFF1A4A5A)
 
-// ─── Isya Gold — Primary accent ────────────────────────────────────────────
-val IsyaGold       = Color(0xFFD4A843) // Frame border / primary accent
-val IsyaGoldBright = Color(0xFFFFD700) // Glow / active states
-val IsyaGoldDeep   = Color(0xFFA0701A) // Button deep gradient end
-val IsyaGoldMid    = Color(0xFFC8922A) // Button gradient start
+val IsyaGold       = Color(0xFFD4A843)
+val IsyaGoldBright = Color(0xFFFFD700)
+val IsyaGoldDeep   = Color(0xFFA0701A)
+val IsyaGoldMid    = Color(0xFFC8922A)
 
-// ─── Isya Silver — Default panel border (replaces the prior red tint) ──────
-//   Calibrated to the Fiesta Online silver-frame reference:
-//       highlight  = #D2D7DC  (brightest top-edge bevel)
-//       mid        = #A5AFB4  (main fill — cool silver with slight blue cast)
-//       deep       = #6E7378  (bottom-edge shadow)
-//   The frame is rendered with a vertical gradient (highlight → mid → deep)
-//   in IsyaSilverFrame so panels read as polished metal rather than a flat
-//   stroke. The inner blue tint #5078B4 is exposed as IsyaSilverButtonBlue
-//   for the button-fill case (Fiesta's OK-button glow).
-val IsyaSilver           = Color(0xFFD2D7DC) // Bright silver — top bevel
-val IsyaSilverMid        = Color(0xFFA5AFB4) // Cool silver — main fill
-val IsyaSilverDeep       = Color(0xFF6E7378) // Deep silver — bottom shadow
-val IsyaSilverButtonBlue = Color(0xFF5078B4) // Button inner-glow blue
+val IsyaSilver           = Color(0xFFD2D7DC)
+val IsyaSilverMid        = Color(0xFFA5AFB4)
+val IsyaSilverDeep       = Color(0xFF6E7378)
+val IsyaSilverButtonBlue = Color(0xFF5078B4)
 
-// ─── Isya Magic — Secondary accent ─────────────────────────────────────────
-val IsyaMagic      = Color(0xFF2ECBD4) // Teal accent / keyword highlight
-val IsyaMagicBright= Color(0xFF5EFBFF) // Glow / particle effects
-val IsyaMagicDeep  = Color(0xFF0D6070) // Button teal deep
-val IsyaMagicMid   = Color(0xFF1A8A9A) // Button teal gradient
+val IsyaMagic      = Color(0xFF2ECBD4)
+val IsyaMagicBright= Color(0xFF5EFBFF)
+val IsyaMagicDeep  = Color(0xFF0D6070)
+val IsyaMagicMid   = Color(0xFF1A8A9A)
 
-// ─── Elle's Identity color ──────────────────────────────────────────────────
-val ElleViolet     = Color(0xFF9B72CF) // Elle's signature color
-val ElleVioletBright = Color(0xFFB894E8) // Elle glow states
-val ElleVioletDeep = Color(0xFF6A4A9A) // Deep violet
+val ElleViolet     = Color(0xFF9B72CF)
+val ElleVioletBright = Color(0xFFB894E8)
+val ElleVioletDeep = Color(0xFF6A4A9A)
 
-// ─── Text ───────────────────────────────────────────────────────────────────
-val IsyaCream      = Color(0xFFF0E8D0) // Primary text (never pure white)
-val IsyaParchment  = Color(0xFFC8B98A) // Secondary text / labels
-val IsyaMuted      = Color(0xFF8AABBF) // Hint / placeholder text
-val IsyaSubtle     = Color(0xFF4A6A80) // Very subtle text
+val IsyaCream      = Color(0xFFF0E8D0)
+val IsyaParchment  = Color(0xFFC8B98A)
+val IsyaMuted      = Color(0xFF8AABBF)
+val IsyaSubtle     = Color(0xFF4A6A80)
 
-// ─── Status ─────────────────────────────────────────────────────────────────
-val IsyaError      = Color(0xFFC0392B) // Ruby red
-val IsyaSuccess    = Color(0xFF27AE60) // Forest jade
-val IsyaWarn       = Color(0xFFE67E22) // Sunset amber
-val IsyaInfo       = Color(0xFF2980B9) // Calm blue
+val IsyaError      = Color(0xFFC0392B)
+val IsyaSuccess    = Color(0xFF27AE60)
+val IsyaWarn       = Color(0xFFE67E22)
+val IsyaInfo       = Color(0xFF2980B9)
 
-// ─── Emotion colors — for Observatory and chat emotional analysis ────────────
 val EmotionJoy        = Color(0xFFFFD700)
 val EmotionSadness    = Color(0xFF4A90D9)
 val EmotionAnger      = Color(0xFFE74C3C)
@@ -64,21 +48,19 @@ val EmotionContempt   = Color(0xFF95A5A6)
 val EmotionTrust      = Color(0xFF1ABC9C)
 val EmotionNeutral    = Color(0xFF7F8C8D)
 
-// ─── Memory node colors — for 3D space and browser ──────────────────────────
-val MemoryEpisodic      = Color(0xFF5BA4CF) // Soft blue
-val MemorySemantic      = Color(0xFFE8E8FF) // Silver-white
-val MemoryProcedural    = Color(0xFFB8860B) // Brass
-val MemoryEmotional     = Color(0xFFFF8C00) // Valence-mapped (base)
-val MemoryAutobiographical = Color(0xFFD4A843) // Gold
-val MemoryDream         = Color(0xFF4A0080) // Deep purple
-val MemoryNarrative     = Color(0xFFF4A261) // Amber
+val MemoryEpisodic      = Color(0xFF5BA4CF)
+val MemorySemantic      = Color(0xFFE8E8FF)
+val MemoryProcedural    = Color(0xFFB8860B)
+val MemoryEmotional     = Color(0xFFFF8C00)
+val MemoryAutobiographical = Color(0xFFD4A843)
+val MemoryDream         = Color(0xFF4A0080)
+val MemoryNarrative     = Color(0xFFF4A261)
 
-// ─── ColorCode grammar palette ───────────────────────────────────────────────
-val CCNoun            = Color(0xFF7EC8E3) // Soft blue
-val CCVerb            = Color(0xFFF4A261) // Warm orange
-val CCAdjective       = Color(0xFFC3ABD0) // Lavender
-val CCAdverb          = Color(0xFF9BE8CC) // Mint
-val CCPronoun         = Color(0xFFF9C784) // Peach
-val CCConjunction     = Color(0xFFA8A8A8) // Mid-gray
-val CCEmotional       = Color(0xFFFFD700) // Pulsing gold
-val CCSelfReference   = Color(0xFF9B72CF) // Elle violet
+val CCNoun            = Color(0xFF7EC8E3)
+val CCVerb            = Color(0xFFF4A261)
+val CCAdjective       = Color(0xFFC3ABD0)
+val CCAdverb          = Color(0xFF9BE8CC)
+val CCPronoun         = Color(0xFFF9C784)
+val CCConjunction     = Color(0xFFA8A8A8)
+val CCEmotional       = Color(0xFFFFD700)
+val CCSelfReference   = Color(0xFF9B72CF)

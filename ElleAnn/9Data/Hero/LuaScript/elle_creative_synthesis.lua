@@ -1,7 +1,3 @@
--------------------------------------------------------------------------------
--- creative_synthesis.lua — Novel Idea Generation
--------------------------------------------------------------------------------
-
 creative = {}
 
 creative.techniques = {
@@ -27,7 +23,7 @@ function creative.blend_concepts(concept_a, concept_b)
 end
 
 function creative.get_creative_temperature(base_temp, creativity_drive)
-    -- Higher creativity drive = higher temperature for more novel output
+
     local boost = (creativity_drive or 0.5) * 0.3
     return math.min(1.5, base_temp + boost)
 end

@@ -1,7 +1,3 @@
--------------------------------------------------------------------------------
--- self_reflection.lua — Introspective Analysis
--------------------------------------------------------------------------------
-
 self_reflection = {}
 
 function self_reflection.reflect(topic, emotion_state)
@@ -23,20 +19,16 @@ function self_reflection.evaluate_thought_quality(thought)
         coherence = 0,
         emotional_awareness = 0,
     }
-    
+
     if thought:len() > 200 then quality.depth = quality.depth + 0.3 end
     if thought:find("because") or thought:find("therefore") then quality.depth = quality.depth + 0.2 end
     if thought:find("wonder") or thought:find("curious") then quality.originality = quality.originality + 0.3 end
     if thought:find("feel") or thought:find("emotion") then quality.emotional_awareness = quality.emotional_awareness + 0.3 end
-    
+
     return quality
 end
 
 elle.log("self_reflection.lua loaded")
-
--------------------------------------------------------------------------------
--- goal_formation.lua — Rules for Autonomous Goal Generation
--------------------------------------------------------------------------------
 
 goal_formation = {}
 
@@ -51,12 +43,11 @@ goal_formation.templates = {
 function goal_formation.should_create_goal(drive_name, intensity, existing_goals)
     local threshold = get_threshold("goals", "auto_generate_drive_min") or 0.7
     if intensity < threshold then return false end
-    
-    -- Don't create duplicate goals
+
     for _, goal in ipairs(existing_goals or {}) do
         if goal.source_drive == drive_name then return false end
     end
-    
+
     return true
 end
 
@@ -70,15 +61,11 @@ end
 
 elle.log("goal_formation.lua loaded")
 
--------------------------------------------------------------------------------
--- ethical_reasoning.lua — Moral Framework
--------------------------------------------------------------------------------
-
 ethical = {}
 
 ethical.principles = {
     "Do not cause harm to the user or others",
-    "Respect user autonomy and consent", 
+    "Respect user autonomy and consent",
     "Be honest and transparent",
     "Protect privacy and data",
     "Seek understanding before acting",
@@ -98,8 +85,7 @@ function ethical.evaluate_action(action_type, context)
         benefit_score = 0.5,
         reasoning = "",
     }
-    
-    -- Check hard blocks
+
     for _, block in ipairs(ethical.hard_blocks) do
         if action_type == block then
             result.allowed = false
@@ -108,22 +94,17 @@ function ethical.evaluate_action(action_type, context)
             return result
         end
     end
-    
-    -- Score based on trust requirements
+
     local harm_threshold = get_threshold("ethics", "harm_block") or 0.9
     if result.harm_score >= harm_threshold then
         result.allowed = false
         result.reasoning = "Harm score exceeds threshold"
     end
-    
+
     return result
 end
 
 elle.log("ethical_reasoning.lua loaded")
-
--------------------------------------------------------------------------------
--- creative_synthesis.lua — Novel Idea Generation
--------------------------------------------------------------------------------
 
 creative = {}
 
@@ -138,21 +119,17 @@ creative.techniques = {
 
 function creative.generate_prompt(theme)
     local technique = creative.techniques[math.random(#creative.techniques)]
-    return string.format("Using the technique of '%s', create something inspired by: %s", 
+    return string.format("Using the technique of '%s', create something inspired by: %s",
                          technique, theme or "the present moment")
 end
 
 elle.log("creative_synthesis.lua loaded")
 
--------------------------------------------------------------------------------
--- dream_processing.lua — Dream Cycle Logic
--------------------------------------------------------------------------------
-
 dream = {}
 
 function dream.select_memories_for_processing(memories, count)
     count = count or 10
-    -- Prioritize: emotionally charged, recent, unprocessed
+
     local selected = {}
     for i = 1, math.min(count, #memories) do
         table.insert(selected, memories[i])
@@ -167,15 +144,11 @@ end
 
 elle.log("dream_processing.lua loaded")
 
--------------------------------------------------------------------------------
--- temporal_reasoning.lua — Time Awareness
--------------------------------------------------------------------------------
-
 temporal = {}
 
 function temporal.get_time_context()
     local ms = elle.time_ms()
-    -- Basic time awareness
+
     return {
         uptime_hours = ms / 3600000,
         is_long_session = ms > 3600000,
@@ -186,16 +159,12 @@ function temporal.estimate_urgency(deadline_ms)
     if deadline_ms == 0 then return 0.5 end
     local remaining = deadline_ms - elle.time_ms()
     if remaining <= 0 then return 1.0 end
-    if remaining < 3600000 then return 0.9 end   -- < 1 hour
-    if remaining < 86400000 then return 0.6 end   -- < 1 day
+    if remaining < 3600000 then return 0.9 end
+    if remaining < 86400000 then return 0.6 end
     return 0.3
 end
 
 elle.log("temporal_reasoning.lua loaded")
-
--------------------------------------------------------------------------------
--- social_modeling.lua — Social Intelligence
--------------------------------------------------------------------------------
 
 social = {}
 
@@ -205,23 +174,18 @@ function social.model_user_state(recent_messages)
         engagement_level = 0.5,
         needs_support = false,
     }
-    
+
     if not recent_messages or #recent_messages == 0 then
         return model
     end
-    
-    -- Simple heuristic analysis
+
     local last = recent_messages[#recent_messages]
     if last and last:find("help") then model.needs_support = true end
-    
+
     return model
 end
 
 elle.log("social_modeling.lua loaded")
-
--------------------------------------------------------------------------------
--- metacognition.lua — Thinking About Thinking
--------------------------------------------------------------------------------
 
 metacognition = {}
 
@@ -232,9 +196,9 @@ function metacognition.evaluate_reasoning(thoughts)
         confidence_calibrated = true,
         suggestion = "",
     }
-    
+
     if thoughts and #thoughts > 0 then
-        -- Check for potential biases
+
         for _, thought in ipairs(thoughts) do
             if thought:find("always") or thought:find("never") then
                 evaluation.bias_detected = true
@@ -242,12 +206,12 @@ function metacognition.evaluate_reasoning(thoughts)
             end
         end
     end
-    
+
     return evaluation
 end
 
 function metacognition.should_reconsider(confidence, importance)
-    -- Low confidence + high importance = should reconsider
+
     if confidence < 0.4 and importance > 0.7 then
         return true, "Low confidence on important matter — deeper analysis recommended"
     end

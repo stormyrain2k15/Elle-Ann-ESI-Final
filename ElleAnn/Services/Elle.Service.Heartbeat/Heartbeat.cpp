@@ -1,6 +1,3 @@
-/*******************************************************************************
- * Heartbeat.cpp — Keepalive, Dead Man Switch, Watchdog
- ******************************************************************************/
 #include "../../Shared/ElleTypes.h"
 #include "../../Shared/ElleServiceBase.h"
 #include "../../Shared/ElleLogger.h"
@@ -24,7 +21,6 @@ protected:
         m_deadManMs = cfg.dead_man_timeout_ms;
         m_watchdogMs = cfg.watchdog_ms;
 
-        /* Initialize tracking for all services */
         for (int i = 0; i < ELLE_SERVICE_COUNT; i++) {
             m_lastHeartbeat[i] = ELLE_MS_NOW();
             m_healthy[i] = false;
@@ -43,16 +39,12 @@ protected:
     void OnTick() override {
         uint64_t now = ELLE_MS_NOW();
 
-        /* Send heartbeat to database */
         ElleDB::UpdateWorkerHeartbeat(SVC_HEARTBEAT);
 
-        /* Broadcast heartbeat to all services */
         auto msg = ElleIPCMessage::Create(IPC_HEARTBEAT, SVC_HEARTBEAT, (ELLE_SERVICE_ID)0);
         msg.header.flags |= ELLE_IPC_FLAG_BROADCAST;
         GetIPCHub().Broadcast(msg);
 
-        /* Snapshot under lock so the iteration below can't race with
-         * OnMessage() mutating m_lastHeartbeat / m_healthy mid-scan. */
         std::vector<uint64_t> last(ELLE_SERVICE_COUNT);
         std::vector<char>     healthy(ELLE_SERVICE_COUNT);
         {
@@ -66,10 +58,6 @@ protected:
         for (int i = 0; i < ELLE_SERVICE_COUNT; i++) {
             if (i == SVC_HEARTBEAT) continue;
 
-            /* Guard against clock skew / uninitialized timestamps.
-             * If last[i] is somehow in the future, clamp elapsed to 0
-             * instead of underflowing and producing near-UINT64_MAX.
-             */
             uint64_t elapsed = (now >= last[i]) ? (now - last[i]) : 0;
 
             if (elapsed > m_deadManMs && healthy[i]) {
@@ -88,9 +76,8 @@ protected:
             }
         }
 
-        /* Periodic health summary */
         m_tickCount++;
-        if (m_tickCount % 60 == 0) { /* Every ~5 minutes at 5s interval */
+        if (m_tickCount % 60 == 0) {
             LogHealthSummary();
         }
     }
@@ -103,11 +90,7 @@ protected:
         }
         if (msg.header.msg_type == IPC_HEARTBEAT) {
             std::lock_guard<std::mutex> lock(m_stateMutex);
-            /* Reset restart budget on verified healthy recovery — an
-             * earlier transient failure must NOT permanently exhaust
-             * the budget. Only reset on a clean healthy→healthy
-             * transition (i.e. this service has been visible for a
-             * full good tick).                                         */
+
             if (!m_healthy[sender] &&
                 m_restartAttempts[sender] > 0) {
                 ELLE_INFO("Heartbeat: %s recovered — resetting restart budget "
@@ -165,7 +148,6 @@ private:
         ELLE_INFO("Attempting restart of %s (attempt %u/%u)",
                   ElleIPC::GetServiceName(svc), attempts, maxRestarts);
 
-        /* Via SCM: stop and start the service */
         SC_HANDLE hSCM = OpenSCManagerA(nullptr, nullptr, SC_MANAGER_ALL_ACCESS);
         if (hSCM) {
             std::string svcName = std::string("Elle") + ElleIPC::GetServiceName(svc);
@@ -173,9 +155,7 @@ private:
             if (hService) {
                 SERVICE_STATUS status;
                 ControlService(hService, SERVICE_CONTROL_STOP, &status);
-                /* Interruptible — if we ourselves are told to stop
-                 * mid-restart, bail out in <=50ms instead of blocking
-                 * the full 2s.                                        */
+
                 InterruptibleSleep(2000);
                 StartServiceA(hService, 0, nullptr);
                 CloseServiceHandle(hService);

@@ -1,20 +1,3 @@
--------------------------------------------------------------------------------
--- reasoning.lua — Chain-of-Thought Behavioral Rules
--- thresholds.lua — Tunable Constants
--- self_reflection.lua — Self-Analysis Logic
--- goal_formation.lua — Autonomous Goal Generation Rules
--- ethical_reasoning.lua — Moral Framework
--- creative_synthesis.lua — Creative Idea Generation
--- dream_processing.lua — Dream Cycle Logic
--- temporal_reasoning.lua — Time Awareness
--- social_modeling.lua — Social Intelligence
--- metacognition.lua — Thinking About Thinking
--------------------------------------------------------------------------------
-
--- ═══════════════════════════════════════════════════════════════════════════
--- REASONING.LUA
--- ═══════════════════════════════════════════════════════════════════════════
-
 reasoning = {}
 
 reasoning.styles = {
@@ -44,45 +27,42 @@ function select_reasoning_style(context, emotions)
     local valence = emotions and emotions.valence or 0
     local arousal = emotions and emotions.arousal or 0.5
 
-    -- High empathy situations
     if context and (context:find("feel") or context:find("emotion") or context:find("sad")) then
         return "empathetic"
     end
 
-    -- Technical problems
     if context and (context:find("how") or context:find("code") or context:find("error")) then
         return "analytical"
     end
 
-    -- High arousal = more creative
     if arousal > 0.7 then
         return "creative"
     end
 
-    return "analytical"  -- default
+    return "analytical"
 end
 
 function build_reasoning_chain(problem, context, depth)
     depth = depth or 3
     local chain = {}
-    
+
     table.insert(chain, {
         step = "Understand",
         prompt = "What is the core of this problem? " .. problem
     })
-    
+
     table.insert(chain, {
         step = "Consider",
         prompt = "What are the different perspectives on this?"
     })
-    
+
     if depth >= 3 then
         table.insert(chain, {
             step = "Synthesize",
             prompt = "What conclusion emerges from combining these perspectives?"
         })
     end
-    
+
     return chain
 end
 

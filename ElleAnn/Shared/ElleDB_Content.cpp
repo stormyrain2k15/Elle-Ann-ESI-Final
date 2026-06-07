@@ -1,13 +1,3 @@
-/*******************************************************************************
- * ElleDB_Content.cpp — Emotion snapshots, Memory helpers, Voice,
- *                     Metrics, Learning subjects / skills / video /
- *                     dictionary / drive state / emotion history
- *
- * Part of the ElleDB namespace — split from the monolithic ElleSQLConn.cpp
- * so each domain can be audited and edited independently. Shares the
- * same ODBC connection pool (ElleSQLPool::Instance()) and the same
- * symbol namespace, so callers need no changes.
- ******************************************************************************/
 #include "ElleSQLConn.h"
 #include "ElleLogger.h"
 #include "ElleConfig.h"
@@ -33,25 +23,6 @@ bool GetLatestEmotionState(ELLE_EMOTION_STATE& out) {
     return LoadLatestEmotionSnapshot(out);
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * MEMORY tier transitions — DEAD CODE (Feb 2026 audit).
- *
- * The actual consolidation path is `MemoryEngine::ConsolidateMemories()`
- * which writes promoted records to LTM via the `WriteToLTM` private
- * method on the engine — these standalone helpers are vestigial from
- * an earlier design where /api/memory/{id}/promote was supposed to call
- * them directly.  They are deliberately kept (not deleted) because:
- *   1. The header still declares them — removing breaks ABI for any
- *      external tool that linked against the .lib.
- *   2. The /api/memory/{id}/promote route may want to manually flip
- *      tier without going through the full decay pass.
- *
- * Naming caveat: pre-pivot `PromoteToLTM` wrote tier=2, which is MTM
- * by the canonical schema (tier 1=STM, 2=MTM, 3=LTM).  Fixed below so
- * `PromoteToLTM` actually writes tier=3, and a new `PromoteToMTM`
- * writes tier=2.  Old `ArchiveMemory(tier=3)` is now redundant with
- * the corrected `PromoteToLTM` and is left as an alias.
- *──────────────────────────────────────────────────────────────────────────────*/
 bool PromoteToMTM(uint64_t memId) {
     return ElleSQLPool::Instance().QueryParams(
         "UPDATE ElleCore.dbo.memory SET tier = 2, "
@@ -69,19 +40,10 @@ bool PromoteToLTM(uint64_t memId) {
 }
 
 bool ArchiveMemory(uint64_t memId) {
-    /* Now an alias for PromoteToLTM — long-term retention IS the archive
-     * tier in our model.  Kept as a separate name because some call
-     * sites express archival intent and that semantic deserves to
-     * survive even when the implementation is identical. */
+
     return PromoteToLTM(memId);
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * GetSubjective — reads the wife's lived-experience answer for a given key
- * (e.g. "phase_luteal", "symptom_cramps", "wisdom_what_helps") out of
- * ElleHeart.dbo.x_subjective. The Lua file x_subjective.lua writes these
- * on every hot-reload; we read them on every Cognitive system-prompt build.
- *──────────────────────────────────────────────────────────────────────────────*/
 std::string GetSubjective(const std::string& key) {
     auto rs = ElleSQLPool::Instance().QueryParams(
         "IF EXISTS (SELECT 1 FROM sys.tables t "
@@ -95,9 +57,6 @@ std::string GetSubjective(const std::string& key) {
     return std::string();
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * MEMORY CRUD helpers for the /api/memory routes
- *──────────────────────────────────────────────────────────────────────────────*/
 static void FillMemoryRow(ElleDB::MemoryRow& r, const SQLRow& row) {
     r.id = row.GetIntOr(0, 0);
     r.type = (int)row.GetIntOr(1, 0);
@@ -140,7 +99,7 @@ bool GetMemory(int64_t memId, MemoryRow& out) {
         { std::to_string(memId) });
     if (!rs.success || rs.rows.empty()) return false;
     FillMemoryRow(out, rs.rows[0]);
-    /* Bump access */
+
     ElleSQLPool::Instance().QueryParams(
         "UPDATE ElleCore.dbo.memory SET access_count = access_count + 1, "
         "last_access_ms = ? WHERE id = ?;",
@@ -164,9 +123,6 @@ bool UpdateMemoryContent(int64_t memId, const std::string& content,
           std::to_string(ELLE_MS_NOW()), std::to_string(memId) }).success;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * CONVERSATIONS
- *──────────────────────────────────────────────────────────────────────────────*/
 bool CreateConversation(int32_t user_id, const std::string& title, int32_t& newId) {
     auto rs = ElleSQLPool::Instance().QueryParams(
         "INSERT INTO ElleCore.dbo.conversations "
@@ -179,7 +135,7 @@ bool CreateConversation(int32_t user_id, const std::string& title, int32_t& newI
         newId = (int32_t)rs.rows[0].GetIntOr(0, 0);
         return newId > 0;
     }
-    /* Fallback: re-query by MAX(id) for this user */
+
     auto r2 = ElleSQLPool::Instance().QueryParams(
         "SELECT TOP 1 id FROM ElleCore.dbo.conversations WHERE user_id = ? ORDER BY id DESC;",
         { std::to_string(user_id) });
@@ -230,9 +186,6 @@ bool GetConversation(int32_t convId, ConversationRow& out) {
     return true;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * VOICE CALLS
- *──────────────────────────────────────────────────────────────────────────────*/
 bool StartVoiceCall(int32_t user_id, int32_t conv_id, std::string& callId) {
     callId = "vc-" + std::to_string(ELLE_MS_NOW());
     auto rs = ElleSQLPool::Instance().QueryParams(
@@ -255,13 +208,7 @@ bool EndVoiceCall(const std::string& callId) {
 }
 
 int64_t CountTable(const std::string& table) {
-    /* Table name is caller-controlled so restrict to whitelist of
-     * tables that actually exist in the live schema (verified against
-     * the SQL DDL files).  Names not in this list — historical or
-     * aspirational tables like InternalNarrative / CognitiveEvents —
-     * would silently return -1 from the SQL probe; pruning them here
-     * means the /api/diag count endpoint stays a single source of
-     * truth. */
+
     static const std::set<std::string> whitelist = {
         "memory","messages","conversations","users","world_entity",
         "memory_tags","memory_entity_links","ElleThreads",
@@ -275,8 +222,7 @@ int64_t CountTable(const std::string& table) {
 }
 
 bool RecordMetric(const std::string& name, double value) {
-    /* ElleSystem.dbo.Analytics doesn't exist in the live schema. Write to
-     * system_settings as key/value so metrics are still persisted. */
+
     char val[64];
     snprintf(val, sizeof(val), "%.6f", value);
     return ElleSQLPool::Instance().QueryParams(
@@ -289,11 +235,6 @@ bool RecordMetric(const std::string& name, double value) {
           "metric_" + name, std::string(val) }).success;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * INTIMACY LAYER — Crystal profile / open threads / user presence
- *   These tables are from the prior Python system and are already populated.
- *   Cognitive pulls them every chat turn to shape Elle's tone and recall.
- *──────────────────────────────────────────────────────────────────────────────*/
 bool GetCrystalProfile(int32_t user_id, CrystalProfile& out) {
     auto rs = ElleSQLPool::Instance().QueryParams(
         "SELECT TOP 1 ISNULL(traits,''), ISNULL(vulnerability_patterns,''), "
@@ -359,7 +300,7 @@ bool GetUserPresence(int32_t user_id, UserPresence& out) {
 }
 
 bool UpdateUserPresenceOnInteraction(int32_t user_id) {
-    /* Any turn from the user breaks their silence streak. */
+
     return ElleSQLPool::Instance().QueryParams(
         "IF EXISTS (SELECT 1 FROM ElleCore.dbo.UserPresence WHERE user_id = ?) "
         "  UPDATE ElleCore.dbo.UserPresence "
@@ -375,13 +316,8 @@ bool UpdateUserPresenceOnInteraction(int32_t user_id) {
         { std::to_string(user_id), std::to_string(user_id), std::to_string(user_id) }).success;
 }
 
-/*══════════════════════════════════════════════════════════════════════════════
- * EDUCATION — ported from app/routers/education.py
- *═════════════════════════════════════════════════════════════════════════════*/
 static void RowToSubject(const SQLRow& r, LearnedSubject& s) {
-    /* Column order used everywhere below — single source of truth. */
-    /* id, subject, category, proficiency_level, who_taught, where_learned,
-       time_to_learn_hours, notes, date_started, date_completed */
+
     s.id                  = (int32_t)r.GetIntOr(0, 0);
     s.subject             = r.values.size() > 1 ? r.values[1] : "";
     s.category            = r.values.size() > 2 ? r.values[2] : "";
@@ -433,8 +369,7 @@ bool GetSubject(int32_t subject_id, LearnedSubject& out) {
 bool CreateSubject(const LearnedSubject& in, int32_t& newId) {
     newId = 0;
     uint64_t mark = ELLE_MS_NOW();
-    /* We piggy-back id recovery on the date_started timestamp — add the ms
-     * marker to notes so we can find the row back in a pool-safe way. */
+
     std::string markedNotes = in.notes + "\n[[ins_mark=" + std::to_string(mark) + "]]";
     auto r1 = ElleSQLPool::Instance().QueryParams(
         "INSERT INTO ElleCore.dbo.learned_subjects "
@@ -454,7 +389,6 @@ bool CreateSubject(const LearnedSubject& in, int32_t& newId) {
         { std::string("%[[ins_mark=") + std::to_string(mark) + "]]%" });
     if (r2.success && !r2.rows.empty()) newId = (int32_t)r2.rows[0].GetIntOr(0, 0);
 
-    /* Strip the marker from notes now that we've recovered the id. */
     if (newId > 0) {
         ElleSQLPool::Instance().QueryParams(
             "UPDATE ElleCore.dbo.learned_subjects SET notes = ? WHERE id = ?;",
@@ -479,7 +413,7 @@ bool UpdateSubject(int32_t subject_id, const LearnedSubject& patch,
         else if (f == "time_to_learn_hours") params.push_back(std::to_string(patch.time_to_learn_hours));
         else if (f == "notes")               params.push_back(patch.notes);
         else if (f == "date_completed")      params.push_back(patch.date_completed);
-        else return false; /* reject unknown columns — SQL injection guard */
+        else return false;
     }
     params.push_back(std::to_string(subject_id));
     return ElleSQLPool::Instance().QueryParams(
@@ -589,7 +523,7 @@ bool CreateSkill(const Skill& in, int32_t& newId) {
         "VALUES (?, ?, ?, NULLIF(?, ''), ?);",
         params);
     if (!r1.success) {
-        /* Duplicate skill_name triggers unique-constraint — legacy behaviour returns 409. */
+
         ELLE_WARN("CreateSkill failed: %s", r1.error.c_str());
         return false;
     }
@@ -610,15 +544,6 @@ bool RecordSkillUse(const std::string& skill_name) {
         { skill_name }).success;
 }
 
-/*══════════════════════════════════════════════════════════════════════════════
- * VIDEO JOBS — ported from app/services/video_generator.py
- *═════════════════════════════════════════════════════════════════════════════*/
-/* Real UUIDv4-quality identifier — 128 random bits rendered as 32 lower-
- * case hex chars (we return 16 chars for backwards compatibility with the
- * column width, but source the randomness from a proper CSPRNG-seeded
- * Mersenne engine instead of rand(). Previously this derived 16 hex chars
- * from ELLE_MS_NOW() XOR'd with rand()^i — collisions and near-birthdays
- * were easy for anyone who could predict either input.                   */
 static std::string MakeUuid16() {
     thread_local std::mt19937_64 rng{ std::random_device{}() };
     std::uniform_int_distribution<uint64_t> dist;
@@ -633,8 +558,7 @@ static std::string MakeUuid16() {
     return s;
 }
 static void RowToVideoJob(const SQLRow& r, VideoJob& j) {
-    /* id, job_uuid, text, avatar_path, call_id, status, progress,
-       output_path, error, created_ms, started_ms, finished_ms */
+
     j.id          = r.GetIntOr(0, 0);
     j.job_uuid    = r.values.size() > 1 ? r.values[1] : "";
     j.text        = r.values.size() > 2 ? r.values[2] : "";
@@ -689,11 +613,7 @@ bool GetVideoJob(const std::string& job_uuid, VideoJob& out) {
 }
 
 bool ClaimNextVideoJob(VideoJob& out) {
-    /* Two-step atomic claim:
-     *   1) UPDATE TOP(1) a queued row → running, output the job_uuid.
-     *   2) SELECT the full row back by uuid.
-     * Splitting keeps the OUTPUT clause simple (no function wrappers) and
-     * reuses the same column order as kVideoJobSelect.                     */
+
     auto claim = ElleSQLPool::Instance().QueryParams(
         "UPDATE TOP (1) ElleCore.dbo.video_jobs "
         "SET status = 'running', started_ms = ? "
@@ -729,7 +649,7 @@ bool FailVideoJob(const std::string& job_uuid, const std::string& error) {
 bool RegisterAvatar(const UserAvatar& in, int32_t& newId) {
     newId = 0;
     if (in.is_default) {
-        /* Clear existing defaults for this user. */
+
         ElleSQLPool::Instance().QueryParams(
             "UPDATE ElleCore.dbo.user_avatars SET is_default = 0 WHERE user_id = ?;",
             { std::to_string(in.user_id) });
@@ -785,9 +705,6 @@ bool ListAvatars(int32_t user_id, std::vector<UserAvatar>& out) {
     return true;
 }
 
-/*══════════════════════════════════════════════════════════════════════════════
- * DICTIONARY LOADER — companion helpers for dictionary_loader.py port
- *═════════════════════════════════════════════════════════════════════════════*/
 bool GetDictionaryLoaderState(DictionaryLoaderState& out) {
     auto rs = ElleSQLPool::Instance().Query(
         "SELECT TOP 1 status, loaded, failed, skipped, ISNULL(last_word,''), "
@@ -810,7 +727,7 @@ bool GetDictionaryLoaderState(DictionaryLoaderState& out) {
 }
 
 bool UpsertDictionaryLoaderState(const DictionaryLoaderState& in) {
-    /* Keep a single active row — update if exists, else insert. */
+
     auto exists = ElleSQLPool::Instance().Query(
         "SELECT TOP 1 id FROM ElleCore.dbo.dictionary_loader_state ORDER BY id DESC;");
     if (exists.success && !exists.rows.empty()) {
@@ -838,7 +755,7 @@ bool InsertDictionaryWord(const std::string& word,
                           const std::string& part_of_speech,
                           const std::string& definition,
                           const std::string& example) {
-    /* Idempotent: skip if (word, part_of_speech) already present. */
+
     auto exists = ElleSQLPool::Instance().QueryParams(
         "SELECT TOP 1 id FROM ElleCore.dbo.dictionary_words "
         "WHERE LOWER(word) = LOWER(?) AND ISNULL(part_of_speech,'') = ?;",
@@ -858,32 +775,24 @@ int64_t CountDictionaryWords() {
     return rs.rows[0].GetIntOr(0, 0);
 }
 
-/*══════════════════════════════════════════════════════════════════════════════
- * DRIVES — derived on demand from emotional state + goal backlog.
- *═════════════════════════════════════════════════════════════════════════════*/
 bool DeriveDriveState(ELLE_DRIVE_STATE& out) {
     memset(&out, 0, sizeof(out));
 
-    /* Sensible thresholds that make triggers fire around mid-high intensity. */
     for (int i = 0; i < ELLE_MAX_DRIVES; i++) {
         out.threshold[i]   = 0.6f;
         out.decay_rate[i]  = 0.02f;
         out.growth_rate[i] = 0.05f;
     }
 
-    /* Load the latest emotion snapshot; if absent, caller sees zero drives
-     * (which is correct — she's idle).                                    */
     ELLE_EMOTION_STATE emo{};
     bool haveEmo = LoadLatestEmotionSnapshot(emo);
 
-    /* Count active goals to gauge purpose fulfilment. */
     auto gcount = ElleSQLPool::Instance().Query(
-        "SELECT COUNT(*) FROM ElleCore.dbo.goals WHERE status = 0;"); /* GOAL_ACTIVE */
+        "SELECT COUNT(*) FROM ElleCore.dbo.goals WHERE status = 0;");
     int32_t activeGoals = (gcount.success && !gcount.rows.empty())
                           ? (int32_t)gcount.rows[0].GetIntOr(0, 0) : 0;
 
-    /* Derive. Clamped to [0,1]. */
-    float interest = haveEmo ? emo.dimensions[0] : 0.5f;  /* dim 0 ≈ interest */
+    float interest = haveEmo ? emo.dimensions[0] : 0.5f;
     float arousal  = haveEmo ? emo.arousal : 0.3f;
     float valence  = haveEmo ? emo.valence : 0.0f;
 
@@ -899,8 +808,7 @@ bool DeriveDriveState(ELLE_DRIVE_STATE& out) {
     out.intensity[DRIVE_SOCIAL_BONDING]  = clamp01(0.3f + 0.3f * valence);
     out.intensity[DRIVE_MASTERY]         = clamp01(0.4f + 0.1f * activeGoals / 5.0f);
     out.intensity[DRIVE_AUTONOMY]        = 0.5f;
-    /* Purpose is high when few goals are active (hungry for meaning) and
-     * satisfied when she has work. Matches the legacy python behaviour. */
+
     out.intensity[DRIVE_PURPOSE]         = clamp01(1.0f - std::min(1.0f, activeGoals / 3.0f));
     out.intensity[DRIVE_HOMEOSTASIS]     = 0.3f;
 
@@ -909,8 +817,7 @@ bool DeriveDriveState(ELLE_DRIVE_STATE& out) {
 }
 
 bool PersistEmotionSnapshot(const ELLE_EMOTION_STATE& state) {
-    /* Lazy-create the snapshot table — kept out of the schema delta so the
-     * DB doesn't gain a table for a feature that's only needed at shutdown. */
+
     ElleSQLPool::Instance().Exec(
         "IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'emotion_snapshots') "
         "CREATE TABLE ElleCore.dbo.emotion_snapshots ("
@@ -921,8 +828,6 @@ bool PersistEmotionSnapshot(const ELLE_EMOTION_STATE& state) {
         "  created_at DATETIME2(7) NOT NULL DEFAULT GETUTCDATE()"
         ");");
 
-    /* Serialize dimensions as space-separated floats so we don't need a
-     * JSON library inside ElleSQLConn. */
     std::ostringstream dims;
     for (int i = 0; i < ELLE_EMOTION_COUNT; i++) {
         if (i > 0) dims << ' ';
@@ -948,7 +853,6 @@ bool LoadLatestEmotionSnapshot(ELLE_EMOTION_STATE& out) {
     out.arousal   = (float)r.GetFloatOr(1, 0.0);
     out.dominance = (float)r.GetFloatOr(2, 0.0);
 
-    /* Parse the space-separated dimension list. */
     if (r.values.size() > 3) {
         std::istringstream iss(r.values[3]);
         for (int i = 0; i < ELLE_EMOTION_COUNT; i++) {
@@ -965,9 +869,7 @@ bool GetEmotionHistory(uint32_t hours,
                        uint32_t maxPoints) {
     out.clear();
     int64_t cutoff = (int64_t)ELLE_MS_NOW() - (int64_t)hours * 3600000LL;
-    /* Sampled pull: if the table has 10 000 rows and you asked for 500 points,
-     * we want a roughly-even trajectory, not the first 500. SQL TOP + ORDER
-     * gives us ORDER first; we stride in C++ to avoid a complex CTE.        */
+
     auto rs = ElleSQLPool::Instance().QueryParams(
         "IF EXISTS (SELECT 1 FROM sys.tables WHERE name = 'emotion_snapshots') "
         "  SELECT valence, arousal, dominance, taken_ms "
@@ -988,7 +890,7 @@ bool GetEmotionHistory(uint32_t hours,
         p.taken_ms  = r.GetIntOr(3, 0);
         out.push_back(p);
     }
-    /* Always include the most recent point even if stride skipped it. */
+
     if (!rs.rows.empty()) {
         auto& last = rs.rows.back();
         if (out.empty() || out.back().taken_ms != last.GetIntOr(3, 0)) {
@@ -1003,5 +905,4 @@ bool GetEmotionHistory(uint32_t hours,
     return true;
 }
 
-
-} /* namespace ElleDB */
+}

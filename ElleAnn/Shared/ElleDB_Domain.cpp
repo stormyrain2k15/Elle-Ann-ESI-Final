@@ -1,12 +1,3 @@
-/*******************************************************************************
- * ElleDB_Domain.cpp — Conversations / Memory / World / Trust /
- *                    Workers / Logs / Goals
- *
- * Part of the ElleDB namespace — split from the monolithic ElleSQLConn.cpp
- * so each domain can be audited and edited independently. Shares the
- * same ODBC connection pool (ElleSQLPool::Instance()) and the same
- * symbol namespace, so callers need no changes.
- ******************************************************************************/
 #include "ElleSQLConn.h"
 #include "ElleLogger.h"
 #include "ElleConfig.h"
@@ -25,14 +16,6 @@
 
 namespace ElleDB {
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Role helpers — shared by StoreMessage + GetConversationHistory.
- *
- * Canonical role→id map: mirrors the `messages.role` nvarchar values and
- * the uint32_t convention used internally (0=system, 1=user, 2=elle/
- * assistant, 3=internal). Any other role name is a schema drift and must
- * not silently collapse into `system`.
- *──────────────────────────────────────────────────────────────────────────────*/
 static constexpr uint32_t ROLE_UNKNOWN  = 0xFFFFFFFFu;
 static constexpr uint32_t ROLE_SYSTEM   = 0;
 static constexpr uint32_t ROLE_USER     = 1;
@@ -40,7 +23,7 @@ static constexpr uint32_t ROLE_ELLE     = 2;
 static constexpr uint32_t ROLE_INTERNAL = 3;
 
 static std::string RoleToStr(uint32_t role) {
-    /* C++ side uses 0=system,1=user,2=elle,3=internal — live table is nvarchar */
+
     switch (role) {
         case ROLE_USER:     return "user";
         case ROLE_ELLE:     return "assistant";
@@ -57,10 +40,7 @@ static uint32_t RoleFromStr(const std::string& s) {
     if (l == "assistant" || l == "elle" || l == "ai") return ROLE_ELLE;
     if (l == "internal")                              return ROLE_INTERNAL;
     if (l == "system")                                return ROLE_SYSTEM;
-    /* Previously returned 0 (=system) for every unknown value — that
-     * collapsed "internal-typo", "bot", "assistant-2", etc. into the
-     * system role, which then looked like a trusted elevated speaker.
-     * We now return a sentinel so callers can fail the message. */
+
     return ROLE_UNKNOWN;
 }
 
@@ -71,30 +51,10 @@ static bool RoleFromStrStrict(const std::string& s, uint32_t& out) {
     return true;
 }
 
-/* ---------------------------------------------------------------------------
- * SCHEMA NOTE (Feb 2026):
- *   The live ElleCore database uses snake_case / lowercase tables created by
- *   a prior (likely Python/Node) service. We keep compatibility with that
- *   schema instead of fighting it. Tables touched here:
- *     - dbo.messages              (existing; has conversation_id, user_id,
- *                                   role nvarchar, content, emotion_detected,
- *                                   emotion_intensity, created_at, Direction)
- *     - dbo.conversations         (existing; we bump last_message_at + count)
- *     - dbo.memory                (added by ElleAnn_MemoryDelta.sql)
- *     - dbo.memory_tags           (added by ElleAnn_MemoryDelta.sql)
- *     - dbo.world_entity          (added by ElleAnn_MemoryDelta.sql)
- *     - dbo.memory_entity_links   (added by ElleAnn_MemoryDelta.sql)
- *
- *   RUN ElleAnn_MemoryDelta.sql ONCE before using StoreMemory / RecallMemories
- *   / GetEntity / StoreEntity — otherwise those functions will fail silently.
- * --------------------------------------------------------------------------- */
-
 bool StoreMessage(uint64_t convoId, uint32_t role, const std::string& content,
                   const ELLE_EMOTION_STATE& emotions, float sentiment) {
     (void)sentiment;
-    /* Validate role — previously any out-of-range value silently became
-     * "system" via the default arm of RoleToStr. Now: reject explicitly
-     * so drift surfaces at the write boundary instead of on replay.    */
+
     if (role != ROLE_SYSTEM && role != ROLE_USER &&
         role != ROLE_ELLE   && role != ROLE_INTERNAL) {
         ELLE_ERROR("StoreMessage: refusing unknown role id=%u for conv=%llu",
@@ -102,7 +62,6 @@ bool StoreMessage(uint64_t convoId, uint32_t role, const std::string& content,
         return false;
     }
 
-    /* Pick the dominant emotion from the snapshot for the emotion_detected col */
     std::string dominant = "neutral";
     float topW = 0.0f;
     static const char* names[] = {
@@ -115,11 +74,6 @@ bool StoreMessage(uint64_t convoId, uint32_t role, const std::string& content,
     const std::string roleStr = RoleToStr(role);
     const std::string direction = (role == ROLE_USER) ? "in" : "out";
 
-    /* STEP 1: Confirm the conversation row exists. Previously we auto-
-     * created it with user_id=1 — that silently mis-attributed every
-     * orphan message to the primary user. Now: require the conversation
-     * to have been created with a real user_id by whoever started it
-     * (API handler / WS subscribe). No conv row = write fails.         */
     auto convCheck = ElleSQLPool::Instance().QueryParams(
         "SELECT user_id FROM ElleCore.dbo.conversations WHERE id = ?;",
         { std::to_string(convoId) });
@@ -141,9 +95,6 @@ bool StoreMessage(uint64_t convoId, uint32_t role, const std::string& content,
         return false;
     }
 
-    /* STEP 2: Insert message (single-statement; avoids ODBC multi-result
-     * cursor-state issues) then bump conversation counters in a separate
-     * statement. */
     auto rs = ElleSQLPool::Instance().QueryParams(
         "INSERT INTO ElleCore.dbo.messages "
         "(conversation_id, user_id, role, content, emotion_detected, emotion_intensity, "
@@ -172,7 +123,7 @@ bool StoreMessage(uint64_t convoId, uint32_t role, const std::string& content,
     if (!rs2.success) {
         ELLE_WARN("StoreMessage: conversation bump failed for conv=%llu: %s",
                   (unsigned long long)convoId, rs2.error.c_str());
-        /* Message insert succeeded; don't claim full failure. */
+
     }
     return true;
 }
@@ -188,13 +139,10 @@ bool GetConversationHistory(uint64_t convoId,
         { std::to_string(limit), std::to_string(convoId) });
     if (!rs.success) return false;
 
-    /* We pulled newest first — reverse into chronological order */
     for (auto it = rs.rows.rbegin(); it != rs.rows.rend(); ++it) {
         ELLE_CONVERSATION_MSG m = {};
         m.conversation_id = convoId;
-        /* Strict role parse — skip any row whose role column has drifted
-         * out of the canonical set rather than replaying it as a
-         * trusted "system" message.                                     */
+
         std::string roleCell = it->values.size() > 0 ? it->values[0] : std::string();
         uint32_t parsedRole = ROLE_UNKNOWN;
         if (!RoleFromStrStrict(roleCell, parsedRole)) {
@@ -214,30 +162,11 @@ bool GetConversationHistory(uint64_t convoId,
 }
 
 bool StoreMemory(const ELLE_MEMORY_RECORD& mem) {
-    /* Atomic insert + id recovery in ONE round-trip. Previously we did:
-     *   INSERT ... ;                                          -- step 1
-     *   SELECT TOP 1 id WHERE created_ms = ? ORDER BY id DESC -- step 2
-     * which:
-     *   (a) race: two concurrent stores writing the same ms gave
-     *       StoreMemory a coin flip on which id it got back,
-     *   (b) false durability: the old code returned true on step-2
-     *       empty, claiming a memory id that pointed at nothing.
-     *
-     * We now use an explicit single-statement pattern:
-     *   INSERT ... ; SELECT SCOPE_IDENTITY();
-     * SCOPE_IDENTITY() returns the IDENTITY value generated by THIS
-     * session's most recent INSERT in THIS scope — it can't race with
-     * another connection's insert even when two StoreMemory calls run
-     * in parallel across the pool. If we can't recover the id, we
-     * return false. No racy fallback, no phantom durability.           */
+
     uint64_t nowMs = ELLE_MS_NOW();
 
     auto r1 = ElleSQLPool::Instance().QueryParams(
-        /* Use OUTPUT INSERTED.id instead of multi-statement
-         * INSERT + SELECT SCOPE_IDENTITY(). This avoids multiple result
-         * sets on a single execute, which is a common trigger for
-         * ODBC 24000 'Invalid cursor state' errors.
-         */
+
         "INSERT INTO ElleCore.dbo.memory "
         "(memory_type, tier, content, summary, emotional_valence, importance, relevance, "
         " position_x, position_y, position_z, created_ms, last_access_ms) "
@@ -264,16 +193,12 @@ bool StoreMemory(const ELLE_MEMORY_RECORD& mem) {
 
     int64_t memId = 0;
     if (r1.rows.empty() || !r1.rows[0].TryGetInt(0, memId) || memId <= 0) {
-        /* OUTPUT INSERTED.id should always return exactly one row.
-         * If it doesn't, treat persistence as failed so callers can
-         * retry/alert.
-         */
+
         ELLE_ERROR("StoreMemory: INSERT returned no OUTPUT INSERTED.id row — "
                    "reporting failure so caller can retry/alert.");
         return false;
     }
 
-    /* STEP 3: Write each tag + entity link. */
     for (uint32_t i = 0; i < mem.tag_count && i < ELLE_MAX_TAGS; i++) {
         std::string tag = mem.tags[i];
         if (tag.empty()) continue;
@@ -304,16 +229,8 @@ bool RecallMemories(const std::string& query,
     (void)minRelevance;
     if (query.empty()) return false;
 
-    /* Build %term% pattern. Also use it for tag exact-match. */
     std::string like = "%" + query + "%";
 
-    /* Composite recall:
-     *   - any memory whose tag matches the query term (case-insensitive)
-     *   - OR any memory whose content/summary contains the query substring
-     *   - OR any memory linked to a world_entity whose name matches
-     * Ranked by (importance*0.4 + recency_decay*0.4 + access_log*0.2)
-     * where recency_decay = EXP(-ageMinutes / 10080.0)  (7-day half-life)
-     */
     auto rs = ElleSQLPool::Instance().QueryParams(
         "WITH candidates AS ("
         "  SELECT DISTINCT m.id "
@@ -366,7 +283,6 @@ bool RecallMemories(const std::string& query,
         out.push_back(rec);
     }
 
-    /* Fire-and-forget: bump access_count for retrieved memories. */
     for (auto& r : out) {
         ElleSQLPool::Instance().QueryParams(
             "UPDATE ElleCore.dbo.memory "
@@ -420,9 +336,6 @@ bool RecallRecentLTM(std::vector<ELLE_MEMORY_RECORD>& out, uint32_t maxCount) {
     return true;
 }
 
-/* Shared canonicaliser for world_entity.name — lowercase + trim + collapse
- * internal whitespace. Keeps read and write paths aligned so a lookup
- * by "  Mom " finds the same row that "mom" created.                    */
 static std::string CanonicaliseEntityName(const std::string& in) {
     std::string out; out.reserve(in.size());
     bool inSpace = false, started = false;
@@ -473,8 +386,7 @@ bool UpdateEntityInteraction(uint64_t entityId) {
 }
 
 bool GetAllEntities(std::vector<ELLE_WORLD_ENTITY>& out) {
-    /* Hydrate every row so WorldModel boots warm. No LIMIT — these are
-     * Elle's known people/concepts/places; the list shouldn't balloon. */
+
     out.clear();
     auto rs = ElleSQLPool::Instance().Query(
         "SELECT id, name, entity_type, description, familiarity, sentiment, "
@@ -499,9 +411,7 @@ bool GetAllEntities(std::vector<ELLE_WORLD_ENTITY>& out) {
 }
 
 bool StoreEntity(const ELLE_WORLD_ENTITY& entity) {
-    /* Canonical key: see CanonicaliseEntityName() above. Previously we
-     * only lowered the name, so "  Mom  " and "mom" would create two
-     * rows despite being the same entity.                                */
+
     std::string lowered = CanonicaliseEntityName(entity.name);
     if (lowered.empty()) return false;
     return ElleSQLPool::Instance().QueryParams(
@@ -534,7 +444,7 @@ bool StoreEntity(const ELLE_WORLD_ENTITY& entity) {
 }
 
 bool UpdateTrust(int32_t delta, const std::string& reason) {
-    /* Parameterised to keep Reason safe across apostrophes / newlines. */
+
     auto& pool = ElleSQLPool::Instance();
     bool ok = pool.QueryParams(
         "UPDATE ElleSystem.dbo.TrustState SET Score = "
@@ -556,8 +466,7 @@ bool GetTrustState(ELLE_TRUST_STATE& out) {
         "SELECT TOP 1 Score, Level, Successes, Failures, TotalActions, Confidence "
         "FROM ElleSystem.dbo.TrustState WHERE Id = 1;");
     if (!rs.success || rs.rows.empty()) {
-        /* Singleton row hasn't been seeded yet — fall back to safe defaults
-         * (matches the seed INSERT in ElleAnn_Schema.sql).                   */
+
         out.score = 5; out.level = 0;
         out.successes = 0; out.failures = 0; out.total_actions = 0;
         return false;
@@ -571,18 +480,8 @@ bool GetTrustState(ELLE_TRUST_STATE& out) {
     return true;
 }
 
-/*══════════════════════════════════════════════════════════════════════════════
- * PAIRED DEVICES — persistent audit of companion-app pairings.
- *
- *   Schema lives in SQL/ElleAnn_PairedDevicesDelta.sql; this is the only
- *   code surface that touches the table. Row granularity is device_id,
- *   and we upsert on re-pair so the "devices you've paired" list in the
- *   admin UI never grows ghost rows when a phone is reinstalled and
- *   pairs again with the same device_id.
- *══════════════════════════════════════════════════════════════════════════════*/
 bool UpsertPairedDevice(const PairedDeviceRow& row) {
-    /* MERGE pattern — matches the rest of this file. Idempotent by
-     * DeviceId. Re-pair refreshes ExpiresMs + PairedAtMs + unrevokes. */
+
     return ElleSQLPool::Instance().QueryParams(
         "MERGE ElleCore.dbo.PairedDevices WITH (HOLDLOCK) AS t "
         "USING (SELECT ? AS DeviceId) AS s ON t.DeviceId = s.DeviceId "
@@ -595,12 +494,12 @@ bool UpsertPairedDevice(const PairedDeviceRow& row) {
         "          Revoked, JwtFingerprint) "
         "  VALUES (?, ?, ?, ?, 0, ?);",
         {
-            row.device_id,                                  /* MATCH key */
-            row.device_name,                                /* UPDATE set */
+            row.device_id,
+            row.device_name,
             std::to_string((int64_t)row.paired_at_ms),
             std::to_string((int64_t)row.expires_ms),
             row.jwt_fingerprint,
-            row.device_id,                                  /* INSERT cols */
+            row.device_id,
             row.device_name,
             std::to_string((int64_t)row.paired_at_ms),
             std::to_string((int64_t)row.expires_ms),
@@ -668,31 +567,8 @@ bool TouchPairedDeviceLastSeen(const std::string& device_id) {
         { std::to_string((int64_t)ELLE_MS_NOW()), device_id }).success;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- *  SESSIONS — opaque bearer-token store.
- *
- *   Feb-2026 pivot v2: Sessions lives in ElleCore.dbo (was ElleSystem).
- *
- *   The user's v1 version used a workaround where each CreateSession
- *   opened a dedicated ODBC connection with Database=ElleSystem, built
- *   SQL by string concatenation, and Execute()'d it.  That was a band-aid
- *   for two separate problems:
- *     - cross-DB INSERT into ElleSystem requiring extra grants on the
- *       pool's login (the real cause of "failed to create session"), and
- *     - ODBC Driver 18 reportedly throwing 24000 Invalid cursor state
- *       on cross-DB inserts.
- *
- *   Moving the table to ElleCore (the DB the pool is already connected
- *   to) eliminates BOTH issues.  No Database= override, no dedicated
- *   connection, no string-concat SQL.  Parameterised QueryParams on the
- *   existing pool, same login, same grants as Memory writes.  Works
- *   out-of-the-box on any operator's ElleCore setup.
- *
- *   Schema is unchanged — only the DB prefix changes.
- *──────────────────────────────────────────────────────────────────────────────*/
 static void EnsureSessionsTable() {
-    /* Idempotent — runs once per process via std::once_flag, so startup
-     * cost is a single cheap DDL check instead of on every INSERT.      */
+
     static std::once_flag s_ddlOnce;
     std::call_once(s_ddlOnce, []() {
         auto rs = ElleSQLPool::Instance().Query(
@@ -787,7 +663,7 @@ bool TouchSessionLastSeen(const std::string& token) {
 }
 
 bool DeleteSession(const std::string& token) {
-    if (token.empty()) return true;  /* idempotent no-op */
+    if (token.empty()) return true;
     return ElleSQLPool::Instance().QueryParams(
         "DELETE FROM ElleCore.dbo.Sessions WHERE Token = ?;",
         { token }).success;
@@ -890,13 +766,7 @@ bool GetRecentLogs(std::vector<ELLE_LOG_ENTRY>& out, uint32_t count,
 
 bool GetWorkerStatuses(std::vector<ELLE_SERVICE_STATUS>& out) {
     out.clear();
-    /* Pull every row from ElleSystem.dbo.Workers. Callers that want only
-     * live ones filter post-hoc by `healthy == 1 && (now - last_heartbeat_ms) < N`.
-     * Columns match the live schema (ElleAnn_Schema.sql):
-     *   ServiceId, Name, Running, Healthy, StartedMs, LastHeartbeatMs,
-     *   MessagesProcessed, Errors, CpuPercent, MemoryBytes, ThreadCount,
-     *   StatusText. `uptime_ms` is computed at read time from
-     *   (now - StartedMs) so it's always fresh without a per-tick UPDATE. */
+
     auto rs = ElleSQLPool::Instance().QueryParams(
         "SELECT ServiceId, Name, ISNULL(Running, 0), ISNULL(Healthy, 0), "
         "       CASE WHEN StartedMs IS NULL OR StartedMs = 0 THEN 0 "
@@ -930,22 +800,13 @@ bool GetWorkerStatuses(std::vector<ELLE_SERVICE_STATUS>& out) {
     return true;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * GOALS — use a dedicated snake_case dbo.goals table, lazy-created so the
- * database survives a partial schema apply. The CamelCase dbo.Goals table in
- * ElleAnn_Schema.sql is the aspirational design; live boxes we've seen use
- * the lowercase variant. Previously StoreGoal() dumped ad-hoc JSON into
- * dbo.system_settings with fragile snprintf — no matching read path existed
- * so every goal op was write-only. Now StoreGoal / UpdateGoalProgress /
- * GetActiveGoals all operate against the same table with parameterised SQL.
- *──────────────────────────────────────────────────────────────────────────────*/
 static void EnsureGoalsTable() {
     ElleSQLPool::Instance().Exec(
         "IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'goals') "
         "CREATE TABLE ElleCore.dbo.goals ("
         "  id BIGINT IDENTITY(1,1) PRIMARY KEY,"
         "  description     NVARCHAR(MAX) NOT NULL,"
-        "  status          INT NOT NULL DEFAULT 0,"     /* 0=active */
+        "  status          INT NOT NULL DEFAULT 0,"
         "  priority        INT NOT NULL DEFAULT 2,"
         "  progress        FLOAT NOT NULL DEFAULT 0.0,"
         "  motivation      FLOAT NOT NULL DEFAULT 0.7,"
@@ -965,11 +826,7 @@ bool StoreGoal(const ELLE_GOAL_RECORD& goal) {
 
 uint64_t StoreGoalReturningId(const ELLE_GOAL_RECORD& goal) {
     EnsureGoalsTable();
-    /* INSERT ... OUTPUT INSERTED.id so the DB's IDENTITY value flows back
-     * to the caller in one round trip. GoalEngine used to assign its own
-     * in-memory id via ++m_nextId and then hope that matched the SQL row;
-     * the two drifted immediately and UpdateProgress() hit the wrong
-     * row (or no row at all).                                           */
+
     auto rs = ElleSQLPool::Instance().QueryParams(
         "INSERT INTO ElleCore.dbo.goals "
         "(description, status, priority, progress, motivation, source_drive, "
@@ -1009,10 +866,6 @@ bool UpdateGoalProgress(uint64_t goalId, float progress) {
         }).success && (finished || true);
 }
 
-/* Explicit status update — used by GoalEngine for COMPLETED / ABANDONED
- * transitions that aren't driven by a progress write. Previously these
- * transitions lived only in the in-memory vector and vanished on restart,
- * so the same goal would reappear as ACTIVE and re-trigger its intents. */
 bool UpdateGoalStatus(uint64_t goalId, uint32_t status) {
     EnsureGoalsTable();
     auto rs = ElleSQLPool::Instance().QueryParams(
@@ -1038,7 +891,7 @@ bool GetActiveGoals(std::vector<ELLE_GOAL_RECORD>& out) {
         "       ISNULL(success_criteria, N''), created_ms, "
         "       ISNULL(deadline_ms, 0), attempts "
         "FROM ElleCore.dbo.goals "
-        "WHERE status IN (0, 1) "  /* active or paused */
+        "WHERE status IN (0, 1) "
         "ORDER BY priority ASC, created_ms DESC;");
     if (!rs.success) return false;
     for (auto& row : rs.rows) {
@@ -1062,5 +915,4 @@ bool GetActiveGoals(std::vector<ELLE_GOAL_RECORD>& out) {
     return true;
 }
 
-
-} /* namespace ElleDB */
+}

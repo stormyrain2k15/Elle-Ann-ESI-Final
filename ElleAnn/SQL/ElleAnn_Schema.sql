@@ -1,38 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * ElleAnn_Schema.sql — Canonical ElleCore schema (Feb 2026 pivot).
- *
- *   THIS IS THE SOURCE OF TRUTH.  Tables here mirror exactly what the C++
- *   code writes to.  Prior versions of this file declared PascalCase
- *   tables (Conversations, Messages, Memories, ...) that the code never
- *   wrote to, leaving operators with empty databases that "looked right"
- *   while the actual writes silently re-created lowercase tables at
- *   runtime — or failed if the SQL login lacked CREATE TABLE rights.
- *
- *   Rules:
- *     1. Tables operational code writes to use lowercase snake_case.
- *     2. The few PascalCase tables (PairedDevices, IntentQueue, ElleThreads,
- *        CrystalProfile, UserPresence, UserContinuity, GameSessionState)
- *        are kept as-is because the code already writes them PascalCase.
- *     3. There is NO `dbo.Users` table in ElleCore.  User identity is
- *        owned by the game's `Account.dbo.tUser` (read-mostly, accessed
- *        via ElleGameAccountDB).  Side tables key on `user_id INT` whose
- *        value MUST equal `tUser.nUserNo` for that account.
- *     4. Idempotent — every CREATE is wrapped in IF NOT EXISTS.
- *
- *   Run order (fresh install):
- *     1. ElleAnn_Schema.sql                  (this file)
- *     2. ElleAnn_PairedDevicesDelta.sql      (PairedDevices + indexes)
- *     3. ElleAnn_QueueReaperDelta.sql        (IntentQueue.ProcessingMs)
- *     4. ElleAnn_MemoryDelta.sql             (memory tier columns + avatars)
- *     5. ElleAnn_GameUnification.sql         (UserContinuity + GameSessionState)
- *     6. ElleAnn_Identity_Schema.sql         (identity narrative tables)
- *     7. ElleAnn_XChromosome_Schema.sql      (X-engine subjective tables)
- *
- *   Run order (upgrading from pre-Feb 2026 install):
- *     1. ElleAnn_SchemaSync_FebPivot.sql     (drops legacy PascalCase shells)
- *     2. ElleAnn_Schema.sql                  (this file)
- *     3-7. (same as fresh install)
- *══════════════════════════════════════════════════════════════════════════════*/
 SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 GO
@@ -44,19 +9,11 @@ GO
 USE ElleCore;
 GO
 
-/*════════════════════════════════════════════════════════════════════════════
- *  CONVERSATION / MESSAGES / VOICE — chat surface
- *
- *    user_id INT — semantic alias for `Account.dbo.tUser.nUserNo`.
- *    No FK declared:  cross-DB FKs are brittle and the game DB is
- *    intentionally read-mostly (we never want a delete in Account to
- *    cascade into Elle's lived memory).
- *══════════════════════════════════════════════════════════════════════════*/
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'conversations')
 BEGIN
     CREATE TABLE dbo.conversations (
         id              INT IDENTITY(1,1) PRIMARY KEY,
-        user_id         INT NULL,                  -- = tUser.nUserNo
+        user_id         INT NULL,
         title           NVARCHAR(256) NULL,
         started_at      DATETIME2(3) NOT NULL DEFAULT GETUTCDATE(),
         last_message_at DATETIME2(3) NULL,
@@ -73,12 +30,12 @@ BEGIN
     CREATE TABLE dbo.messages (
         id                 BIGINT IDENTITY(1,1) PRIMARY KEY,
         conversation_id    INT NULL,
-        user_id            INT NULL,                  -- = tUser.nUserNo
-        role               INT NOT NULL,              -- 0=system,1=user,2=elle,3=internal
+        user_id            INT NULL,
+        role               INT NOT NULL,
         content            NVARCHAR(MAX) NOT NULL,
         emotion_detected   NVARCHAR(64) NULL,
         emotion_intensity  FLOAT NULL,
-        Direction          INT NOT NULL DEFAULT 0,    -- 0=in,1=out (PascalCase preserved)
+        Direction          INT NOT NULL DEFAULT 0,
         created_at         DATETIME2(3) NOT NULL DEFAULT GETUTCDATE()
     );
     CREATE INDEX IX_messages_conv_created
@@ -93,7 +50,7 @@ BEGIN
     CREATE TABLE dbo.voice_calls (
         id                INT IDENTITY(1,1) PRIMARY KEY,
         call_id           NVARCHAR(64) NOT NULL UNIQUE,
-        user_id           INT NULL,                   -- = tUser.nUserNo
+        user_id           INT NULL,
         conversation_id   INT NULL,
         started_at        DATETIME2(3) NULL,
         ended_at          DATETIME2(3) NULL,
@@ -104,14 +61,11 @@ BEGIN
 END
 GO
 
-/*════════════════════════════════════════════════════════════════════════════
- *  AVATAR — per-user portrait library
- *══════════════════════════════════════════════════════════════════════════*/
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'user_avatars')
 BEGIN
     CREATE TABLE dbo.user_avatars (
         id          INT IDENTITY(1,1) PRIMARY KEY,
-        user_id     INT NOT NULL,                     -- = tUser.nUserNo
+        user_id     INT NOT NULL,
         label       NVARCHAR(128) NULL,
         file_path   NVARCHAR(512) NOT NULL,
         mime_type   NVARCHAR(64) NULL,
@@ -123,18 +77,12 @@ BEGIN
 END
 GO
 
-/*════════════════════════════════════════════════════════════════════════════
- *  COGNITIVE QUEUES — Intent / Action
- *
- *    PascalCase preserved on IntentQueue because Cognitive +
- *    QueueWorker write that exact case.  See ElleDB_Queues.cpp.
- *══════════════════════════════════════════════════════════════════════════*/
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'IntentQueue')
 BEGIN
     CREATE TABLE dbo.IntentQueue (
         Id              BIGINT IDENTITY(1,1) PRIMARY KEY,
         IntentType      INT NOT NULL,
-        Status          INT NOT NULL DEFAULT 0,        -- 0=pending,1=processing,2=done,3=failed
+        Status          INT NOT NULL DEFAULT 0,
         SourceDrive     INT NOT NULL DEFAULT 0,
         Urgency         FLOAT NOT NULL DEFAULT 0.5,
         Confidence      FLOAT NOT NULL DEFAULT 0.5,
@@ -143,7 +91,7 @@ BEGIN
         RequiredTrust   INT NOT NULL DEFAULT 0,
         CreatedMs       BIGINT NOT NULL,
         TimeoutMs       BIGINT NOT NULL DEFAULT 30000,
-        ProcessingMs    BIGINT NULL,                   -- claim stamp (QueueReaperDelta)
+        ProcessingMs    BIGINT NULL,
         Result          NVARCHAR(MAX) NULL,
         ErrorCode       INT NOT NULL DEFAULT 0
     );
@@ -175,20 +123,12 @@ BEGIN
 END
 GO
 
-/*════════════════════════════════════════════════════════════════════════════
- *  GOALS — autonomous goal pursuit
- *
- *    Authoritative DDL is also embedded in Shared/ElleDB_Domain.cpp's
- *    EnsureGoalsTable() so the table self-creates on first write; we
- *    declare it here too so a fresh ElleCore is fully provisioned by
- *    schema scripts alone.
- *══════════════════════════════════════════════════════════════════════════*/
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'goals')
 BEGIN
     CREATE TABLE dbo.goals (
         id                BIGINT IDENTITY(1,1) PRIMARY KEY,
         description       NVARCHAR(MAX) NOT NULL,
-        status            INT NOT NULL DEFAULT 0,        -- 0=active
+        status            INT NOT NULL DEFAULT 0,
         priority          INT NOT NULL DEFAULT 2,
         progress          FLOAT NOT NULL DEFAULT 0.0,
         motivation        FLOAT NOT NULL DEFAULT 0.7,
@@ -205,15 +145,12 @@ BEGIN
 END
 GO
 
-/*════════════════════════════════════════════════════════════════════════════
- *  MEMORY — long-term store + tags + entity links
- *══════════════════════════════════════════════════════════════════════════*/
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'memory')
 BEGIN
     CREATE TABLE dbo.memory (
         id                  BIGINT IDENTITY(1,1) PRIMARY KEY,
         memory_type         INT NOT NULL DEFAULT 0,
-        tier                INT NOT NULL DEFAULT 1,        -- 1=STM,2=MTM,3=LTM
+        tier                INT NOT NULL DEFAULT 1,
         content             NVARCHAR(MAX) NOT NULL,
         summary             NVARCHAR(1024) NULL,
         emotional_valence   FLOAT NOT NULL DEFAULT 0.0,
@@ -260,18 +197,15 @@ IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'world_entity')
 BEGIN
     CREATE TABLE dbo.world_entity (
         id           BIGINT IDENTITY(1,1) PRIMARY KEY,
-        name         NVARCHAR(256) NOT NULL UNIQUE,    -- canonical lowercase
+        name         NVARCHAR(256) NOT NULL UNIQUE,
         kind         NVARCHAR(64) NULL,
-        properties   NVARCHAR(MAX) NULL,                -- JSON blob
+        properties   NVARCHAR(MAX) NULL,
         first_seen_ms BIGINT NULL,
         last_seen_ms  BIGINT NULL
     );
 END
 GO
 
-/*════════════════════════════════════════════════════════════════════════════
- *  EMOTION — moment-by-moment snapshot history
- *══════════════════════════════════════════════════════════════════════════*/
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'emotion_snapshots')
 BEGIN
     CREATE TABLE dbo.emotion_snapshots (
@@ -279,7 +213,7 @@ BEGIN
         valence     FLOAT NOT NULL,
         arousal     FLOAT NOT NULL,
         dominance   FLOAT NOT NULL,
-        dimensions  NVARCHAR(MAX) NOT NULL,            -- space-sep floats x102
+        dimensions  NVARCHAR(MAX) NOT NULL,
         taken_ms    BIGINT NOT NULL,
         created_at  DATETIME2(3) NOT NULL DEFAULT GETUTCDATE()
     );
@@ -287,9 +221,6 @@ BEGIN
 END
 GO
 
-/*════════════════════════════════════════════════════════════════════════════
- *  KNOWLEDGE — dictionary, education, skills
- *══════════════════════════════════════════════════════════════════════════*/
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'dictionary_words')
 BEGIN
     CREATE TABLE dbo.dictionary_words (
@@ -373,9 +304,6 @@ BEGIN
 END
 GO
 
-/*════════════════════════════════════════════════════════════════════════════
- *  SYSTEM — settings, hardware, video
- *══════════════════════════════════════════════════════════════════════════*/
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'system_settings')
 BEGIN
     CREATE TABLE dbo.system_settings (
@@ -416,12 +344,6 @@ BEGIN
 END
 GO
 
-/*════════════════════════════════════════════════════════════════════════════
- *  PRESENCE / INTIMACY — read-mostly profile tables
- *
- *    PascalCase preserved (CrystalProfile, UserPresence, ElleThreads) —
- *    code reads them with that exact casing.
- *══════════════════════════════════════════════════════════════════════════*/
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'UserPresence')
 BEGIN
     CREATE TABLE dbo.UserPresence (
@@ -440,7 +362,7 @@ BEGIN
     CREATE TABLE dbo.CrystalProfile (
         id                       INT IDENTITY(1,1) PRIMARY KEY,
         user_id                  INT NOT NULL,
-        traits                   NVARCHAR(MAX) NULL,    -- JSON blob
+        traits                   NVARCHAR(MAX) NULL,
         vulnerability_patterns   NVARCHAR(MAX) NULL,
         comfort_patterns         NVARCHAR(MAX) NULL,
         trigger_patterns         NVARCHAR(MAX) NULL,
@@ -462,7 +384,7 @@ BEGIN
         summary           NVARCHAR(MAX) NULL,
         emotional_weight  FLOAT NOT NULL DEFAULT 0.0,
         last_touched      DATETIME2(3) NOT NULL DEFAULT GETUTCDATE(),
-        status            NVARCHAR(32) NULL              -- NULL or 'open' = unresolved
+        status            NVARCHAR(32) NULL
     );
     CREATE INDEX IX_ElleThreads_status_weight
         ON dbo.ElleThreads(status, emotional_weight DESC, last_touched DESC);

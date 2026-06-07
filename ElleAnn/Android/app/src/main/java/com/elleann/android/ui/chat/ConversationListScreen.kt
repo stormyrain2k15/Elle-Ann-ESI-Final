@@ -27,7 +27,6 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
-// ─── ViewModel ───────────────────────────────────────────────────────────────
 data class ConvListState(
     val conversations: List<Conversation> = emptyList(),
     val loading: Boolean = true,
@@ -69,7 +68,6 @@ class ConversationListViewModel(
     fun retry() = load()
 }
 
-// ─── Screen ──────────────────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConversationListScreen(

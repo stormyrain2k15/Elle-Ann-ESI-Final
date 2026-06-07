@@ -1,19 +1,4 @@
-/* ╔════════════════════════════════════════════════════════════════════════╗
- * ║  FiestaWireFixtures.inc                                                  ║
- * ║  AUTO-GENERATED.  Live wire packet capture fixtures.                    ║
- * ║                                                                          ║
- * ║  Replays every (port, direction, opcode, payload) tuple captured       ║
- * ║  during the user's 2026-02-05 login walk.  Format:                      ║
- * ║      FIESTA_WIRE_FIXTURE(port, direction_tag, opcode_hex,               ║
- * ║                          payload_len, hex_payload_literal)              ║
- * ║                                                                          ║
- * ║  Consumers (test_fiesta_proto_coverage.cpp) iterate this list to:       ║
- * ║    * verify every observed opcode appears in FIESTA_PROTO_TABLE         ║
- * ║    * confirm sizeof(struct) matches payload_len for fixed-len ops      ║
- * ║    * surface drift / unknown-opcode lists for backlog grooming         ║
- * ╚════════════════════════════════════════════════════════════════════════╝ */
 #pragma once
-/* 72 wire events from 4 ports. */
 
 #define FIESTA_WIRE_FIXTURES(X) \
     X(55891, Outbound, 0x2ADF,   978, "C0EF66A3826B69DB6D7B4993A83A59727AA0672CD00128786232421AE12C70C861728A24942A2E62") \
@@ -87,4 +72,4 @@
     X(56567, Inbound , 0x044A,     2, "0000") \
     X(56567, Inbound , 0x0448,     4, "FFFFFFFF") \
     X(56567, Inbound , 0x04DE,    16, "00000000000000000000000000000000") \
-    X(56567, Inbound , 0x0602,   238, "0200448ECCB502000000013F48BD0200000023010000310100003101000040010000130100002001")  
+    X(56567, Inbound , 0x0602,   238, "0200448ECCB502000000013F48BD0200000023010000310100003101000040010000130100002001")

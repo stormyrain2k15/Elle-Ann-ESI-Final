@@ -39,17 +39,9 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
-/**
- * Helper for dev screens — uses adminApi (carries x-admin-key) for admin-level
- * endpoints, falls back to extendedApi if adminApi is unavailable (no key configured).
- * AUTH_USER endpoints can safely use extendedApi directly.
- */
 private fun AppContainerExtended.api(admin: Boolean = false): ElleApiExtended =
     if (admin) (adminApi ?: extendedApi) else extendedApi
 
-
-
-// ─── Shared dev scaffold ──────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DevScaffold(title: String, onBack: () -> Unit, content: @Composable (PaddingValues) -> Unit) {
@@ -57,7 +49,7 @@ private fun DevScaffold(title: String, onBack: () -> Unit, content: @Composable 
         containerColor = IsyaNight,
         topBar = {
             TopAppBar(
-                title = { Text(title, color = Color(0xFF00FF88)) }, // Dev screens use green
+                title = { Text(title, color = Color(0xFF00FF88)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "Back", tint = IsyaMuted) }
                 },
@@ -68,9 +60,6 @@ private fun DevScaffold(title: String, onBack: () -> Unit, content: @Composable 
     )
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// DEV PIN SCREEN
-// ══════════════════════════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DevPinScreen(
@@ -138,9 +127,6 @@ fun DevPinScreen(
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// DEV DASHBOARD
-// ══════════════════════════════════════════════════════════════════════════════
 data class DevSection(val label: String, val subtitle: String, val route: String)
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -194,7 +180,7 @@ fun DevDashboardScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            // Server status header
+
             item {
                 serverStatus?.let { ss ->
                     Surface(shape = RoundedCornerShape(10.dp), color = Color(0xFF0D2B0D)) {
@@ -207,7 +193,7 @@ fun DevDashboardScreen(
                     }
                 }
             }
-            items(sections.drop(1)) { sec -> // Drop "Dashboard" itself — we're already here
+            items(sections.drop(1)) { sec ->
                 Surface(
                     modifier = Modifier.fillMaxWidth().clickable { onNavigate(sec.route) },
                     shape = RoundedCornerShape(8.dp),
@@ -226,9 +212,6 @@ fun DevDashboardScreen(
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// LOG MONITOR
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun LogMonitorScreen(container: AppContainerExtended, onBack: () -> Unit) {
     var logs by remember { mutableStateOf<List<LogEntry>>(emptyList()) }
@@ -237,7 +220,7 @@ fun LogMonitorScreen(container: AppContainerExtended, onBack: () -> Unit) {
 
     fun reload() {
         loading = true
-        // Triggered via LaunchedEffect
+
     }
 
     LaunchedEffect(levelFilter) {
@@ -277,10 +260,6 @@ fun LogMonitorScreen(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// SERVICE / IPC QUEUE STATUS
-// Shows live diagnostic queue health from /api/diag/queues.
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun ServiceStatusScreen(container: AppContainerExtended, onBack: () -> Unit) {
     var queues by remember { mutableStateOf<List<DiagQueue>>(emptyList()) }
@@ -306,9 +285,6 @@ fun ServiceStatusScreen(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// DIAGNOSTICS
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun DiagnosticsScreen(container: AppContainerExtended, onBack: () -> Unit) {
     var routes by remember { mutableStateOf<List<RouteEntry>>(emptyList()) }
@@ -365,9 +341,6 @@ fun DiagnosticsScreen(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// API EXPLORER
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun ApiExplorerScreen(container: AppContainerExtended, onBack: () -> Unit) {
     DevScaffold("API Explorer", onBack) { padding ->
@@ -377,9 +350,6 @@ fun ApiExplorerScreen(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// HARDWARE / HAL
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun HardwareScreen(container: AppContainerExtended, onBack: () -> Unit) {
     var info by remember { mutableStateOf<HardwareInfo?>(null) }
@@ -430,9 +400,6 @@ fun HardwareScreen(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// MODELS / WORKERS
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun ModelsScreen(container: AppContainerExtended, onBack: () -> Unit) {
     var workers by remember { mutableStateOf<List<ModelWorker>>(emptyList()) }
@@ -477,9 +444,6 @@ fun ModelsScreen(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// AGENTS
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun AgentsScreen(container: AppContainerExtended, onBack: () -> Unit) {
     var agents by remember { mutableStateOf<List<Agent>>(emptyList()) }
@@ -506,9 +470,6 @@ fun AgentsScreen(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// TOOLS
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun ToolsScreen(container: AppContainerExtended, onBack: () -> Unit) {
     var tools by remember { mutableStateOf<List<AiTool>>(emptyList()) }
@@ -535,9 +496,6 @@ fun ToolsScreen(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// DICTIONARY
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun DictionaryAdminScreen(container: AppContainerExtended, onBack: () -> Unit) {
     var stats by remember { mutableStateOf<DictionaryStats?>(null) }
@@ -590,9 +548,6 @@ fun DictionaryAdminScreen(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// MEMORY ADMIN
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun MemoryAdminScreen(container: AppContainerExtended, onBack: () -> Unit) {
     DevScaffold("Memory Admin", onBack) { padding ->
@@ -602,9 +557,6 @@ fun MemoryAdminScreen(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// BACKUPS
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun BackupsScreen(container: AppContainerExtended, onBack: () -> Unit) {
     var backups by remember { mutableStateOf<List<BackupInfo>>(emptyList()) }
@@ -630,7 +582,7 @@ fun BackupsScreen(container: AppContainerExtended, onBack: () -> Unit) {
                                     onSuccess = { "ok — backup written" },
                                     onFailure = { "fail: ${it.message ?: "unknown"}" }
                                 )
-                            // refresh
+
                             runCatching { container.extendedApi.getBackups() }
                                 .onSuccess { backups = it.backups }
                         }
@@ -659,9 +611,6 @@ fun BackupsScreen(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// CONFIG
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun ConfigScreen(container: AppContainerExtended, onBack: () -> Unit) {
     var settings by remember { mutableStateOf<ServerSettings?>(null) }
@@ -699,7 +648,7 @@ fun ConfigScreen(container: AppContainerExtended, onBack: () -> Unit) {
                                 onSuccess = { "ok — config re-read from disk" },
                                 onFailure = { "fail: ${it.message ?: "unknown"}" }
                             )
-                        // refresh display
+
                         runCatching { container.extendedApi.getServerSettings() }
                             .onSuccess { settings = it }
                     }
@@ -711,9 +660,6 @@ fun ConfigScreen(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// PAIRED DEVICES
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun PairedDevicesScreen(container: AppContainerExtended, onBack: () -> Unit) {
     var devices by remember { mutableStateOf<List<PairedDevice>>(emptyList()) }
@@ -756,9 +702,7 @@ fun PairedDevicesScreen(container: AppContainerExtended, onBack: () -> Unit) {
                                 runCatching {
                                     container.extendedApi.revokeDevice(d.deviceId)
                                 }.onSuccess {
-                                    /* Optimistically remove from local list and re-pull
-                                     * to make sure server-side audit/state matches the
-                                     * UI (e.g. another admin revoked the same device). */
+
                                     devices = devices.filterNot { it.deviceId == d.deviceId }
                                     runCatching { container.api(true).getPairedDevices() }
                                         .onSuccess { resp -> devices = resp.devices }
@@ -774,12 +718,6 @@ fun PairedDevicesScreen(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// VIDEO WORKERS — live Avatara job queue.
-//   GET /api/video/avatars            → user-uploaded avatars
-//   GET /api/video/status/{job_id}    → polled per-job (driven from a list
-//                                       cached on disk by the worker).
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun VideoWorkersScreen(container: AppContainerExtended, onBack: () -> Unit) {
     var avatars by remember { mutableStateOf<List<UserAvatar>>(emptyList()) }
@@ -846,10 +784,6 @@ fun VideoWorkersScreen(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// LEARNING ADMIN — read/inspect Elle's skill inventory.
-//   GET /api/education/skills
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun LearningAdminScreen(container: AppContainerExtended, onBack: () -> Unit) {
     var skills by remember { mutableStateOf<List<Skill>>(emptyList()) }
@@ -911,11 +845,6 @@ fun LearningAdminScreen(container: AppContainerExtended, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// ETHICS ADMIN — view + add to Elle's moral framework.
-//   GET  /api/morals/rules                   (USER)
-//   POST /api/morals/rules  (ADMIN)         carried via container.adminApi
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun EthicsAdminScreen(container: AppContainerExtended, onBack: () -> Unit) {
     var rules by remember { mutableStateOf<List<MoralRule>>(emptyList()) }
@@ -952,9 +881,7 @@ fun EthicsAdminScreen(container: AppContainerExtended, onBack: () -> Unit) {
                 }
             }
             item {
-                /* Add-rule card. Hidden behind admin key — if the
-                 * container has no admin key configured the POST below
-                 * will 401 and surface in `err`. */
+
                 Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFF1A1A0A), modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text("Add Rule (ADMIN)", color = IsyaGold, fontWeight = FontWeight.Bold)

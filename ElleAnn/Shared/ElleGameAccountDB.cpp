@@ -1,9 +1,3 @@
-/*******************************************************************************
- * ElleGameAccountDB.cpp — game `Account` DB connector (read-mostly).
- *
- *   Mirrors ElleSQLPool but uses its own connection string + pool. Kept
- *   intentionally small — Elle is a CONSUMER of this DB, not its owner.
- ******************************************************************************/
 #include "ElleGameAccountDB.h"
 #include "ElleLogger.h"
 
@@ -90,9 +84,6 @@ SQLResultSet ElleGameAccountPool::QueryParams(
     return rs;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * AUTH HELPERS
- *──────────────────────────────────────────────────────────────────────────────*/
 namespace ElleGameAuth {
 
 bool AuthenticateUser(const std::string& sUserID,
@@ -103,23 +94,8 @@ bool AuthenticateUser(const std::string& sUserID,
     if (sUserID.empty() || sUserID.size() > 30) return false;
     if (sUserPW.empty() || sUserPW.size() > 20) return false;
 
-    /* Primary path: EXEC usp_set_login. Operator directive — go through
-     * the wrapper proc installed in Account.
-     *
-     * Contract: the proc takes @sUserID + @sUserPW and returns one
-     * row with at minimum nUserNo, sUserID, sUserName, bIsBlock,
-     * bIsDelete, nAuthID.  Any proc that returns this set works; we
-     * don't pin the schema any tighter than "columns by position".
-     *
-     * If the proc isn't installed we fall through to the direct
-     * SELECT path so a fresh DB without the wrapper still works —
-     * the fallback is functionally identical and the diagnostics
-     * log (once) which path was taken, so the operator can tell
-     * the proc is missing without the login silently degrading.  */
     {
-        /* Preferred proc for this environment: usp_User_loginGame.
-         * This proc returns OUTPUT params (no resultset), so call it with
-         * declared locals and then SELECT them as a 1-row result. */
+
         {
             static constexpr const char* kSqlLoginGame =
                 "DECLARE @userNo INT = 0, @authID TINYINT = 0, @block INT = 0, @isLoginable INT = 0; "
@@ -166,7 +142,6 @@ bool AuthenticateUser(const std::string& sUserID,
             }
         }
 
-        /* Procs not installed / not granted — log and fall through. */
         static std::once_flag s_procMissingLogged;
         std::call_once(s_procMissingLogged, [&](){
             ELLE_WARN("No usable login proc (tried usp_User_loginGame, usp_set_login); "
@@ -174,11 +149,6 @@ bool AuthenticateUser(const std::string& sUserID,
         });
     }
 
-    /* Fallback: direct parameterized SELECT.  Identical semantics to
-     * the proc.  ODBC param binding keeps the password out of the
-     * SQL text.                                                      */
-    /* Note: some Account DB schemas do NOT have QX. Try with QX first,
-     * then fall back without it on Invalid column errors. */
     static constexpr const char* kSqlWithQx =
         "SELECT TOP 1 nUserNo, sUserID, sUserName, "
         "       ISNULL(bIsBlock,0) AS bIsBlock, "
@@ -203,12 +173,12 @@ bool AuthenticateUser(const std::string& sUserID,
 
     auto rs = pool.QueryParams(kSqlWithQx, { sUserID, sUserPW });
     if (!rs.success) {
-        /* 42S22 = column not found. Account DB variants omit QX. */
+
         if (rs.error.find("42S22") != std::string::npos) {
             rs = pool.QueryParams(kSqlNoQx, { sUserID, sUserPW });
         }
         if (!rs.success) {
-            /* Don't log the password. ID is fine for diagnostics. */
+
             ELLE_WARN("game-auth query failed for sUserID=\"%s\": %s",
                       sUserID.c_str(), rs.error.c_str());
             return false;
@@ -253,4 +223,4 @@ bool GetUserById(int64_t nUserNo, UserIdentity& out) {
     return true;
 }
 
-}  /* namespace ElleGameAuth */
+}

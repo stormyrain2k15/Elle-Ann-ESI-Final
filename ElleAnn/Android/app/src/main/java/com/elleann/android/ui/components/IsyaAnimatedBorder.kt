@@ -22,18 +22,6 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-/**
- * IsyaAnimatedBorder — pure Compose Canvas implementation of the Isya flowing
- * border effect. Replaces the Unreal Engine flipbook texture entirely.
- *
- * Two simultaneous animations run in opposite directions so they never sync:
- *   - Dash phase scrolls LEFT (border paint moves along the perimeter)
- *   - Hue shifts RIGHT (gold → teal → violet → gold, ~40s full cycle)
- *
- * Emission glow: a second wider stroke at 20% alpha behind the main stroke.
- *
- * This wraps any composable content in the Isya panel frame.
- */
 @Composable
 fun IsyaAnimatedBorderBox(
     modifier: Modifier = Modifier,
@@ -45,7 +33,6 @@ fun IsyaAnimatedBorderBox(
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "isya_border")
 
-    // Dash phase — scrolls left. Full perimeter travel time ~50s
     val dashPhase by if (animated) {
         infiniteTransition.animateFloat(
             initialValue  = 0f,
@@ -58,7 +45,6 @@ fun IsyaAnimatedBorderBox(
         )
     } else { remember { mutableStateOf(0f) } }
 
-    // Hue fraction — cycles right. Full color rotation ~40s
     val hueFraction by if (animated) {
         infiniteTransition.animateFloat(
             initialValue  = 0f,
@@ -71,14 +57,11 @@ fun IsyaAnimatedBorderBox(
         )
     } else { remember { mutableStateOf(0f) } }
 
-    // Compute current border color from hue fraction
-    // Cycle: gold(0) → teal(0.33) → violet(0.66) → gold(1.0)
     val borderColor = isyaHueCycle(hueFraction)
 
     Box(modifier = modifier) {
         if (animated) {
-            // ── Animated path: cycling hue + dashed flow ─────────────────────
-            // Glow layer (wide, low alpha)
+
             Canvas(
                 modifier = Modifier
                     .matchParentSize()
@@ -92,7 +75,7 @@ fun IsyaAnimatedBorderBox(
                     dashed      = false,
                 )
             }
-            // Main animated dashed border
+
             Canvas(
                 modifier = Modifier
                     .matchParentSize()
@@ -107,12 +90,7 @@ fun IsyaAnimatedBorderBox(
                 )
             }
         } else {
-            // ── Static path: Fiesta-style bevelled silver frame ──────────────
-            //   A vertical highlight→mid→deep silver gradient gives the
-            //   polished-metal look the reference UI specifies (analysed
-            //   from the Fiesta Online silver-frame screenshot to within
-            //   5 RGB units). One inner-bevel pass at half-stroke width
-            //   adds the subtle top-edge sheen that real bevels have.
+
             Canvas(
                 modifier = Modifier
                     .matchParentSize()
@@ -121,7 +99,6 @@ fun IsyaAnimatedBorderBox(
                 val sw = strokeWidth.toPx()
                 val cr = cornerRadius.toPx()
 
-                // Outer bevel — full vertical gradient stroke
                 drawIsyaSilverBevel(
                     strokePx    = sw,
                     cornerPx    = cr,
@@ -129,7 +106,7 @@ fun IsyaAnimatedBorderBox(
                     mid         = IsyaSilverMid,
                     deep        = IsyaSilverDeep,
                 )
-                // Inner sheen — thin highlight strip for depth
+
                 drawIsyaSilverBevel(
                     strokePx    = sw * 0.4f,
                     cornerPx    = cr,
@@ -141,7 +118,6 @@ fun IsyaAnimatedBorderBox(
             }
         }
 
-        // Content inside the box
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -151,10 +127,6 @@ fun IsyaAnimatedBorderBox(
     }
 }
 
-/**
- * Draw the Isya border path around the box — rounded rect with optional
- * running dash effect.
- */
 private fun DrawScope.drawIsyaBorder(
     color: Color,
     strokePx: Float,
@@ -173,7 +145,7 @@ private fun DrawScope.drawIsyaBorder(
     val pathEffect = if (dashed) {
         PathEffect.dashPathEffect(
             intervals = floatArrayOf(18f, 10f),
-            phase     = -dashPhase, // negative = scrolls left
+            phase     = -dashPhase,
         )
     } else null
 
@@ -189,27 +161,20 @@ private fun DrawScope.drawIsyaBorder(
     )
 }
 
-/**
- * Isya hue cycle: maps a 0..1 fraction to a color cycling through
- * Silver → Gold → Teal → Silver. The reference UI palette specifies
- * silver as the dominant frame colour with gold + teal accents; the
- * prior cycle used violet, which on certain displays read as red and
- * was the source of the "interface box is shaded red" feedback.
- */
 private fun isyaHueCycle(fraction: Float): Color {
     return when {
         fraction < 0.33f -> {
-            // Silver → Gold
+
             val t = fraction / 0.33f
             lerpColor(IsyaSilverMid, IsyaGold, t)
         }
         fraction < 0.66f -> {
-            // Gold → Teal
+
             val t = (fraction - 0.33f) / 0.33f
             lerpColor(IsyaGold, IsyaMagic, t)
         }
         else -> {
-            // Teal → Silver
+
             val t = (fraction - 0.66f) / 0.34f
             lerpColor(IsyaMagic, IsyaSilverMid, t)
         }
@@ -223,15 +188,6 @@ private fun lerpColor(a: Color, b: Color, t: Float): Color = Color(
     alpha = 1f,
 )
 
-/**
- * Draw a bevelled silver stroke around the canvas using a vertical
- * highlight → mid → deep gradient. Matches the Fiesta Online silver
- * frame look (analysed to within 5 RGB units from the reference image).
- *
- * @param insetPx pull the rectangle inwards by this many px so a thin
- *                inner sheen pass can sit on top of the main bevel
- *                without bleeding past it.
- */
 private fun DrawScope.drawIsyaSilverBevel(
     strokePx:  Float,
     cornerPx:  Float,

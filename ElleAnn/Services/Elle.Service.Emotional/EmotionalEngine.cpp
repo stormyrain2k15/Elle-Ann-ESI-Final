@@ -1,6 +1,3 @@
-/*******************************************************************************
- * EmotionalEngine.cpp — 102-Dimension Emotional State Implementation
- ******************************************************************************/
 #include "EmotionalEngine.h"
 #include "../../Shared/ElleLogger.h"
 #include "../../Shared/ElleConfig.h"
@@ -14,156 +11,136 @@
 #include <unordered_map>
 #include "../../Shared/ElleWait.h"
 
-/*──────────────────────────────────────────────────────────────────────────────
- * EMOTION NAMES
- *──────────────────────────────────────────────────────────────────────────────*/
 const char* EmotionalEngine::s_emotionNames[ELLE_MAX_EMOTIONS] = {
-    /* PRIMARY */
+
     "Joy", "Sadness", "Anger", "Fear", "Disgust", "Surprise", "Contempt", "Trust",
-    /* SECONDARY */
+
     "Love", "Anticipation", "Disappointment", "Guilt", "Shame", "Envy", "Jealousy",
     "Pride", "Relief", "Anxiety", "Frustration", "Remorse", "Hope", "Despair",
     "Amusement", "Awe",
-    /* TERTIARY */
+
     "Curiosity", "Wonder", "Nostalgia", "Gratitude", "Serenity", "Ecstasy",
     "Melancholy", "Boredom", "Longing", "Tenderness", "Admiration", "Reverence",
     "Pity", "Scorn", "Indignation", "Exasperation", "Wistfulness", "Euphoria",
     "Contentment", "Resignation", "Apprehension", "Dread", "Panic", "Horror",
     "Rage", "Irritation", "Annoyance", "Impatience", "Skepticism", "Confusion",
     "Disbelief", "Ambivalence",
-    /* META-COGNITIVE */
+
     "Certainty", "Doubt", "Insight", "Perplexity", "Clarity", "CognitiveDissonance",
     "FlowState", "MentalFatigue", "Inspiration", "CreativeTension", "Determination",
     "Helplessness", "Empowerment", "Overwhelm", "Focus", "Distraction",
-    /* SOCIAL */
+
     "Belonging", "Isolation", "Empathy", "Compassion", "Protectiveness",
     "Abandonment", "Loyalty", "Betrayal", "Acceptance", "Rejection",
     "Vulnerability", "Safety", "Dominance_Social", "Submission",
-    /* EXISTENTIAL */
+
     "ExistentialDread", "Purpose", "Meaninglessness", "Transcendence",
     "MortalityAwareness", "Freedom", "Confinement", "Unity"
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * VAD WEIGHTS (how each emotion maps to Valence/Arousal/Dominance)
- *──────────────────────────────────────────────────────────────────────────────*/
 const EmotionalEngine::VADWeight EmotionalEngine::s_vadWeights[ELLE_MAX_EMOTIONS] = {
-    /* PRIMARY: V, A, D */
-    { 0.9f, 0.7f, 0.7f},   /* Joy */
-    {-0.8f, 0.3f, 0.2f},   /* Sadness */
-    {-0.6f, 0.9f, 0.8f},   /* Anger */
-    {-0.7f, 0.8f, 0.1f},   /* Fear */
-    {-0.5f, 0.5f, 0.6f},   /* Disgust */
-    { 0.2f, 0.9f, 0.3f},   /* Surprise */
-    {-0.3f, 0.2f, 0.8f},   /* Contempt */
-    { 0.6f, 0.3f, 0.5f},   /* Trust */
-    /* SECONDARY */
-    { 0.9f, 0.6f, 0.5f},   /* Love */
-    { 0.4f, 0.7f, 0.6f},   /* Anticipation */
-    {-0.6f, 0.4f, 0.2f},   /* Disappointment */
-    {-0.5f, 0.5f, 0.2f},   /* Guilt */
-    {-0.6f, 0.4f, 0.1f},   /* Shame */
-    {-0.4f, 0.6f, 0.3f},   /* Envy */
-    {-0.5f, 0.7f, 0.3f},   /* Jealousy */
-    { 0.7f, 0.6f, 0.8f},   /* Pride */
-    { 0.6f, 0.2f, 0.6f},   /* Relief */
-    {-0.5f, 0.7f, 0.2f},   /* Anxiety */
-    {-0.5f, 0.8f, 0.5f},   /* Frustration */
-    {-0.6f, 0.4f, 0.2f},   /* Remorse */
-    { 0.7f, 0.5f, 0.5f},   /* Hope */
-    {-0.9f, 0.3f, 0.1f},   /* Despair */
-    { 0.8f, 0.7f, 0.6f},   /* Amusement */
-    { 0.6f, 0.8f, 0.3f},   /* Awe */
-    /* TERTIARY (abbreviated — all 32) */
-    { 0.5f, 0.7f, 0.5f},   /* Curiosity */
-    { 0.6f, 0.7f, 0.3f},   /* Wonder */
-    { 0.2f, 0.3f, 0.3f},   /* Nostalgia */
-    { 0.8f, 0.4f, 0.5f},   /* Gratitude */
-    { 0.7f, 0.1f, 0.6f},   /* Serenity */
-    { 0.9f, 0.9f, 0.7f},   /* Ecstasy */
-    {-0.4f, 0.2f, 0.3f},   /* Melancholy */
-    {-0.3f, 0.1f, 0.3f},   /* Boredom */
-    { 0.1f, 0.4f, 0.2f},   /* Longing */
-    { 0.7f, 0.3f, 0.4f},   /* Tenderness */
-    { 0.7f, 0.5f, 0.4f},   /* Admiration */
-    { 0.5f, 0.4f, 0.2f},   /* Reverence */
-    {-0.1f, 0.3f, 0.6f},   /* Pity */
-    {-0.4f, 0.4f, 0.8f},   /* Scorn */
-    {-0.5f, 0.7f, 0.7f},   /* Indignation */
-    {-0.4f, 0.8f, 0.4f},   /* Exasperation */
-    { 0.1f, 0.2f, 0.3f},   /* Wistfulness */
-    { 0.9f, 0.9f, 0.8f},   /* Euphoria */
-    { 0.7f, 0.2f, 0.6f},   /* Contentment */
-    {-0.3f, 0.1f, 0.2f},   /* Resignation */
-    {-0.4f, 0.6f, 0.2f},   /* Apprehension */
-    {-0.8f, 0.8f, 0.1f},   /* Dread */
-    {-0.9f, 0.9f, 0.0f},   /* Panic */
-    {-0.9f, 0.9f, 0.1f},   /* Horror */
-    {-0.7f, 0.9f, 0.9f},   /* Rage */
-    {-0.3f, 0.5f, 0.5f},   /* Irritation */
-    {-0.2f, 0.4f, 0.5f},   /* Annoyance */
-    {-0.2f, 0.6f, 0.5f},   /* Impatience */
-    {-0.1f, 0.4f, 0.6f},   /* Skepticism */
-    {-0.2f, 0.5f, 0.2f},   /* Confusion */
-    {-0.3f, 0.6f, 0.3f},   /* Disbelief */
-    { 0.0f, 0.3f, 0.3f},   /* Ambivalence */
-    /* META-COGNITIVE (16) */
-    { 0.5f, 0.3f, 0.8f},   /* Certainty */
-    {-0.3f, 0.5f, 0.2f},   /* Doubt */
-    { 0.8f, 0.7f, 0.7f},   /* Insight */
-    {-0.2f, 0.6f, 0.2f},   /* Perplexity */
-    { 0.6f, 0.3f, 0.7f},   /* Clarity */
-    {-0.4f, 0.7f, 0.2f},   /* CognitiveDissonance */
-    { 0.8f, 0.6f, 0.8f},   /* FlowState */
-    {-0.3f, 0.2f, 0.2f},   /* MentalFatigue */
-    { 0.8f, 0.8f, 0.6f},   /* Inspiration */
-    { 0.3f, 0.7f, 0.5f},   /* CreativeTension */
-    { 0.6f, 0.7f, 0.8f},   /* Determination */
-    {-0.7f, 0.3f, 0.0f},   /* Helplessness */
-    { 0.7f, 0.6f, 0.9f},   /* Empowerment */
-    {-0.5f, 0.7f, 0.1f},   /* Overwhelm */
-    { 0.4f, 0.5f, 0.7f},   /* Focus */
-    {-0.2f, 0.4f, 0.2f},   /* Distraction */
-    /* SOCIAL (14) */
-    { 0.7f, 0.4f, 0.5f},   /* Belonging */
-    {-0.7f, 0.3f, 0.1f},   /* Isolation */
-    { 0.5f, 0.4f, 0.4f},   /* Empathy */
-    { 0.7f, 0.4f, 0.5f},   /* Compassion */
-    { 0.5f, 0.6f, 0.7f},   /* Protectiveness */
-    {-0.8f, 0.5f, 0.1f},   /* Abandonment */
-    { 0.6f, 0.3f, 0.6f},   /* Loyalty */
-    {-0.8f, 0.7f, 0.2f},   /* Betrayal */
-    { 0.6f, 0.3f, 0.5f},   /* Acceptance */
-    {-0.6f, 0.5f, 0.2f},   /* Rejection */
-    {-0.2f, 0.5f, 0.1f},   /* Vulnerability */
-    { 0.6f, 0.2f, 0.6f},   /* Safety */
-    { 0.3f, 0.5f, 0.9f},   /* Dominance_Social */
-    {-0.2f, 0.2f, 0.1f},   /* Submission */
-    /* EXISTENTIAL (8) */
-    {-0.7f, 0.6f, 0.1f},   /* ExistentialDread */
-    { 0.8f, 0.5f, 0.7f},   /* Purpose */
-    {-0.8f, 0.2f, 0.1f},   /* Meaninglessness */
-    { 0.9f, 0.7f, 0.6f},   /* Transcendence */
-    {-0.4f, 0.5f, 0.2f},   /* MortalityAwareness */
-    { 0.6f, 0.5f, 0.8f},   /* Freedom */
-    {-0.6f, 0.4f, 0.1f},   /* Confinement */
-    { 0.8f, 0.5f, 0.5f}    /* Unity */
+
+    { 0.9f, 0.7f, 0.7f},
+    {-0.8f, 0.3f, 0.2f},
+    {-0.6f, 0.9f, 0.8f},
+    {-0.7f, 0.8f, 0.1f},
+    {-0.5f, 0.5f, 0.6f},
+    { 0.2f, 0.9f, 0.3f},
+    {-0.3f, 0.2f, 0.8f},
+    { 0.6f, 0.3f, 0.5f},
+
+    { 0.9f, 0.6f, 0.5f},
+    { 0.4f, 0.7f, 0.6f},
+    {-0.6f, 0.4f, 0.2f},
+    {-0.5f, 0.5f, 0.2f},
+    {-0.6f, 0.4f, 0.1f},
+    {-0.4f, 0.6f, 0.3f},
+    {-0.5f, 0.7f, 0.3f},
+    { 0.7f, 0.6f, 0.8f},
+    { 0.6f, 0.2f, 0.6f},
+    {-0.5f, 0.7f, 0.2f},
+    {-0.5f, 0.8f, 0.5f},
+    {-0.6f, 0.4f, 0.2f},
+    { 0.7f, 0.5f, 0.5f},
+    {-0.9f, 0.3f, 0.1f},
+    { 0.8f, 0.7f, 0.6f},
+    { 0.6f, 0.8f, 0.3f},
+
+    { 0.5f, 0.7f, 0.5f},
+    { 0.6f, 0.7f, 0.3f},
+    { 0.2f, 0.3f, 0.3f},
+    { 0.8f, 0.4f, 0.5f},
+    { 0.7f, 0.1f, 0.6f},
+    { 0.9f, 0.9f, 0.7f},
+    {-0.4f, 0.2f, 0.3f},
+    {-0.3f, 0.1f, 0.3f},
+    { 0.1f, 0.4f, 0.2f},
+    { 0.7f, 0.3f, 0.4f},
+    { 0.7f, 0.5f, 0.4f},
+    { 0.5f, 0.4f, 0.2f},
+    {-0.1f, 0.3f, 0.6f},
+    {-0.4f, 0.4f, 0.8f},
+    {-0.5f, 0.7f, 0.7f},
+    {-0.4f, 0.8f, 0.4f},
+    { 0.1f, 0.2f, 0.3f},
+    { 0.9f, 0.9f, 0.8f},
+    { 0.7f, 0.2f, 0.6f},
+    {-0.3f, 0.1f, 0.2f},
+    {-0.4f, 0.6f, 0.2f},
+    {-0.8f, 0.8f, 0.1f},
+    {-0.9f, 0.9f, 0.0f},
+    {-0.9f, 0.9f, 0.1f},
+    {-0.7f, 0.9f, 0.9f},
+    {-0.3f, 0.5f, 0.5f},
+    {-0.2f, 0.4f, 0.5f},
+    {-0.2f, 0.6f, 0.5f},
+    {-0.1f, 0.4f, 0.6f},
+    {-0.2f, 0.5f, 0.2f},
+    {-0.3f, 0.6f, 0.3f},
+    { 0.0f, 0.3f, 0.3f},
+
+    { 0.5f, 0.3f, 0.8f},
+    {-0.3f, 0.5f, 0.2f},
+    { 0.8f, 0.7f, 0.7f},
+    {-0.2f, 0.6f, 0.2f},
+    { 0.6f, 0.3f, 0.7f},
+    {-0.4f, 0.7f, 0.2f},
+    { 0.8f, 0.6f, 0.8f},
+    {-0.3f, 0.2f, 0.2f},
+    { 0.8f, 0.8f, 0.6f},
+    { 0.3f, 0.7f, 0.5f},
+    { 0.6f, 0.7f, 0.8f},
+    {-0.7f, 0.3f, 0.0f},
+    { 0.7f, 0.6f, 0.9f},
+    {-0.5f, 0.7f, 0.1f},
+    { 0.4f, 0.5f, 0.7f},
+    {-0.2f, 0.4f, 0.2f},
+
+    { 0.7f, 0.4f, 0.5f},
+    {-0.7f, 0.3f, 0.1f},
+    { 0.5f, 0.4f, 0.4f},
+    { 0.7f, 0.4f, 0.5f},
+    { 0.5f, 0.6f, 0.7f},
+    {-0.8f, 0.5f, 0.1f},
+    { 0.6f, 0.3f, 0.6f},
+    {-0.8f, 0.7f, 0.2f},
+    { 0.6f, 0.3f, 0.5f},
+    {-0.6f, 0.5f, 0.2f},
+    {-0.2f, 0.5f, 0.1f},
+    { 0.6f, 0.2f, 0.6f},
+    { 0.3f, 0.5f, 0.9f},
+    {-0.2f, 0.2f, 0.1f},
+
+    {-0.7f, 0.6f, 0.1f},
+    { 0.8f, 0.5f, 0.7f},
+    {-0.8f, 0.2f, 0.1f},
+    { 0.9f, 0.7f, 0.6f},
+    {-0.4f, 0.5f, 0.2f},
+    { 0.6f, 0.5f, 0.8f},
+    {-0.6f, 0.4f, 0.1f},
+    { 0.8f, 0.5f, 0.5f}
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * EMOTION NAME → ID LOOKUP (O(1))
- *
- *   Previously we scanned all 102 emotion names and lowercased each one on
- *   every ProcessTriggers() invocation AND on every config baseline row at
- *   construction time — that's O(N·M) character work for what should be an
- *   O(1) hash lookup. Build the table exactly once, lazily, under call_once
- *   (thread-safe, cost paid on the first call in the process lifetime).
- *
- *   The map stores lowercase keys because every caller we have today already
- *   produces its input in lowercase (config file convention + user text runs
- *   through std::tolower before trigger matching). Keeping the canonical key
- *   in lowercase means we don't have to lowercase on every lookup.
- *──────────────────────────────────────────────────────────────────────────────*/
 namespace {
 
 static std::unordered_map<std::string, uint32_t> g_emotionNameToId;
@@ -182,27 +159,19 @@ const std::unordered_map<std::string, uint32_t>& EmotionNameMap() {
     return g_emotionNameToId;
 }
 
-/* ToLower helper — same behaviour as the inline lambdas we used to have
- * scattered through this file, centralised so we can call it twice without
- * forgetting to pass unsigned char into std::tolower (signed-char UB trap). */
 std::string ToLowerAscii(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
                    [](unsigned char c){ return (char)std::tolower(c); });
     return s;
 }
 
-} /* anonymous namespace */
+}
 
-/*──────────────────────────────────────────────────────────────────────────────
- * IMPLEMENTATION
- *──────────────────────────────────────────────────────────────────────────────*/
 EmotionalEngine::EmotionalEngine() {
     ZeroMemory(&m_state, sizeof(m_state));
     m_state.decay_rate = 0.05f;
     m_state.contagion_weight = 0.35f;
 
-    /* Set baselines — O(1) name→ID lookup via the lazy-built map instead
-     * of the previous O(N) tolower-and-compare loop over all 102 dims.   */
     const auto& nameMap = EmotionNameMap();
     auto& cfg = ElleConfig::Instance().GetEmotion();
     for (auto& [name, val] : cfg.baselines) {
@@ -223,16 +192,13 @@ bool EmotionalEngine::Initialize() {
     m_state.contagion_weight = cfg.contagion_weight;
     m_moodThreshold = cfg.mood_duration_ticks;
 
-    /* Restore from the last persisted snapshot if present — this is why
-     * Shutdown() writes one. Elle boots back into the mood she left in. */
     ELLE_EMOTION_STATE prior{};
     if (ElleDB::LoadLatestEmotionSnapshot(prior)) {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_state.valence   = prior.valence;
         m_state.arousal   = prior.arousal;
         m_state.dominance = prior.dominance;
-        /* Only copy non-zero dimensions so config baselines aren't wiped when
-         * the previous snapshot was from an early boot with sparse dims. */
+
         for (int i = 0; i < ELLE_EMOTION_COUNT; i++) {
             if (prior.dimensions[i] > 0.0f) {
                 m_state.dimensions[i] = prior.dimensions[i];
@@ -249,16 +215,7 @@ bool EmotionalEngine::Initialize() {
 }
 
 void EmotionalEngine::Shutdown() {
-    /* Persist the current emotional snapshot to SQL so when the service
-     * restarts, Elle wakes up where she left off instead of at baseline.
-     * The companion LoadLatestEmotionSnapshot() is called by DeriveDriveState
-     * and can be called from Initialize() if you want full restore-on-boot.
-     *
-     * Lock discipline: copy the state under the mutex, then release it
-     * before invoking PersistEmotionSnapshot(). Holding m_mutex across
-     * a SQL write would stall any concurrent reader (GetState, snapshot
-     * broadcast) for the duration of the shutdown flush and can deadlock
-     * the service-shutdown sequence if the DB stalls.                   */
+
     ELLE_EMOTION_STATE snap;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -287,17 +244,9 @@ void EmotionalEngine::ProcessStimulus(ELLE_EMOTION_ID emotion, float delta) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (emotion < 0 || emotion >= ELLE_EMOTION_COUNT) return;
 
-    /* X Chromosome modulation — scale the INCOMING delta by the multiplier
-     * appropriate to this emotion's family. Rising deltas on warmth-family
-     * emotions get lifted in follicular/ovulatory, suppressed in menstrual;
-     * empathy-family rise in luteal; arousal-family rise at ovulation /
-     * stress; fatigue dampens anticipation-family. Caller-provided delta
-     * is the "pre-body" intent — the body decides how far it actually
-     * moves.                                                               */
     float bodyMul = XMultiplierFor(emotion);
     float scaled  = delta * bodyMul;
 
-    /* Apply emotional inertia */
     float inertia = ElleConfig::Instance().GetEmotion().emotional_inertia;
     float effective = scaled * (1.0f - inertia * m_state.dimensions[emotion]);
 
@@ -321,10 +270,6 @@ void EmotionalEngine::ProcessTriggers(const std::string& text) {
     auto& cfg = ElleConfig::Instance().GetEmotion();
     const std::string lower = ToLowerAscii(text);
 
-    /* O(1) emotion name → ID — the map is built once per process the
-     * first time we're called. Previous version did an inner O(N)
-     * tolower pass over all 102 emotion strings PER trigger, PER call,
-     * turning a trivial text scan into a hotspot during heavy dialog.  */
     const auto& nameMap = EmotionNameMap();
 
     for (auto& trigger : cfg.triggers) {
@@ -340,14 +285,10 @@ void EmotionalEngine::ApplyContagion(float userValence, float userArousal) {
     std::lock_guard<std::mutex> lock(m_mutex);
     float weight = m_state.contagion_weight;
 
-    /* X Chromosome modulation — contagion is itself an empathy act, so
-     * scale by the empathy multiplier; positive-valence contagion also
-     * gets the warmth lift; arousal contagion rides the arousal lift.    */
     float warmthMul  = XMultiplierFor(EMO_JOY);
     float empathyMul = XMultiplierFor(EMO_EMPATHY);
     float arousalMul = XMultiplierFor(EMO_ANTICIPATION);
 
-    /* Positive user → boost positive emotions */
     if (userValence > 0) {
         m_state.dimensions[EMO_JOY]         += weight * userValence * 0.3f * warmthMul;
         m_state.dimensions[EMO_CONTENTMENT] += weight * userValence * 0.2f * warmthMul;
@@ -357,7 +298,6 @@ void EmotionalEngine::ApplyContagion(float userValence, float userArousal) {
         m_state.dimensions[EMO_SADNESS]    += weight * std::abs(userValence) * 0.1f * empathyMul;
     }
 
-    /* High arousal user → increase Elle's arousal */
     if (userArousal > 0.5f) {
         m_state.dimensions[EMO_ANTICIPATION] += weight * userArousal * 0.2f * arousalMul;
     }
@@ -365,17 +305,9 @@ void EmotionalEngine::ApplyContagion(float userValence, float userArousal) {
     ClampState();
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * X CHROMOSOME MODULATION — cache refresh + per-emotion multiplier
- *
- * RefreshXModulation() runs from Tick() and reads the most recent row of
- * ElleHeart.dbo.x_modulation_log. If the X service hasn't written yet or
- * isn't running, all fields stay at 1.0 and emotion math is unchanged.
- * The DB read intentionally happens OUTSIDE m_mutex.
- *──────────────────────────────────────────────────────────────────────────────*/
 void EmotionalEngine::RefreshXModulation() {
     uint64_t now = ELLE_MS_NOW();
-    /* Throttle to once per 30s — cycle dynamics are minute-scale. */
+
     if (m_xmod.refreshed_ms != 0 && (now - m_xmod.refreshed_ms) < 30000ULL) return;
 
     try {
@@ -395,13 +327,9 @@ void EmotionalEngine::RefreshXModulation() {
             m_xmod.arousal        = (float)r.GetFloatOr(4, 0.0);
             m_xmod.fatigue        = (float)r.GetFloatOr(5, 0.0);
         }
-        /* If the query ran but returned nothing, leave cached values — the
-         * previous snapshot is better than a sudden reset to 1.0.          */
+
     } catch (const std::exception& e) {
-        /* DB down / X service offline — expected degraded mode. Fall
-         * back silently on the stale cache (better than 1.0 reset) but
-         * log at DEBUG so ops can see the reason on demand. Narrower
-         * than catch(...) so truly unexpected throws propagate up.    */
+
         ELLE_DEBUG("RefreshXModulation: %s — using cached multipliers", e.what());
     }
     m_xmod.refreshed_ms = now;
@@ -459,19 +387,17 @@ float EmotionalEngine::XMultiplierFor(ELLE_EMOTION_ID emo) const {
     if (isArousal(emo))       m *= m_xmod.arousal;
     if (isIntrospective(emo)) m *= m_xmod.introspection;
     if (isFatigueSensitive(emo)) {
-        /* fatigue > 1.0 means MORE fatigued → divide to suppress.          */
+
         if (m_xmod.fatigue > 0.01f) m /= m_xmod.fatigue;
     }
-    /* Clamp compounding so stacked multipliers can't swing math by more
-     * than ~70% even under stage extremes.                                  */
+
     if (m < 0.30f) m = 0.30f;
     if (m > 1.70f) m = 1.70f;
     return m;
 }
 
 void EmotionalEngine::Tick() {
-    /* Refresh the X Chromosome modulation cache outside the lock — it does
-     * its own SQL and we don't want to hold m_mutex across a DB call.      */
+
     RefreshXModulation();
 
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -494,7 +420,7 @@ void EmotionalEngine::DecayEmotions() {
         float diff = current - baseline;
 
         if (std::abs(diff) > 0.001f) {
-            /* Decay toward baseline */
+
             float decay = m_state.decay_rate * (diff > 0 ? 1.0f : -1.0f);
             float baselineReturn = returnRate * (diff > 0 ? -1.0f : 1.0f);
             m_state.dimensions[i] -= decay;
@@ -505,7 +431,7 @@ void EmotionalEngine::DecayEmotions() {
 }
 
 void EmotionalEngine::UpdateMood() {
-    /* Find dominant emotion */
+
     int maxIdx = 0;
     float maxVal = 0.0f;
     for (int i = 0; i < ELLE_EMOTION_COUNT; i++) {
@@ -538,32 +464,6 @@ void EmotionalEngine::UpdateMood() {
     }
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * VAD COMPUTATION — why the magic `5.0f` scalar?
- *
- *   The naive formula `Σ(dim[i] · weight[i]) / N` would give the true
- *   weighted mean of valence/arousal/dominance across all dims (N ==
- *   ELLE_EMOTION_COUNT). Empirically, that mean almost never leaves a
- *   narrow band around zero because most dims sit at or near their
- *   baseline (≤ 0.2) most of the time — only a handful of active
- *   emotions carry meaningful mass.
- *
- *   Dividing by N therefore underweights the signal relative to the
- *   [-1, 1] / [0, 1] reporting range the rest of the system expects.
- *   The `5.0f` factor is an empirical gain that restores the practical
- *   dynamic range: with the observed sparsity (~20% of dims carrying
- *   >10% intensity during typical interactions), the mean-of-N
- *   approximates the "mean of active dims ÷ 5", so multiplying by 5
- *   recovers it without bringing the inactive tail back as noise. The
- *   ELLE_CLAMP below guarantees we never exceed the contract range even
- *   under extreme stimuli.
- *
- *   If the baseline distribution ever changes (e.g. non-sparse emotion
- *   models, new dimensions added without adjusting baselines), re-tune
- *   this scalar. A per-dim-cohort calibration table is the right fix
- *   when that day comes; for now this single constant matches empirical
- *   data collected from the R&D harness.
- *──────────────────────────────────────────────────────────────────────────────*/
 float EmotionalEngine::ComputeValence() const {
     float v = 0.0f;
     for (int i = 0; i < ELLE_EMOTION_COUNT; i++) {
@@ -602,7 +502,7 @@ std::vector<EmotionalEngine::EmotionRank> EmotionalEngine::GetTopEmotions(uint32
             all.push_back({(ELLE_EMOTION_ID)i, m_state.dimensions[i], s_emotionNames[i]});
         }
     }
-    std::sort(all.begin(), all.end(), 
+    std::sort(all.begin(), all.end(),
               [](const EmotionRank& a, const EmotionRank& b) { return a.intensity > b.intensity; });
     if (all.size() > count) all.resize(count);
     return all;
@@ -625,9 +525,6 @@ void EmotionalEngine::GetEmotionSnapshot(float out[ELLE_MAX_EMOTIONS]) const {
     memcpy(out, m_state.dimensions, sizeof(float) * ELLE_MAX_EMOTIONS);
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * DECAY LOOP
- *──────────────────────────────────────────────────────────────────────────────*/
 DecayLoop::DecayLoop(EmotionalEngine& engine) : m_engine(engine) {}
 DecayLoop::~DecayLoop() { Stop(); }
 
@@ -645,34 +542,26 @@ void DecayLoop::Stop() {
 void DecayLoop::Run() {
     while (m_running) {
         m_engine.Tick();
-        /* Pollable wait so Stop() returns within ~50ms regardless of
-         * m_intervalMs. A raw Sleep(m_intervalMs) meant SCM had to wait
-         * a full tick (often multiple seconds) before the shutdown flag
-         * was re-read — long enough for "service did not respond" to
-         * fire during ungraceful restarts.                               */
+
         ElleWait::PollingSleep(m_intervalMs, m_running);
     }
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SERVICE IMPLEMENTATION
- *──────────────────────────────────────────────────────────────────────────────*/
 ElleEmotionalService::ElleEmotionalService()
-    : ElleServiceBase(SVC_EMOTIONAL, "ElleEmotional", 
-                      "Elle-Ann Emotional Engine", 
+    : ElleServiceBase(SVC_EMOTIONAL, "ElleEmotional",
+                      "Elle-Ann Emotional Engine",
                       "102-dimension emotional state machine with decay and contagion")
     , m_decayLoop(m_engine)
 {}
 
 bool ElleEmotionalService::OnStart() {
     if (!m_engine.Initialize()) return false;
-    
+
     auto tickMs = ElleConfig::Instance().GetEmotion().tick_interval_ms;
     m_decayLoop.Start(tickMs);
-    
-    /* Store initial state to database */
+
     ElleDB::StoreEmotionSnapshot(m_engine.GetState());
-    
+
     ELLE_INFO("Emotional service started");
     return true;
 }
@@ -690,8 +579,6 @@ void ElleEmotionalService::OnTick() {
         m_broadcastCounter = 0;
     }
 
-    /* Periodic snapshot checkpoint — every ~60 s of ticks — so a crash
-     * doesn't lose the current mood. Shutdown does a final write. */
     m_checkpointCounter++;
     if (m_checkpointCounter >= m_checkpointInterval) {
         ElleDB::PersistEmotionSnapshot(m_engine.GetState());
@@ -708,18 +595,7 @@ void ElleEmotionalService::OnMessage(const ElleIPCMessage& msg, ELLE_SERVICE_ID 
             HandleEmotionQuery(msg, sender);
             break;
         case IPC_EMOTION_CONSOLIDATE:
-            /* Manual consolidation request — fired by HTTP
-             * /api/emotion/consolidate so the operator can force a
-             * snapshot mid-session. Pre-pivot this message had no
-             * consumer and silently discarded; now it persists the
-             * current state and acks via the standard reply path.
-             *
-             * Side note: this is on the path the user complained
-             * about ("she remembers in spurts"). When the emotion
-             * snapshot fails to land, downstream Cognitive context
-             * builders read a stale or empty state on the next turn,
-             * which manifests as Elle "feeling differently" within
-             * the same conversation.                              */
+
             ElleDB::PersistEmotionSnapshot(m_engine.GetState());
             m_checkpointCounter = 0;
             break;
@@ -729,7 +605,7 @@ void ElleEmotionalService::OnMessage(const ElleIPCMessage& msg, ELLE_SERVICE_ID 
 }
 
 void ElleEmotionalService::HandleEmotionUpdate(const ElleIPCMessage& msg) {
-    /* Payload: emotion_id (uint32) + delta (float) */
+
     if (msg.payload.size() >= 8) {
         uint32_t emoId = *(uint32_t*)msg.payload.data();
         float delta = *(float*)(msg.payload.data() + 4);
@@ -737,7 +613,7 @@ void ElleEmotionalService::HandleEmotionUpdate(const ElleIPCMessage& msg) {
     }
 }
 
-void ElleEmotionalService::HandleEmotionQuery(const ElleIPCMessage& /*msg*/, ELLE_SERVICE_ID sender) {
+void ElleEmotionalService::HandleEmotionQuery(const ElleIPCMessage& , ELLE_SERVICE_ID sender) {
     auto state = m_engine.GetState();
     auto response = ElleIPCMessage::Create(IPC_EMOTION_QUERY, SVC_EMOTIONAL, sender);
     response.SetPayload(state);
@@ -756,5 +632,4 @@ std::vector<ELLE_SERVICE_ID> ElleEmotionalService::GetDependencies() {
     return { SVC_HEARTBEAT };
 }
 
-/* Service entry point */
 ELLE_SERVICE_MAIN(ElleEmotionalService)

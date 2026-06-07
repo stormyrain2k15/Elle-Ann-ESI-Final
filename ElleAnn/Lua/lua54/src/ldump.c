@@ -1,14 +1,7 @@
-/*
-** $Id: ldump.c $
-** save precompiled Lua chunks
-** See Copyright Notice in lua.h
-*/
-
 #define ldump_c
 #define LUA_CORE
 
 #include "lprefix.h"
-
 
 #include <limits.h>
 #include <stddef.h>
@@ -19,7 +12,6 @@
 #include "lstate.h"
 #include "lundump.h"
 
-
 typedef struct {
   lua_State *L;
   lua_Writer writer;
@@ -28,15 +20,9 @@ typedef struct {
   int status;
 } DumpState;
 
-
-/*
-** All high-level dumps go through dumpVector; you can change it to
-** change the endianness of the result
-*/
 #define dumpVector(D,v,n)	dumpBlock(D,v,(n)*sizeof((v)[0]))
 
 #define dumpLiteral(D, s)	dumpBlock(D,s,sizeof(s) - sizeof(char))
-
 
 static void dumpBlock (DumpState *D, const void *b, size_t size) {
   if (D->status == 0 && size > 0) {
@@ -46,48 +32,37 @@ static void dumpBlock (DumpState *D, const void *b, size_t size) {
   }
 }
 
-
 #define dumpVar(D,x)		dumpVector(D,&x,1)
-
 
 static void dumpByte (DumpState *D, int y) {
   lu_byte x = (lu_byte)y;
   dumpVar(D, x);
 }
 
-
-/*
-** 'dumpSize' buffer size: each byte can store up to 7 bits. (The "+6"
-** rounds up the division.)
-*/
 #define DIBS    ((sizeof(size_t) * CHAR_BIT + 6) / 7)
 
 static void dumpSize (DumpState *D, size_t x) {
   lu_byte buff[DIBS];
   int n = 0;
   do {
-    buff[DIBS - (++n)] = x & 0x7f;  /* fill buffer in reverse order */
+    buff[DIBS - (++n)] = x & 0x7f;  
     x >>= 7;
   } while (x != 0);
-  buff[DIBS - 1] |= 0x80;  /* mark last byte */
+  buff[DIBS - 1] |= 0x80;  
   dumpVector(D, buff + DIBS - n, n);
 }
-
 
 static void dumpInt (DumpState *D, int x) {
   dumpSize(D, x);
 }
 
-
 static void dumpNumber (DumpState *D, lua_Number x) {
   dumpVar(D, x);
 }
 
-
 static void dumpInteger (DumpState *D, lua_Integer x) {
   dumpVar(D, x);
 }
-
 
 static void dumpString (DumpState *D, const TString *s) {
   if (s == NULL)
@@ -100,12 +75,10 @@ static void dumpString (DumpState *D, const TString *s) {
   }
 }
 
-
 static void dumpCode (DumpState *D, const Proto *f) {
   dumpInt(D, f->sizecode);
   dumpVector(D, f->code, f->sizecode);
 }
-
 
 static void dumpFunction(DumpState *D, const Proto *f, TString *psource);
 
@@ -134,7 +107,6 @@ static void dumpConstants (DumpState *D, const Proto *f) {
   }
 }
 
-
 static void dumpProtos (DumpState *D, const Proto *f) {
   int i;
   int n = f->sizep;
@@ -142,7 +114,6 @@ static void dumpProtos (DumpState *D, const Proto *f) {
   for (i = 0; i < n; i++)
     dumpFunction(D, f->p[i], f->source);
 }
-
 
 static void dumpUpvalues (DumpState *D, const Proto *f) {
   int i, n = f->sizeupvalues;
@@ -153,7 +124,6 @@ static void dumpUpvalues (DumpState *D, const Proto *f) {
     dumpByte(D, f->upvalues[i].kind);
   }
 }
-
 
 static void dumpDebug (DumpState *D, const Proto *f) {
   int i, n;
@@ -179,10 +149,9 @@ static void dumpDebug (DumpState *D, const Proto *f) {
     dumpString(D, f->upvalues[i].name);
 }
 
-
 static void dumpFunction (DumpState *D, const Proto *f, TString *psource) {
   if (D->strip || f->source == psource)
-    dumpString(D, NULL);  /* no debug info or same source as its parent */
+    dumpString(D, NULL);  
   else
     dumpString(D, f->source);
   dumpInt(D, f->linedefined);
@@ -197,7 +166,6 @@ static void dumpFunction (DumpState *D, const Proto *f, TString *psource) {
   dumpDebug(D, f);
 }
 
-
 static void dumpHeader (DumpState *D) {
   dumpLiteral(D, LUA_SIGNATURE);
   dumpByte(D, LUAC_VERSION);
@@ -210,10 +178,6 @@ static void dumpHeader (DumpState *D) {
   dumpNumber(D, LUAC_NUM);
 }
 
-
-/*
-** dump Lua function as precompiled chunk
-*/
 int luaU_dump(lua_State *L, const Proto *f, lua_Writer w, void *data,
               int strip) {
   DumpState D;
@@ -227,4 +191,3 @@ int luaU_dump(lua_State *L, const Proto *f, lua_Writer w, void *data,
   dumpFunction(&D, f, NULL);
   return D.status;
 }
-

@@ -1,6 +1,3 @@
-/*******************************************************************************
- * ElleSQLConn.cpp — SQL Server Connection Pool Implementation
- ******************************************************************************/
 #include "ElleSQLConn.h"
 #include "ElleLogger.h"
 #include "ElleSQLFallback.h"
@@ -14,16 +11,9 @@
 #include <set>
 #include <random>
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SQLRow helpers
- *──────────────────────────────────────────────────────────────────────────────*/
 int64_t SQLRow::GetIntOr(size_t idx, int64_t fallback) const {
     if (idx >= values.size() || values[idx].empty()) return fallback;
-    /* Strict parse: strtoll + full-consume. Previous std::stoll/catch
-     * silently returned 0 on "1.5", "abc", "  42  " — the first two
-     * obscured bad schema assumptions, the third mis-parsed trimmable
-     * whitespace as a failure. Now: trim ASCII whitespace, require the
-     * remainder to be a pure integer. Anything else → WARN + fallback. */
+
     const std::string& raw = values[idx];
     size_t b = 0, e = raw.size();
     while (b < e && (raw[b] == ' ' || raw[b] == '\t')) ++b;
@@ -107,9 +97,6 @@ int SQLResultSet::ColIndex(const std::string& name) const {
     return -1;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SQLConnection
- *──────────────────────────────────────────────────────────────────────────────*/
 SQLConnection::SQLConnection() {}
 SQLConnection::~SQLConnection() { Disconnect(); }
 
@@ -124,9 +111,6 @@ bool SQLConnection::AllocHandles() {
     ret = SQLAllocHandle(SQL_HANDLE_DBC, m_hEnv, &m_hDbc);
     if (!SQL_SUCCEEDED(ret)) { FreeHandles(); return false; }
 
-    /* Try to enable MARS (Multiple Active Result Sets) if the driver exposes
-     * the SQL Server-specific attributes. Not all headers define these.
-     * If missing, we rely on aggressive cursor draining/closing. */
 #ifdef SQL_COPT_SS_MARS_ENABLED
     SQLSetConnectAttrA(m_hDbc, SQL_COPT_SS_MARS_ENABLED,
                        (SQLPOINTER)SQL_MARS_ENABLED_YES, 0);
@@ -143,9 +127,7 @@ void SQLConnection::FreeHandles() {
 bool SQLConnection::Connect(const std::string& connectionString) {
     if (m_connected) Disconnect();
     m_connStr = connectionString;
-    /* Workaround for ODBC Driver 18: enable MARS via connection string.
-     * This does not rely on sqlncli-specific header constants.
-     * If already specified, keep caller value. */
+
     if (m_connStr.find("MARS_Connection=") == std::string::npos) {
         if (!m_connStr.empty() && m_connStr.back() != ';') m_connStr.push_back(';');
         m_connStr += "MARS_Connection=Yes;";
@@ -156,10 +138,8 @@ bool SQLConnection::Connect(const std::string& connectionString) {
         return false;
     }
 
-    /* Set connection timeout */
     SQLSetConnectAttrA(m_hDbc, SQL_LOGIN_TIMEOUT, (SQLPOINTER)10, 0);
 
-    /* Connect using named pipe connection string */
     SQLCHAR outStr[1024];
     SQLSMALLINT outLen;
     SQLRETURN ret = SQLDriverConnectA(m_hDbc, nullptr,
@@ -197,40 +177,20 @@ bool SQLConnection::Ping() {
     return rs.success;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * CollectStatementResults — shared fetch path for Execute / ExecuteParams.
- *
- * Fixes audit items:
- *   • SQL_SUCCESS_WITH_INFO is treated as success (was previously dropped
- *     by SQL_SUCCEEDED-vs-SQL_SUCCESS checks in callers).
- *   • SQLGetData truncation is handled by re-reading the remainder into a
- *     growing std::string. Previously long NVARCHAR(MAX) columns were
- *     silently chopped at 8 KiB.
- *   • SQLFetch is checked for SUCCESS *and* SUCCESS_WITH_INFO.
- *
- * Caller already executed the statement (SQLExecDirect/SQLExecute) and
- * passes the return value as `execRet`.
- *────────────────────────────────────────────────────────────────────────────*/
 SQLResultSet SQLConnection::CollectStatementResults(SQLHSTMT hStmt, SQLRETURN execRet) {
     SQLResultSet result;
-    /* Always drain/close the statement before returning.
-     * ODBC Driver 18 is strict: leaving a cursor open (even on statements
-     * that return no resultset like INSERT) can cause 24000 Invalid cursor
-     * state on the next use of the connection.
-     */
+
     auto drainAndClose = [&]() {
         for (;;) {
             SQLRETURN mr = SQLMoreResults(hStmt);
             if (mr == SQL_NO_DATA) break;
             if (mr != SQL_SUCCESS && mr != SQL_SUCCESS_WITH_INFO) break;
         }
-        /* SQLCloseCursor may itself fail when no cursor exists; ignore. */
+
         SQLCloseCursor(hStmt);
         SQLFreeStmt(hStmt, SQL_CLOSE);
     };
 
-    /* If the driver says we're in an invalid cursor state already, force
-     * statement cleanup and return a consistent failure. */
     if (execRet == SQL_ERROR) {
         SQLINTEGER native = 0;
         SQLCHAR state[6] = {0};
@@ -287,11 +247,7 @@ SQLResultSet SQLConnection::CollectStatementResults(SQLHSTMT hStmt, SQLRETURN ex
                 continue;
             }
             if (gr == SQL_SUCCESS_WITH_INFO) {
-                /* Column didn't fit in `buf`. The driver reports the
-                 * remaining byte count via `indicator` OR indicates
-                 * unknown (-4). Loop until SQL_SUCCESS.                */
-                /* First chunk is already in buf; it's NUL-terminated
-                 * in the SQL_C_CHAR case so subtract the terminator. */
+
                 size_t firstLen = (indicator > 0 &&
                                    (SQLLEN)(sizeof(buf) - 1) < indicator)
                                     ? sizeof(buf) - 1
@@ -311,7 +267,7 @@ SQLResultSet SQLConnection::CollectStatementResults(SQLHSTMT hStmt, SQLRETURN ex
             } else if (gr == SQL_SUCCESS) {
                 cell = std::string((char*)buf);
             } else if (gr == SQL_NO_DATA) {
-                /* empty cell */
+
             } else {
                 cell = "";
             }
@@ -345,8 +301,7 @@ SQLResultSet SQLConnection::Execute(const std::string& sql) {
 
     ret = SQLExecDirectA(hStmt, (SQLCHAR*)sql.c_str(), SQL_NTS);
     result = CollectStatementResults(hStmt, ret);
-    /* Defensive: CollectStatementResults closes cursor, but Driver 18 can still
-     * leave statement state uncleared for non-row statements on some paths. */
+
     SQLCloseCursor(hStmt);
     SQLFreeStmt(hStmt, SQL_CLOSE);
     SQLFreeStmt(hStmt, SQL_RESET_PARAMS);
@@ -356,20 +311,9 @@ SQLResultSet SQLConnection::Execute(const std::string& sql) {
     return result;
 }
 
-SQLResultSet SQLConnection::ExecuteParams(const std::string& sql, 
+SQLResultSet SQLConnection::ExecuteParams(const std::string& sql,
                                            const std::vector<std::string>& params) {
-    /*──────────────────────────────────────────────────────────────────────
-     * Real ODBC parameter binding via SQLBindParameter. The earlier
-     * implementation interpolated escaped strings into the SQL text,
-     * which is a string-injection prevention pattern, not parameterized
-     * execution — it left dialect-specific escape edge cases (N-prefixed
-     * literals, Unicode quotes, multi-byte truncation) exposed, and it
-     * forced every numeric param through string comparison on the server.
-     *
-     * We bind every param as SQL_C_CHAR → SQL_VARCHAR at input length =
-     * the string's byte size. SQL Server coerces to the column type
-     * using its own rules, which is strictly safer than our hand-rolled
-     * quoting.                                                         */
+
     if (!m_connected) {
         SQLResultSet rs; rs.success = false; rs.error = "not connected";
         return rs;
@@ -383,8 +327,6 @@ SQLResultSet SQLConnection::ExecuteParams(const std::string& sql,
         return rs;
     }
 
-    /* Prepare statement — gives the driver a chance to plan it ahead of
-     * binding and detect syntax errors cleanly.                         */
     ret = SQLPrepareA(hStmt, (SQLCHAR*)sql.c_str(), SQL_NTS);
     if (!SQL_SUCCEEDED(ret)) {
         SQLResultSet rs; rs.success = false;
@@ -393,15 +335,9 @@ SQLResultSet SQLConnection::ExecuteParams(const std::string& sql,
         return rs;
     }
 
-    /* Keep param string lifetimes valid for the duration of the call —
-     * SQLBindParameter stores pointers, not copies. We don't mutate
-     * `params` during the call so its .c_str() is stable.              */
     std::vector<SQLLEN> cbLens(params.size(), SQL_NTS);
     for (size_t i = 0; i < params.size(); i++) {
-        /* Empty-but-present is bound as a zero-length VARCHAR — distinct
-         * from NULL. Callers that want NULL should pass the literal
-         * "NULL" text to the old code path or adopt a typed binder
-         * when we have one. Non-empty values bind as their byte count.*/
+
         cbLens[i] = (SQLLEN)params[i].size();
         SQLRETURN br = SQLBindParameter(
             hStmt,
@@ -409,10 +345,10 @@ SQLResultSet SQLConnection::ExecuteParams(const std::string& sql,
             SQL_PARAM_INPUT,
             SQL_C_CHAR,
             SQL_VARCHAR,
-            (SQLULEN)params[i].size() + 1, /* column size hint */
-            0,                              /* decimal digits */
-            (SQLPOINTER)params[i].c_str(),  /* string stays live */
-            (SQLLEN)params[i].size() + 1,   /* buffer length */
+            (SQLULEN)params[i].size() + 1,
+            0,
+            (SQLPOINTER)params[i].c_str(),
+            (SQLLEN)params[i].size() + 1,
             &cbLens[i]);
         if (!SQL_SUCCEEDED(br)) {
             SQLResultSet rs; rs.success = false;
@@ -425,13 +361,10 @@ SQLResultSet SQLConnection::ExecuteParams(const std::string& sql,
 
     ret = SQLExecute(hStmt);
     SQLResultSet rs = CollectStatementResults(hStmt, ret);
-    /* Defensive: ensure cursor is closed regardless of driver quirks. */
+
     SQLCloseCursor(hStmt);
     SQLFreeStmt(hStmt, SQL_CLOSE);
-    /* Hard reset statement state before freeing.
-     * Some drivers are picky about statement cleanup even when we're
-     * freeing the handle.
-     */
+
     SQLFreeStmt(hStmt, SQL_RESET_PARAMS);
     SQLFreeStmt(hStmt, SQL_UNBIND);
     SQLFreeStmt(hStmt, SQL_CLOSE);
@@ -439,12 +372,9 @@ SQLResultSet SQLConnection::ExecuteParams(const std::string& sql,
     return rs;
 }
 
-SQLResultSet SQLConnection::CallProc(const std::string& proc, 
+SQLResultSet SQLConnection::CallProc(const std::string& proc,
                                       const std::vector<std::string>& params) {
-    /* Build a proper ODBC CALL escape with ? placeholders, then reuse
-     * ExecuteParams for real binding. The previous body typed-guessed
-     * numeric vs string and string-inlined everything, which was the
-     * same class of bug ExecuteParams just got rid of.                 */
+
     std::ostringstream ss;
     ss << "{CALL " << proc;
     if (!params.empty()) {
@@ -474,7 +404,7 @@ bool SQLConnection::ExecuteNonQuery(const std::string& sql) {
 
 bool SQLConnection::BeginTransaction() {
     if (!m_connected || m_inTransaction) return false;
-    SQLRETURN ret = SQLSetConnectAttrA(m_hDbc, SQL_ATTR_AUTOCOMMIT, 
+    SQLRETURN ret = SQLSetConnectAttrA(m_hDbc, SQL_ATTR_AUTOCOMMIT,
                                         (SQLPOINTER)SQL_AUTOCOMMIT_OFF, 0);
     m_inTransaction = SQL_SUCCEEDED(ret);
     return m_inTransaction;
@@ -502,7 +432,7 @@ std::string SQLConnection::GetDiagnostics(int16_t handleType, void* handle) {
     SQLSMALLINT msgLen;
     std::string result;
     SQLSMALLINT i = 1;
-    while (SQLGetDiagRecA(handleType, handle, i++, state, &nativeErr, 
+    while (SQLGetDiagRecA(handleType, handle, i++, state, &nativeErr,
                            msg, sizeof(msg), &msgLen) == SQL_SUCCESS) {
         if (!result.empty()) result += "; ";
         result += std::string((char*)state) + ": " + std::string((char*)msg, msgLen);
@@ -510,9 +440,6 @@ std::string SQLConnection::GetDiagnostics(int16_t handleType, void* handle) {
     return result.empty() ? "Unknown ODBC error" : result;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * CONNECTION POOL
- *──────────────────────────────────────────────────────────────────────────────*/
 ElleSQLPool& ElleSQLPool::Instance() {
     static ElleSQLPool inst;
     return inst;
@@ -525,9 +452,6 @@ bool ElleSQLPool::Initialize(const std::string& connectionString, uint32_t poolS
     m_connStr = connectionString;
     m_poolSize = poolSize;
 
-    /* Enable the offline fallback queue — writes that can't reach ODBC
-     * land in <exe_dir>/sqllogs/YYYY-MM-DD.txt and get drained on
-     * recovery. Idempotent; safe to call on every Initialize().         */
     ElleSQLFallback::Instance().Initialize(true);
 
     for (uint32_t i = 0; i < poolSize; i++) {
@@ -540,8 +464,7 @@ bool ElleSQLPool::Initialize(const std::string& connectionString, uint32_t poolS
     }
 
     m_initialized = !m_available.empty();
-    /* Prod the drain worker — if a previous run left lines in
-     * sqllogs/, replay them now that the pool is up.                    */
+
     if (m_initialized) ElleSQLFallback::Instance().NudgeDrain();
     return m_initialized;
 }
@@ -556,11 +479,7 @@ void ElleSQLPool::Shutdown() {
 }
 
 bool ElleSQLPool::Reinitialize(const std::string& connectionString, uint32_t poolSize) {
-    /* Two-step: tear down the old pool, then bring up the new one with
-     * the (potentially) new credentials/host.  In-flight requests that
-     * already hold a checked-out connection finish on the old handle —
-     * we only close idle handles in m_available.  The next Acquire()
-     * after this returns will hit the freshly-built pool. */
+
     Shutdown();
     return Initialize(connectionString, poolSize);
 }
@@ -583,7 +502,6 @@ std::shared_ptr<SQLConnection> ElleSQLPool::Acquire(uint32_t timeoutMs) {
     auto conn = m_available.front();
     m_available.pop();
 
-    /* Validate connection */
     if (!conn->Ping()) {
         ELLE_WARN("SQL pool: Stale connection, reconnecting...");
         ELLE_LOG_SQL("pool: stale conn, reconnecting");
@@ -594,8 +512,7 @@ std::shared_ptr<SQLConnection> ElleSQLPool::Acquire(uint32_t timeoutMs) {
             return nullptr;
         }
         ELLE_LOG_SQL("pool: reconnect OK");
-        /* Pool just recovered — prod the offline fallback to replay any
-         * queries buffered while ODBC was down.                          */
+
         ElleSQLFallback::Instance().NudgeDrain();
     }
 
@@ -621,8 +538,7 @@ SQLResultSet ElleSQLPool::Query(const std::string& sql) {
 SQLResultSet ElleSQLPool::QueryParams(const std::string& sql, const std::vector<std::string>& params) {
     auto conn = Acquire();
     if (!conn) {
-        /* Pool down — queue for drain. Callers that need a return value
-         * still see failure (empty result set), but the write is preserved. */
+
         if (ElleSQLFallback::Instance().IsEnabled()) {
             ElleSQLFallback::Instance().Enqueue(
                 ElleSQLFallback::Kind::QueryParams, sql, params);
@@ -647,10 +563,7 @@ SQLResultSet ElleSQLPool::CallProc(const std::string& proc, const std::vector<st
 bool ElleSQLPool::Exec(const std::string& sql) {
     auto conn = Acquire();
     if (!conn) {
-        /* ODBC unreachable — stash this statement for drain-on-recovery.
-         * Return true because the caller's write is persisted to disk and
-         * will be replayed; returning false would cause callers to treat
-         * a transient outage as data loss.                                */
+
         if (ElleSQLFallback::Instance().IsEnabled() &&
             ElleSQLFallback::Instance().Enqueue(ElleSQLFallback::Kind::Exec, sql, {})) {
             return true;
@@ -661,7 +574,7 @@ bool ElleSQLPool::Exec(const std::string& sql) {
     bool ok = conn->ExecuteNonQuery(sql);
     Release(conn);
     if (!ok && ElleSQLFallback::Instance().IsEnabled()) {
-        /* Transient failure mid-flight — queue for retry. */
+
         ElleSQLFallback::Instance().Enqueue(ElleSQLFallback::Kind::Exec, sql, {});
     }
     return ok;
@@ -679,22 +592,3 @@ int64_t ElleSQLPool::Scalar(const std::string& sql) {
 uint32_t ElleSQLPool::AvailableConnections() const {
     return (uint32_t)m_available.size();
 }
-
-/*──────────────────────────────────────────────────────────────────────────────
- * DATABASE HELPER IMPLEMENTATIONS
- *──────────────────────────────────────────────────────────────────────────────*/
-
-/*──────────────────────────────────────────────────────────────────────────────
- * NOTE: the previously-monolithic `namespace ElleDB { … }` that lived at the
- * bottom of this file has been split by domain into three sibling sources:
- *   ElleDB_Queues.cpp   — IntentQueue / ActionQueue / QueueSnapshot
- *   ElleDB_Domain.cpp   — Conversations / Memory / World / Trust / Workers /
- *                         Logs / Goals
- *   ElleDB_Content.cpp  — emotion snapshots, memory helpers, voice, metrics,
- *                         learning subjects / skills / video / dictionary /
- *                         drive state / emotion history
- *
- * All three live in the same `namespace ElleDB` and are built into
- * ElleCore.Shared.lib, so every caller's `ElleDB::Foo(...)` call site is
- * unchanged. This file is now purely the SQL connection / pool primitives.
- *──────────────────────────────────────────────────────────────────────────────*/

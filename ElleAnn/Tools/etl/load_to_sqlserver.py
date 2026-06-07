@@ -1,51 +1,3 @@
-"""
-load_to_sqlserver.py
-====================
-
-Streams the CSVs in ./output/ into SQL Server using the staging-table
-stored procedures defined in sql/09_validation_and_loaders.sql, plus
-direct INSERTs for the example / emotion / relation / concept tables.
-
-Designed to run on the Windows box that hosts the SQL Server instance.
-Requires:
-    pip install pyodbc tqdm
-    + ODBC Driver 17 for SQL Server installed
-
-Usage:
-    python load_to_sqlserver.py \
-        --server localhost --database EllesLanguage [--trusted | --user X --password Y] \
-        [--input-dir ./output] [--batch-size 5000] [--skip TABLE,TABLE,...]
-
-The script is idempotent: re-running it merges new rows by their natural
-keys (NormalizedLemma for Word, NormalizedForm for Phrase, etc.). Existing
-rows are not duplicated.
-
-Order of operations (this is also the dependency order):
-    1. words.csv               -> usp_LoadStagingWords  (MERGE on NormalizedLemma)
-    2. phrases.csv +
-       phrase_words.csv        -> usp_LoadStagingPhrases (MERGE on NormalizedForm)
-    3. senses.csv              -> usp_LoadStagingSenses  (INSERT, returns map)
-    4. sense_usage_examples,
-       sense_context_examples,
-       sense_emotions          -> INSERT joined on SourceTag (resolved via Sense.AnalysisTrace?)
-    5. sense_relations,
-       word_relations          -> INSERT joined to senses/words
-    6. concepts +
-       concept_members         -> INSERT
-    7. phrase_senses + their
-       usage/context/emotion   -> INSERT joined to phrases
-
-Because steps 4..7 depend on the BIGINT SenseIDs / PhraseIDs generated in
-steps 1..3, the script keeps in-Python lookup dicts:
-    norm_lemma  -> WordID
-    norm_form   -> PhraseID
-    source_tag  -> SenseID            (only after we LEFT-JOIN on Sense)
-    source_tag  -> PhraseSenseID
-
-This module deliberately *does not* import pandas or sqlalchemy to keep
-the production install footprint tiny (pyodbc only).
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -67,12 +19,6 @@ except ImportError:
     def tqdm(it, **_):
         return it
 
-
-# --------------------------------------------------------------------------- #
-# CLI                                                                         #
-# --------------------------------------------------------------------------- #
-
-
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Load Elle ETL CSVs into SQL Server.")
     ap.add_argument("--server", required=True)
@@ -89,12 +35,6 @@ def parse_args() -> argparse.Namespace:
                     "concepts, phrase_senses).")
     return ap.parse_args()
 
-
-# --------------------------------------------------------------------------- #
-# Connection                                                                  #
-# --------------------------------------------------------------------------- #
-
-
 def connect(args: argparse.Namespace) -> pyodbc.Connection:
     if args.trusted:
         cs = (f"DRIVER={{{args.driver}}};SERVER={args.server};"
@@ -105,27 +45,19 @@ def connect(args: argparse.Namespace) -> pyodbc.Connection:
         cs = (f"DRIVER={{{args.driver}}};SERVER={args.server};"
               f"DATABASE={args.database};UID={args.user};PWD={args.password};")
     conn = pyodbc.connect(cs, autocommit=False)
-    conn.cursor().fast_executemany = True  # ignored on some drivers; set per-cursor below
+    conn.cursor().fast_executemany = True
     return conn
-
 
 def cursor(conn: pyodbc.Connection) -> pyodbc.Cursor:
     cur = conn.cursor()
     cur.fast_executemany = True
     return cur
 
-
-# --------------------------------------------------------------------------- #
-# CSV helpers                                                                 #
-# --------------------------------------------------------------------------- #
-
-
 def iter_csv(path: Path) -> Iterator[Dict[str, str]]:
     with open(path, "r", encoding="utf-8", newline="") as fp:
         reader = csv.DictReader(fp)
         for row in reader:
             yield row
-
 
 def in_batches(it: Iterable, n: int) -> Iterator[list]:
     batch: list = []
@@ -136,12 +68,6 @@ def in_batches(it: Iterable, n: int) -> Iterator[list]:
             batch = []
     if batch:
         yield batch
-
-
-# --------------------------------------------------------------------------- #
-# Stage 1: Words                                                              #
-# --------------------------------------------------------------------------- #
-
 
 def load_words(conn: pyodbc.Connection, csv_path: Path, batch_size: int) -> None:
     print(f"[stage:words] loading {csv_path.name}")
@@ -168,12 +94,6 @@ def load_words(conn: pyodbc.Connection, csv_path: Path, batch_size: int) -> None
     cur.execute("EXEC dbo.usp_LoadStagingWords")
     conn.commit()
     print(f"[stage:words]   done.")
-
-
-# --------------------------------------------------------------------------- #
-# Stage 2: Phrases + PhraseWords                                              #
-# --------------------------------------------------------------------------- #
-
 
 def load_phrases(conn: pyodbc.Connection, dir_: Path, batch_size: int) -> None:
     print("[stage:phrases] loading phrases.csv + phrase_words.csv")
@@ -218,15 +138,8 @@ def load_phrases(conn: pyodbc.Connection, dir_: Path, batch_size: int) -> None:
     conn.commit()
     print("[stage:phrases]   done.")
 
-
-# --------------------------------------------------------------------------- #
-# Stage 3: Senses                                                             #
-# --------------------------------------------------------------------------- #
-
-
 def load_senses(conn: pyodbc.Connection, csv_path: Path,
                 batch_size: int) -> Dict[str, int]:
-    """Load senses; return {SourceTag -> SenseID}."""
     print(f"[stage:senses] loading {csv_path.name}")
     cur = cursor(conn)
     cur.execute("""
@@ -268,12 +181,6 @@ def load_senses(conn: pyodbc.Connection, csv_path: Path,
     print(f"[stage:senses]   resolved {len(mapping):,} SourceTag -> SenseID mappings.")
     return mapping
 
-
-# --------------------------------------------------------------------------- #
-# Stage 4: Examples + Emotions (joined via the in-memory map)                 #
-# --------------------------------------------------------------------------- #
-
-
 def load_examples_and_emotions(conn: pyodbc.Connection, dir_: Path,
                                sense_map: Dict[str, int],
                                batch_size: int) -> None:
@@ -287,7 +194,7 @@ def load_examples_and_emotions(conn: pyodbc.Connection, dir_: Path,
             for r in batch:
                 sid = sense_map.get(r["SourceTag"])
                 if sid is None:
-                    continue  # phrase-senses go through a different loader
+                    continue
                 rows.append((sid, int(r[slot_field]), r[text_field][:1024]))
             if rows:
                 cur.executemany(
@@ -309,8 +216,7 @@ def load_examples_and_emotions(conn: pyodbc.Connection, dir_: Path,
     print(f"[stage:examples]   inserted {n:,} context rows.")
 
     print("[stage:emotions] sense_emotions ...")
-    # SenseEmotion has PK (SenseID, EmotionID, PhraseSenseID) and a UNIQUE
-    # constraint; use MERGE-style INSERT WHERE NOT EXISTS.
+
     cur.execute("""
         IF OBJECT_ID('tempdb..#StagingEmo') IS NOT NULL DROP TABLE #StagingEmo;
         CREATE TABLE #StagingEmo (
@@ -344,12 +250,6 @@ def load_examples_and_emotions(conn: pyodbc.Connection, dir_: Path,
     """)
     conn.commit()
     print(f"[stage:emotions]   staged {n:,} rows; merged into SenseEmotion.")
-
-
-# --------------------------------------------------------------------------- #
-# Stage 5: Relations                                                          #
-# --------------------------------------------------------------------------- #
-
 
 def load_relations(conn: pyodbc.Connection, dir_: Path,
                    sense_map: Dict[str, int], batch_size: int) -> None:
@@ -430,12 +330,6 @@ def load_relations(conn: pyodbc.Connection, dir_: Path,
     conn.commit()
     print(f"[stage:relations]   staged {n:,} word-relation rows; merged.")
 
-
-# --------------------------------------------------------------------------- #
-# Stage 6: Concepts                                                           #
-# --------------------------------------------------------------------------- #
-
-
 def load_concepts(conn: pyodbc.Connection, dir_: Path,
                   sense_map: Dict[str, int], batch_size: int) -> None:
     cur = cursor(conn)
@@ -488,12 +382,6 @@ def load_concepts(conn: pyodbc.Connection, dir_: Path,
     conn.commit()
     print(f"[stage:concepts]   staged {n:,} member rows; merged.")
 
-
-# --------------------------------------------------------------------------- #
-# Main                                                                        #
-# --------------------------------------------------------------------------- #
-
-
 def main() -> None:
     args = parse_args()
     input_dir = Path(args.input_dir)
@@ -522,7 +410,6 @@ def main() -> None:
 
     conn.close()
     print(f"[run] ALL DONE in {time.time() - t0:.1f}s")
-
 
 if __name__ == "__main__":
     main()

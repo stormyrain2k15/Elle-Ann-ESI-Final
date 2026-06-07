@@ -1,18 +1,7 @@
-;******************************************************************************
-; Crypto.asm — ELLE-ANN ESI v3.0 Cryptography DLL (MASM x64)
-;
-; SHA-256, AES-256 (via AES-NI), XOR cipher, CRC32, CSPRNG.
-; Uses hardware-accelerated instructions where available.
-;******************************************************************************
-
 .data
-    ; ml64 caps segment alignment at 16 bytes. The 64-byte request here
-    ; was harmless on some toolchains but is rejected as A2189 on recent
-    ; ones. 16-byte alignment still satisfies every AES-NI / SSE access
-    ; these constants participate in — SHA-256 K[] and the hash-state
-    ; vectors are read 16 bytes at a time in the round functions.
+
     ALIGN 16
-    ; SHA-256 round constants (K)
+
     sha256_k DWORD 0428a2f98h, 071374491h, 0b5c0fbcfh, 0e9b5dba5h
              DWORD 03956c25bh, 059f111f1h, 0923f82a4h, 0ab1c5ed5h
              DWORD 0d807aa98h, 012835b01h, 0243185beh, 0550c7dc3h
@@ -30,7 +19,6 @@
              DWORD 0748f82eeh, 078a5636fh, 084c87814h, 08cc70208h
              DWORD 090befffah, 0a4506cebh, 0bef9a3f7h, 0c67178f2h
 
-    ; SHA-256 initial hash values
     sha256_h0 DWORD 06a09e667h
     sha256_h1 DWORD 0bb67ae85h
     sha256_h2 DWORD 03c6ef372h
@@ -40,69 +28,16 @@
     sha256_h6 DWORD 01f83d9abh
     sha256_h7 DWORD 05be0cd19h
 
-    ; CRC32 polynomial table
     ALIGN 16
     crc32_table DWORD 256 DUP (0)
-    crc32_init  DWORD 0             ; 0 = not initialized
+    crc32_init  DWORD 0
 
 .code
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_SHA256 — Compute SHA-256 hash
-; Parameters: rcx = data pointer
-;             edx = data length
-;             r8  = output hash (32 bytes)
-; Returns:    void
-;──────────────────────────────────────────────────────────────────────────────
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_SHA256_SCAFFOLDED — INTENTIONALLY UNIMPLEMENTED
-;
-;   The body is a scaffold: prologue/epilogue + constants setup are
-;   real, but the 64-round message schedule + compression function are
-;   NOT implemented. A real MASM implementation is ~200 lines of
-;   schedule-expand + compression-round macro and was deferred to
-;   focus on the Windows-service core.
-;
-;   To prevent silent "all zero" or "initial-hash-value" outputs from
-;   being mistaken for real hashes, this stub FILLS the output buffer
-;   with a distinctive canary pattern 0xDEAD5CAF (SCAFFOLD) 32 bytes
-;   so any caller that accidentally links to it gets a loud, visible
-;   wrong-looking hash instead of a plausible-looking bug.
-;
-;   NOT exported in Crypto.def — nothing can link to this by mistake
-;   unless a caller manually adds the export + import. The Shared-side
-;   prototype in ElleTypes.h was removed at the same time.
-;
-;   When a real SHA-256 in MASM is implemented, rename back to
-;   ASM_SHA256, re-export, restore the Shared prototype, and run the
-;   NIST CAVS test vectors (FIPS 180-4 §5.3.3) before wiring any
-;   call sites. For now, production code uses Windows BCrypt via
-;   Shared/ElleCrypto.cpp (BCryptHashData / BCryptHmac).
-;
-; Parameters: rcx = data pointer (unused)
-;             edx = data length   (unused)
-;             r8  = output hash (32 bytes — filled with canary)
-;──────────────────────────────────────────────────────────────────────────────
-;──────────────────────────────────────────────────────────────────────────────
-; Three cryptographic primitives in this DLL are marked _SCAFFOLDED below
-; and have NO real implementation: SHA-256, AES-256 encrypt, AES-256 decrypt.
-; They fill the output buffer with a 0xDEAD5CAF canary so accidental callers
-; get an obvious wrong-looking result instead of a plausible bug.
-;
-; The _SCAFFOLDED functions are NOT exported (Crypto.def) and NOT declared
-; in Shared/ElleTypes.h — so nothing in the rest of the codebase can
-; accidentally link to them.
-;
-; Production SHA-256 / HMAC-SHA256 lives in Shared/ElleCrypto.{h,cpp} and
-; uses Windows CNG (BCrypt*). Replace these MASM scaffolds with real
-; AES-NI / SHA-NI implementations only when a hot-path bottleneck is
-; measured; the BCrypt wrappers are more than fast enough for JWT-sign /
-; config-decrypt / etc.
-;──────────────────────────────────────────────────────────────────────────────
 ASM_SHA256_SCAFFOLDED PROC
     push    rbp
     mov     rbp, rsp
-    ; Fill 32-byte output with 0xDEAD5CAF repeated 8 times.
+
     mov     rdi, r8
     mov     eax, 0DEAD5CAFh
     mov     ecx, 8
@@ -115,26 +50,6 @@ ASM_SHA256_SCAFFOLDED PROC
     ret
 ASM_SHA256_SCAFFOLDED ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_AES256Encrypt_SCAFFOLDED — INTENTIONALLY UNIMPLEMENTED
-;
-;   Same story as SHA-256: AES-NI aesenc / aesenclast were commented
-;   out; no real key schedule, no CBC chaining, no PKCS#7 padding. A
-;   real MASM implementation needs the 15-round AES-256 key expansion
-;   via aeskeygenassist + the aesenc/aesenclast loop with CBC IV
-;   chaining.
-;
-;   Canary-poison the output with 0xDEAD5CAF so any accidental caller
-;   gets an obvious wrong-looking ciphertext rather than a plausible
-;   stream. Length comes through [rbp+30h] per the original shadow-
-;   space convention.
-;
-; Parameters: rcx = key (32 bytes, unused)
-;             rdx = IV  (16 bytes, unused)
-;             r8  = input data       (unused)
-;             r9  = output data      (filled with canary)
-;             [rbp+30h] = length in bytes
-;──────────────────────────────────────────────────────────────────────────────
 ASM_AES256Encrypt_SCAFFOLDED PROC
     push    rbp
     mov     rbp, rsp
@@ -154,11 +69,6 @@ ASM_AES256Encrypt_SCAFFOLDED PROC
     ret
 ASM_AES256Encrypt_SCAFFOLDED ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_AES256Decrypt_SCAFFOLDED — INTENTIONALLY UNIMPLEMENTED
-;   Same rationale as the Encrypt scaffold above. Canary-poisons the
-;   output buffer. Not exported.
-;──────────────────────────────────────────────────────────────────────────────
 ASM_AES256Decrypt_SCAFFOLDED PROC
     push    rbp
     mov     rbp, rsp
@@ -178,14 +88,6 @@ ASM_AES256Decrypt_SCAFFOLDED PROC
     ret
 ASM_AES256Decrypt_SCAFFOLDED ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_XorCipher — Simple XOR encryption/decryption
-; Parameters: rcx = input data
-;             rdx = output data
-;             r8d = data length
-;             r9  = key bytes
-;             [rbp+30h] = key length
-;──────────────────────────────────────────────────────────────────────────────
 ASM_XorCipher PROC
     push    rbp
     mov     rbp, rsp
@@ -193,13 +95,13 @@ ASM_XorCipher PROC
     push    rdi
     push    rsi
 
-    mov     rsi, rcx                ; input
-    mov     rdi, rdx                ; output
-    mov     ebx, r8d                ; data len
-    mov     rcx, r9                 ; key
-    mov     edx, DWORD PTR [rbp+30h] ; key len
+    mov     rsi, rcx
+    mov     rdi, rdx
+    mov     ebx, r8d
+    mov     rcx, r9
+    mov     edx, DWORD PTR [rbp+30h]
 
-    xor     eax, eax                ; key index
+    xor     eax, eax
 
     ALIGN 16
 @@xor_loop:
@@ -207,13 +109,13 @@ ASM_XorCipher PROC
     jz      @@done
 
     movzx   r8d, BYTE PTR [rsi]
-    ; Get key byte (circular)
+
     push    rax
     xor     edx, edx
-    div     DWORD PTR [rbp+30h]     ; eax/keyLen, remainder in edx
+    div     DWORD PTR [rbp+30h]
     movzx   r9d, BYTE PTR [rcx+rdx]
     pop     rax
-    
+
     xor     r8d, r9d
     mov     [rdi], r8b
 
@@ -231,28 +133,20 @@ ASM_XorCipher PROC
     ret
 ASM_XorCipher ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_CRC32 — Hardware-accelerated CRC32
-; Parameters: rcx = data pointer
-;             edx = data length
-; Returns:    eax = CRC32 value
-;──────────────────────────────────────────────────────────────────────────────
 ASM_CRC32 PROC
     push    rbp
     mov     rbp, rsp
 
-    mov     eax, 0FFFFFFFFh         ; Initial CRC
+    mov     eax, 0FFFFFFFFh
 
-    ; Use hardware CRC32 instruction (SSE4.2)
     ALIGN 16
 @@crc_loop:
     test    edx, edx
     jz      @@finish
-    
+
     cmp     edx, 8
     jb      @@byte_crc
 
-    ; Process 8 bytes at a time
     crc32   rax, QWORD PTR [rcx]
     add     rcx, 8
     sub     edx, 8
@@ -265,34 +159,28 @@ ASM_CRC32 PROC
     jnz     @@byte_crc
 
 @@finish:
-    not     eax                     ; Final XOR
+    not     eax
 
     leave
     ret
 ASM_CRC32 ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_RandomBytes — Generate cryptographically secure random bytes
-; Parameters: rcx = output buffer
-;             edx = number of bytes
-;──────────────────────────────────────────────────────────────────────────────
 ASM_RandomBytes PROC
     push    rbp
     mov     rbp, rsp
     push    rbx
     push    rdi
 
-    mov     rdi, rcx                ; output
-    mov     ebx, edx                ; count
+    mov     rdi, rcx
+    mov     ebx, edx
 
     ALIGN 16
 @@rng_loop:
     cmp     ebx, 8
     jb      @@rng_small
 
-    ; Use RDRAND instruction for hardware random
     rdrand  rax
-    jnc     @@rng_loop              ; retry if CF=0 (not ready)
+    jnc     @@rng_loop
     mov     [rdi], rax
     add     rdi, 8
     sub     ebx, 8

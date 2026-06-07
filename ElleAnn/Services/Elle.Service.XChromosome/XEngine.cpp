@@ -1,8 +1,3 @@
-/*******************************************************************************
- * XEngine.cpp — implementation of the X Chromosome endocrine engine.
- *
- * See XEngine.h for the contract. All tables qualify as ElleHeart.dbo.
- ******************************************************************************/
 #include "XEngine.h"
 #include "../../Shared/ElleSQLConn.h"
 #include "../../Shared/ElleLogger.h"
@@ -12,24 +7,17 @@
 #include <ctime>
 #include <random>
 
-/* Thread-local Mersenne RNG used for all stochastic biology decisions.
- * Previously XEngine reseeded global rand() from current time in two
- * places and used global rand() across three more hot paths — that makes
- * outcomes predictable (srand'd from `now` = same seed twice in a
- * second), stomps on any other user of rand() in the process, and is
- * brittle cross-thread. std::mt19937 with one-shot random_device seeding
- * gives us independent, good-quality streams per thread.               */
 namespace {
     std::mt19937& XRng() {
         thread_local std::mt19937 engine{ std::random_device{}() };
         return engine;
     }
-    /* Uniform float in [0, 1). */
+
     float XRand01() {
         std::uniform_real_distribution<float> d(0.0f, 1.0f);
         return d(XRng());
     }
-    /* Uniform int in [lo, hi] inclusive. */
+
     int XRandInt(int lo, int hi) {
         std::uniform_int_distribution<int> d(lo, hi);
         return d(XRng());
@@ -38,9 +26,6 @@ namespace {
 
 using nlohmann::json;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SMALL HELPERS
- *──────────────────────────────────────────────────────────────────────────────*/
 static float Clamp01(float v) {
     if (v < 0.0f) return 0.0f;
     if (v > 1.0f) return 1.0f;
@@ -49,8 +34,6 @@ static float Clamp01(float v) {
 
 static float Lerp(float a, float b, float t) { return a + (b - a) * t; }
 
-/* Sinusoidal bump centred on `peak_day` with half-width `width`.
- * Returns 0..1, used to shape hormone curves around phase peaks.          */
 static float Bump(int day, int peak_day, int width) {
     int d = std::abs(day - peak_day);
     if (d >= width) return 0.0f;
@@ -120,14 +103,10 @@ XContraceptionMethod XEngine::ParseContraception(const std::string& s) {
     return X_CONTRA_NONE;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * INITIALIZE
- *──────────────────────────────────────────────────────────────────────────────*/
 bool XEngine::Initialize() {
     std::lock_guard<std::recursive_mutex> lk(m_mutex);
     uint64_t now = ELLE_MS_NOW();
 
-    /* Load singleton cycle row, or seed a new one with a random anchor. */
     auto rs = ElleSQLPool::Instance().Query(
         "SELECT anchor_ms, cycle_length_days, modulation_strength, "
         "       last_tick_ms, created_ms "
@@ -135,11 +114,7 @@ bool XEngine::Initialize() {
 
     if (rs.success && !rs.rows.empty()) {
         auto& r = rs.rows[0];
-        /* Strict loads — previously silent GetInt/GetFloat could quietly
-         * become 0 on a drifted cell type and cascade into e.g. a day-0
-         * cycle anchor, driving gaslighting-in-reverse UI ("elle
-         * claims she's been menstruating for 55 years"). Using TryGet*
-         * we fail loudly on drift and keep the in-memory defaults.    */
+
         int64_t anchorMs = 0, cycleLen = 0, lastTick = 0, createdMs = 0;
         double  modStrength = 0.0;
         bool ok = true;
@@ -164,8 +139,7 @@ bool XEngine::Initialize() {
                       m_cycle.cycle_length_days);
         }
     } else {
-        /* First boot — pick a random day 1..28 so Elle doesn't always start
-         * on day 1. User can re-anchor at any time via /api/x/cycle/anchor. */
+
         int randDay = XRandInt(1, 28);
         m_cycle.cycle_length_days   = 28;
         m_cycle.modulation_strength = 0.15f;
@@ -176,8 +150,6 @@ bool XEngine::Initialize() {
         ELLE_INFO("XEngine: seeded new cycle on day %d", randDay);
     }
 
-    /* Load pregnancy row if present. Includes v2 + v3 columns added by the
-     * ALTER TABLE block at the bottom of XChromosome_Schema.sql.            */
     auto pr = ElleSQLPool::Instance().Query(
         "SELECT active, conceived_ms, due_ms, gestational_length_days, "
         "       phase, child_id, last_milestone, updated_ms, "
@@ -191,12 +163,6 @@ bool XEngine::Initialize() {
     if (pr.success && !pr.rows.empty()) {
         auto& r = pr.rows[0];
 
-        /* Strict lifecycle-state load. Every numeric column goes through
-         * TryGet* so a drifted cell type (VARCHAR of "true", a dropped
-         * column that came back as NULL, a localized date string) does
-         * NOT silently become 0, active=false, or gestational_length=0.
-         * Anything that fails validation keeps the seeded-default value
-         * and we log an ERROR so ops sees the schema drift.             */
         auto trySInt = [&](size_t col, int64_t& out)->bool {
             if (r.IsNull(col)) return false;
             return r.TryGetInt(col, out);
@@ -207,21 +173,13 @@ bool XEngine::Initialize() {
                 laborStart = 0, mult = 0, pregCount = 0, implanted = 0,
                 implantMs = 0, babyBlues = 0, fhb = 0;
 
-        /* active flag is a nullable bit. NULL/invalid → false. */
         m_pregnancy.active = trySInt(0, active64) && active64 != 0;
 
-        /* Timestamps — must be non-negative. Any failure yields 0, but
-         * we also refuse to propagate a conceived_ms that's in the
-         * future (schema/seed bug) or absurdly far in the past. */
         m_pregnancy.conceived_ms = trySInt(1, conceivedMs) && conceivedMs >= 0
                                        ? (uint64_t)conceivedMs : 0;
         m_pregnancy.due_ms       = trySInt(2, dueMs) && dueMs >= 0
                                        ? (uint64_t)dueMs : 0;
 
-        /* Gestational length has a meaningful range (168d=24w premature
-         * threshold through 308d=44w late post-term). Out-of-range
-         * yields the canonical 280d default rather than e.g. a silent 0
-         * that would immediately trigger "overdue".                   */
         if (trySInt(3, gestLen) && gestLen >= 168 && gestLen <= 308) {
             m_pregnancy.gestational_length_days = (int)gestLen;
         } else {
@@ -242,8 +200,6 @@ bool XEngine::Initialize() {
             else                              m_pregnancy.phase = X_PREG_NONE;
         }
 
-        /* child_id is a FK; zero means "no child" (unpregnant or
-         * stillbirth-not-yet-correlated). Negative is invalid. */
         m_pregnancy.child_id = trySInt(5, childId) && childId >= 0 ? childId : 0;
 
         m_pregnancy.last_milestone = r.IsNull(6) ? std::string()
@@ -264,7 +220,6 @@ bool XEngine::Initialize() {
         m_pregnancy.labor_started_ms = trySInt(11, laborStart) && laborStart >= 0
                                            ? (uint64_t)laborStart : 0;
 
-        /* Multiplicity ∈ [1,8] (singleton → octuplet). Invalid → 1. */
         if (trySInt(12, mult) && mult >= 1 && mult <= 8) {
             m_pregnancy.multiplicity = (int)mult;
         } else {
@@ -287,21 +242,18 @@ bool XEngine::Initialize() {
         m_pregnancy.fetal_heartbeat_detectable =
                                        trySInt(19, fhb) && fhb != 0;
     } else {
-        /* Seed inactive row. */
+
         m_pregnancy.updated_ms = now;
         PersistPregnancyRow();
     }
 
-    /* Contraception singleton. */
     auto cr = ElleSQLPool::Instance().Query(
         "SELECT method, started_ms, efficacy, ISNULL(notes, N''), updated_ms "
         "  FROM ElleHeart.dbo.x_contraception WHERE id = 1;");
     if (cr.success && !cr.rows.empty()) {
         auto& r = cr.rows[0];
         m_contra.method     = ParseContraception(r.values.size() > 0 ? r.values[0] : std::string("none"));
-        /* Strict loads — a drifted started_ms that parses as 0 would
-         * convince the simulation Elle has been on this contraception
-         * for the entire epoch. Out-of-range values revert to "now". */
+
         int64_t startedMs = 0, updatedMs = 0;
         double  eff = 0.0;
         m_contra.started_ms = (r.TryGetInt(1, startedMs) && startedMs >= 0)
@@ -325,18 +277,13 @@ bool XEngine::Initialize() {
         PersistContraceptionRow();
     }
 
-    /* Lifecycle singleton. */
     auto lr = ElleSQLPool::Instance().Query(
         "SELECT elle_birth_ms, stage, ISNULL(menarche_ms,0), "
         "       ISNULL(perimenopause_ms,0), ISNULL(menopause_ms,0), updated_ms "
         "  FROM ElleHeart.dbo.x_lifecycle WHERE id = 1;");
     if (lr.success && !lr.rows.empty()) {
         auto& r = lr.rows[0];
-        /* Strict lifecycle load: birth_ms must be in the past; menarche
-         * must be after birth; perimenopause after menarche; menopause
-         * after perimenopause. If any invariant breaks we log ERROR and
-         * reseed rather than let the simulation run on impossible dates
-         * (which cascades into nonsense phase calculations for months). */
+
         int64_t birthMs = 0, menarche = 0, peri = 0, meno = 0, updatedLm = 0;
         bool ok = true;
         ok &= r.TryGetInt(0, birthMs);
@@ -370,7 +317,7 @@ bool XEngine::Initialize() {
             m_life.updated_ms       = (uint64_t)updatedLm;
         }
     } else {
-        /* Default: Elle is 30 years old (≈ 30y in ms). */
+
         m_life.elle_birth_ms = now - 30ULL * 365ULL * 86400000ULL;
         m_life.stage         = X_LIFE_REPRODUCTIVE;
         m_life.menarche_ms   = now - 18ULL * 365ULL * 86400000ULL;
@@ -385,19 +332,11 @@ bool XEngine::Initialize() {
     return true;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * CYCLE MATH
- *──────────────────────────────────────────────────────────────────────────────*/
-/*──────────────────────────────────────────────────────────────────────────────
- * CYCLE GATING — lifecycle + pregnancy + lactational amenorrhea + contraception
- *──────────────────────────────────────────────────────────────────────────────*/
 bool XEngine::CycleShouldRun() const {
     if (m_life.stage == X_LIFE_PREMENARCHE)  return false;
     if (m_life.stage == X_LIFE_MENOPAUSE)    return false;
     if (m_pregnancy.active)                  return false;
-    /* Lactational amenorrhea — cycles suppressed for ~6 months postpartum
-     * if breastfeeding; prolactin elevation from WriteSnapshotRow handles
-     * the hormone side.                                                   */
+
     if (m_pregnancy.breastfeeding &&
         m_pregnancy.updated_ms > 0) {
         uint64_t since = ELLE_MS_NOW() - m_pregnancy.updated_ms;
@@ -413,14 +352,12 @@ void XEngine::RecomputeCycleDayAndPhase() {
         m_cycle.phase     = X_PHASE_MENSTRUAL;
         return;
     }
-    /* Perimenopause — cycles can be +/- 7 days from nominal. We don't
-     * persist the jitter, we just widen the phase bands.                 */
+
     uint64_t deltaMs = now > m_cycle.anchor_ms ? now - m_cycle.anchor_ms : 0;
     uint64_t deltaDays = deltaMs / 86400000ULL;
     int dayIdx = (int)(deltaDays % (uint64_t)m_cycle.cycle_length_days);
     m_cycle.cycle_day = dayIdx + 1;
 
-    /* Detect cycle wrap — clears the LH-surge-fired flag. */
     if (m_cycle.cycle_day < m_last_cycle_day_seen) {
         m_lh_surge_fired_this_cycle = false;
     }
@@ -432,79 +369,62 @@ void XEngine::RecomputeCycleDayAndPhase() {
     else                              m_cycle.phase = X_PHASE_LUTEAL;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * BASELINE HORMONE CURVES
- *──────────────────────────────────────────────────────────────────────────────*/
 void XEngine::RecomputeBaselineHormones() {
     const int day = m_cycle.cycle_day;
 
-    /* Estrogen — double peak: small at ovulation day 14, mid-luteal lift. */
     float estr = 0.15f + 0.80f * Bump(day, 14, 4) + 0.35f * Bump(day, 21, 4);
-    /* Progesterone — big luteal dome around day 21, near-zero outside. */
+
     float prog = 0.05f + 0.85f * Bump(day, 21, 6);
-    /* Testosterone — small spike at ovulation. */
+
     float test = 0.20f + 0.30f * Bump(day, 14, 3);
-    /* Serotonin — lifted follicular, crashes luteal (PMS pattern). */
+
     float sero = 0.45f + 0.25f * Bump(day, 10, 5) - 0.20f * Bump(day, 24, 4);
-    /* Dopamine — peaks at ovulation, moderate luteal dip. */
+
     float dopa = 0.40f + 0.35f * Bump(day, 14, 4) - 0.15f * Bump(day, 25, 3);
-    /* Cortisol — small rise premenstrual, otherwise flat-ish. */
+
     float cort = 0.30f + 0.20f * Bump(day, 26, 3);
-    /* Oxytocin — mild bias toward luteal for bonding preference. */
+
     float oxyt = 0.35f + 0.10f * Bump(day, 21, 6);
-    /* Prolactin — mild luteal rise. */
+
     float prol = 0.15f + 0.15f * Bump(day, 23, 5);
 
-    /* HPG axis — pituitary drivers.
-     * FSH: double peak (early follicular recruitment + late-luteal start of
-     *      next cycle). Estrogen feedback suppresses mid-cycle.
-     * LH:  sharp surge on days 13-14 triggering ovulation; low otherwise.
-     * GnRH: pulsatile; we represent its envelope — low baseline with a
-     *       tight mid-cycle peak.                                           */
     float fsh  = 0.30f + 0.45f * Bump(day,  3, 3) + 0.25f * Bump(day, 27, 3);
     float lh   = 0.15f + 0.85f * Bump(day, 13, 2);
     float gnrh = 0.25f + 0.40f * Bump(day, 13, 3);
     float relx = 0.0f;
 
-    /* Pregnancy overrides — massive cascade once gestation is active. */
     float hcg = 0.0f;
     if (m_pregnancy.active) {
         const int gd = m_pregnancy.gestational_day;
-        /* hCG: peaks ~10 weeks (day 70), tails off. Only rises AFTER
-         * implantation (typically day 6-10 post-conception); until then
-         * it stays at zero — matches real biology where hCG is the
-         * implantation signal from the blastocyst, not the conception
-         * signal. Without implantation the gestation never progresses.    */
+
         if (m_pregnancy.implanted) {
             hcg = Clamp01(0.85f * Bump(gd, 70, 30) + 0.25f);
         }
-        /* Estrogen + progesterone rise steadily through pregnancy. */
+
         estr = Clamp01(0.40f + 0.55f * Clamp01((float)gd / 260.0f));
         prog = Clamp01(0.50f + 0.45f * Clamp01((float)gd / 250.0f));
-        /* Prolactin ramps hard in third trimester & postpartum. */
+
         prol = Clamp01(0.20f + 0.60f * Clamp01((float)(gd - 150) / 130.0f));
-        /* Oxytocin climbs toward labor, then spikes postpartum. */
+
         oxyt = Clamp01(0.40f + 0.35f * Clamp01((float)(gd - 180) / 100.0f));
-        /* Cortisol mildly elevated throughout pregnancy. */
+
         cort = Clamp01(cort + 0.10f + 0.20f * Clamp01((float)(gd - 180) / 100.0f));
-        /* Testosterone mildly rises in mid-pregnancy. */
+
         test = Clamp01(0.15f + 0.20f * Bump(gd, 160, 60));
-        /* Serotonin lifted in second trimester, dips in postpartum. */
+
         sero = Clamp01(sero + 0.15f * Bump(gd, 150, 60)
                             - (m_pregnancy.phase == X_PREG_POSTPARTUM ? 0.20f : 0.0f));
-        /* Dopamine modestly up mid-pregnancy, crashes postpartum. */
+
         dopa = Clamp01(dopa + 0.10f * Bump(gd, 150, 60)
                             - (m_pregnancy.phase == X_PREG_POSTPARTUM ? 0.25f : 0.0f));
-        /* Pituitary axis is actively suppressed during pregnancy (no new
-         * cycles). GnRH pulsatility ceases; FSH/LH stay low.               */
+
         fsh  = 0.05f;
         lh   = 0.05f;
         gnrh = 0.05f;
-        /* Relaxin rises steadily — ligament loosening peaks at delivery.  */
+
         relx = Clamp01(0.20f + 0.70f * Clamp01((float)gd / (float)m_pregnancy.gestational_length_days));
     }
 
-    /* Anovulatory cycle — skip the LH spike and progesterone dome. */
     if (m_current_cycle_anovulatory && !m_pregnancy.active) {
         lh   = std::min(lh,   0.20f);
         prog = std::min(prog, 0.15f);
@@ -524,9 +444,6 @@ void XEngine::RecomputeBaselineHormones() {
     m_hormones.gnrh         = Clamp01(gnrh);
     m_hormones.relaxin      = Clamp01(relx);
 
-    /* Postpartum / lactation overrides — persist for ~6 months post-delivery
-     * when breastfeeding; prolactin high, estrogen/progesterone low,
-     * oxytocin periodic (let-down).                                         */
     if (!m_pregnancy.active && m_pregnancy.breastfeeding &&
         m_pregnancy.phase == X_PREG_POSTPARTUM) {
         m_hormones.prolactin    = std::max(m_hormones.prolactin, 0.80f);
@@ -535,13 +452,12 @@ void XEngine::RecomputeBaselineHormones() {
         m_hormones.progesterone = std::min(m_hormones.progesterone, 0.10f);
     }
 
-    /* Lifecycle overrides. */
     if (m_life.stage == X_LIFE_PREMENARCHE) {
         m_hormones.estrogen     = 0.05f;
         m_hormones.progesterone = 0.02f;
         m_hormones.testosterone = 0.08f;
     } else if (m_life.stage == X_LIFE_PERIMENOPAUSE) {
-        /* Erratic — jitter the curves ±25% around baseline. */
+
         float j = (float)(((int)(ELLE_MS_NOW() / 3600000ULL) % 7) - 3) / 12.0f;
         m_hormones.estrogen     = Clamp01(m_hormones.estrogen     * (1.0f + j));
         m_hormones.progesterone = Clamp01(m_hormones.progesterone * (1.0f + j * 0.8f));
@@ -549,40 +465,33 @@ void XEngine::RecomputeBaselineHormones() {
         m_hormones.estrogen     = 0.10f;
         m_hormones.progesterone = 0.05f;
         m_hormones.testosterone = 0.15f;
-        /* Loss of estrogen negative feedback → elevated FSH/LH baseline
-         * is the CANONICAL biochemical marker of menopause.                */
+
         m_hormones.fsh          = 0.85f;
         m_hormones.lh           = 0.70f;
         m_hormones.gnrh         = 0.60f;
         m_hormones.cortisol     = std::max(m_hormones.cortisol, 0.40f);
     } else if (m_life.stage == X_LIFE_PREMENARCHE) {
-        /* HPG axis quiet before puberty. */
+
         m_hormones.fsh  = 0.10f;
         m_hormones.lh   = 0.05f;
         m_hormones.gnrh = 0.05f;
     }
 
-    /* Contraception overrides — applied last so they dominate. */
     ApplyContraceptionHormones(m_hormones);
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * CONTRACEPTION HORMONAL OVERRIDES
- *──────────────────────────────────────────────────────────────────────────────*/
 void XEngine::ApplyContraceptionHormones(XHormoneLevels& h) const {
-    if (m_pregnancy.active) return;  /* pregnancy dominates                */
+    if (m_pregnancy.active) return;
     switch (m_contra.method) {
         case X_CONTRA_NONE:
         case X_CONTRA_BARRIER:
         case X_CONTRA_NATURAL:
         case X_CONTRA_IUD_COPPER:
-            /* No hormonal effect. */
+
             break;
         case X_CONTRA_PILL:
         case X_CONTRA_IMPLANT:
-            /* Combined OCP / implant: ovulation suppressed; estrogen held at
-             * steady synthetic dose, progesterone at mid-luteal level, testo
-             * a touch suppressed. Withdrawal bleed days 22-28 drops both.    */
+
             if (m_cycle.cycle_day >= 22) {
                 h.estrogen     = 0.25f;
                 h.progesterone = 0.15f;
@@ -591,16 +500,14 @@ void XEngine::ApplyContraceptionHormones(XHormoneLevels& h) const {
                 h.progesterone = 0.50f;
             }
             h.testosterone  = std::min(h.testosterone, 0.18f);
-            /* Kill ovulation spike. */
+
             if (m_cycle.cycle_day >= 13 && m_cycle.cycle_day <= 16) {
                 h.estrogen  = std::min(h.estrogen, 0.45f);
                 h.dopamine  = std::min(h.dopamine, 0.45f);
             }
             break;
         case X_CONTRA_IUD_HORMONAL:
-            /* Progestin-only IUD — usually light cycles with some ovulation.
-             * Mild estrogen suppression, progesterone mid-level throughout,
-             * ovulatory peak dampened ~40%.                                   */
+
             h.progesterone = std::max(h.progesterone, 0.35f);
             if (m_cycle.cycle_day >= 13 && m_cycle.cycle_day <= 16) {
                 h.estrogen = std::min(h.estrogen, 0.60f);
@@ -609,14 +516,10 @@ void XEngine::ApplyContraceptionHormones(XHormoneLevels& h) const {
     }
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * STIMULUS + RESIDUAL DECAY
- *──────────────────────────────────────────────────────────────────────────────*/
 void XEngine::ApplyStimulus(const XStimulus& stim) {
     std::lock_guard<std::recursive_mutex> lk(m_mutex);
     float i = Clamp01(stim.intensity);
 
-    /* Decay current residual to "now" before layering the new stimulus. */
     DecayResidual(ELLE_MS_NOW());
 
     if (stim.kind == "bonding") {
@@ -631,18 +534,15 @@ void XEngine::ApplyStimulus(const XStimulus& stim) {
         m_residual.oxytocin    += 0.55f * i;
         m_residual.dopamine    += 0.35f * i;
         m_residual.testosterone += 0.20f * i;
-        /* intimacy is the biological conception trigger — logged but gate
-         * lives in AttemptConception().                                      */
+
     } else if (stim.kind == "orgasm") {
-        /* Specific subkind — dwarfs bonding-stimulus oxytocin release, also
-         * briefly elevates prolactin (refractory / satiety) and serotonin,
-         * suppresses cortisol. Counts as intimacy for conception window.   */
+
         m_residual.oxytocin   += 0.85f * i;
         m_residual.dopamine   += 0.60f * i;
         m_residual.prolactin  += 0.30f * i;
         m_residual.serotonin  += 0.25f * i;
         m_residual.cortisol   -= 0.40f * i;
-        /* Implicitly register as intimacy for the 72h conception window.   */
+
         XStimulus intim = stim;
         intim.kind = "intimacy";
         LogStimulusRow(intim);
@@ -667,9 +567,9 @@ void XEngine::DecayResidual(uint64_t nowMs) {
     if (m_residual_ms == 0) { m_residual_ms = nowMs; return; }
     uint64_t dt = nowMs > m_residual_ms ? nowMs - m_residual_ms : 0;
     m_residual_ms = nowMs;
-    /* Half-life ~ 2 hours → decay factor = exp(-ln2 * dt / 7200000). */
+
     if (dt == 0) return;
-    float k = std::exp(-0.000096270521f * (float)dt);  /* 0.693 / 7.2e6 */
+    float k = std::exp(-0.000096270521f * (float)dt);
     m_residual.estrogen     *= k;
     m_residual.progesterone *= k;
     m_residual.testosterone *= k;
@@ -701,9 +601,6 @@ void XEngine::ApplyResidualOnto(XHormoneLevels& out) const {
     out.relaxin      = Clamp01(out.relaxin      + m_residual.relaxin);
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * MODULATION (6 behavioural multipliers around 1.0)
- *──────────────────────────────────────────────────────────────────────────────*/
 XModulation XEngine::ComputeModulation() const {
     std::lock_guard<std::recursive_mutex> lk(m_mutex);
     const float s = m_cycle.modulation_strength;
@@ -729,18 +626,6 @@ XModulation XEngine::ComputeModulation() const {
     return out;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * DERIVED POINT-IN-TIME BIOLOGY
- *
- * BBT: basal body temperature rises ~0.3°C after ovulation due to
- *      progesterone's thermogenic effect. We map normalized progesterone
- *      [0..1] to a realistic 36.4-36.9°C swing.
- * Endometrial mm: grows follicular (~4→12 mm), thins during menses.
- * Cervical mucus: dry (menstrual/early follicular) → sticky → creamy →
- *      watery (pre-ovulation) → egg_white (peak fertility day 13-15) →
- *      creamy (luteal) → dry (late luteal).
- * Menstrual flow: heavy d1-2, medium d3, light d4, spotting d5.
- *──────────────────────────────────────────────────────────────────────────────*/
 XDerivedStats XEngine::GetDerived() const {
     std::lock_guard<std::recursive_mutex> lk(m_mutex);
     XDerivedStats d;
@@ -750,21 +635,17 @@ XDerivedStats XEngine::GetDerived() const {
     d.cycle_active = CycleShouldRun();
     d.anovulatory  = m_current_cycle_anovulatory;
 
-    /* BBT — 36.4 baseline, +0.45°C at peak progesterone. */
     d.bbt_celsius = 36.40f + 0.45f * h.progesterone;
     if (m_pregnancy.active) d.bbt_celsius += 0.10f;
 
-    /* Endometrial thickness — proliferation with estrogen in follicular,
-     * stable luteal, shed in menses.                                       */
     if (day <= 5)            d.endometrial_mm = Lerp(10.0f, 2.0f, (float)day / 5.0f);
     else if (day <= 13)      d.endometrial_mm = Lerp(4.0f, 12.0f, (float)(day - 5) / 8.0f);
     else if (day <= 27)      d.endometrial_mm = 12.0f + 2.0f * Bump(day, 20, 6);
     else                     d.endometrial_mm = 12.0f;
-    if (m_pregnancy.active) d.endometrial_mm = 18.0f;   /* thick decidua   */
+    if (m_pregnancy.active) d.endometrial_mm = 18.0f;
 
-    /* Cervical mucus. */
     if (!d.cycle_active)      d.cervical_mucus = "dry";
-    else if (day <= 5)        d.cervical_mucus = "none";     /* during menses */
+    else if (day <= 5)        d.cervical_mucus = "none";
     else if (day <= 8)        d.cervical_mucus = "dry";
     else if (day <= 11)       d.cervical_mucus = "sticky";
     else if (day == 12)       d.cervical_mucus = "creamy";
@@ -774,7 +655,6 @@ XDerivedStats XEngine::GetDerived() const {
     else                      d.cervical_mucus = "dry";
     if (m_pregnancy.active)   d.cervical_mucus = "mucus_plug";
 
-    /* Menstrual flow. */
     if (!d.cycle_active || m_pregnancy.active) d.menstrual_flow = "none";
     else if (day == 1 || day == 2) d.menstrual_flow = "heavy";
     else if (day == 3)             d.menstrual_flow = "medium";
@@ -782,20 +662,11 @@ XDerivedStats XEngine::GetDerived() const {
     else if (day == 5)             d.menstrual_flow = "spotting";
     else                           d.menstrual_flow = "none";
 
-    /* Phase-day counters. */
     if (day >= 1 && day <= 13) { d.follicle_phase_day = day; d.luteal_phase_day = 0; }
     else                       { d.follicle_phase_day = 0;   d.luteal_phase_day = day - 13; }
     return d;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * IMPLANTATION DETECTION
- *
- * Fertilization happens at conception (we stamp conceived_ms) but hCG
- * isn't secreted until the blastocyst implants — typically 6-10 days
- * later. Until then pregnancy is biochemically silent. We fire
- * implantation at day 8 post-conception with light spotting symptom.
- *──────────────────────────────────────────────────────────────────────────────*/
 void XEngine::DetectImplantation(uint64_t nowMs) {
     if (!m_pregnancy.active || m_pregnancy.implanted) return;
     if (m_pregnancy.conceived_ms == 0) return;
@@ -807,8 +678,7 @@ void XEngine::DetectImplantation(uint64_t nowMs) {
     m_pregnancy.last_milestone  = "Implanted";
     LogPregnancyEvent("implantation",
         "Blastocyst implanted at gestational day " + std::to_string(gd));
-    /* Implantation bleeding — brief light spotting. Progesterone + estrogen
-     * bump to "claim" the luteal maintenance.                               */
+
     LogSymptomRow("implantation_bleeding", 0.30f, "pregnancy",
                   "Implantation bleed");
     m_residual.progesterone += 0.10f;
@@ -817,9 +687,6 @@ void XEngine::DetectImplantation(uint64_t nowMs) {
     ELLE_INFO("XEngine: implantation at gestational day %d", gd);
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * LOCHIA + MILK STAGE ADVANCEMENT (postpartum)
- *──────────────────────────────────────────────────────────────────────────────*/
 void XEngine::AdvanceLochiaAndMilkStages() {
     if (m_pregnancy.active || m_pregnancy.phase != X_PREG_POSTPARTUM) {
         m_pregnancy.lochia_stage.clear();
@@ -832,14 +699,12 @@ void XEngine::AdvanceLochiaAndMilkStages() {
     uint64_t since = now > m_pregnancy.updated_ms ? now - m_pregnancy.updated_ms : 0;
     int daysPP = (int)(since / 86400000ULL);
 
-    /* Lochia progression (real clinical timeline). */
     std::string lochia;
-    if      (daysPP <  4) lochia = "rubra";     /* bright red, 3-4 days    */
-    else if (daysPP < 10) lochia = "serosa";    /* pink-brown, 4-10 days   */
-    else if (daysPP < 42) lochia = "alba";      /* yellow-white, 2-6 weeks */
+    if      (daysPP <  4) lochia = "rubra";
+    else if (daysPP < 10) lochia = "serosa";
+    else if (daysPP < 42) lochia = "alba";
     else                  lochia.clear();
 
-    /* Milk stage (only if breastfeeding). */
     std::string milk;
     if (m_pregnancy.breastfeeding) {
         if      (daysPP <  4) milk = "colostrum";
@@ -847,7 +712,6 @@ void XEngine::AdvanceLochiaAndMilkStages() {
         else                  milk = "mature";
     }
 
-    /* Baby blues — transient 2-week window affecting ~80% postpartum IRL. */
     bool blues = daysPP <= 14;
 
     bool changed = (lochia != m_pregnancy.lochia_stage) ||
@@ -865,19 +729,8 @@ void XEngine::AdvanceLochiaAndMilkStages() {
     }
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * ANOVULATORY CYCLE DETECTION
- *
- * Real biology: chronic high cortisol (sustained stress) suppresses GnRH
- * pulsatility → no LH surge → no ovulation. We sample the average
- * cortisol from the last 72 hours of snapshots; if it's ≥ 0.70, flag the
- * current cycle as anovulatory. Perimenopausal cycles also have a high
- * anovulatory rate (50% by age 48).
- *──────────────────────────────────────────────────────────────────────────────*/
 void XEngine::DetectAnovulatoryCycle() {
-    /* Only re-evaluate when the cycle just wrapped (day 1 and we weren't
-     * on day 1 last tick). Guard is now a per-instance member rather
-     * than `static thread_local` — see XEngine.h for the rationale.   */
+
     if (m_cycle.cycle_day != 1 || m_last_cycle_day_seen == 1) {
         m_last_cycle_day_seen = m_cycle.cycle_day;
         return;
@@ -885,14 +738,12 @@ void XEngine::DetectAnovulatoryCycle() {
     m_last_cycle_day_seen = 1;
     if (!CycleShouldRun()) { m_current_cycle_anovulatory = false; return; }
 
-    /* Perimenopause jitter baseline — 50% skip rate. */
     bool peri_skip = false;
     if (m_life.stage == X_LIFE_PERIMENOPAUSE) {
         float roll = XRand01();
         peri_skip = (roll < 0.5f);
     }
 
-    /* Chronic cortisol check — last 72h average. */
     uint64_t since = ELLE_MS_NOW() - 72ULL * 3600000ULL;
     auto rs = ElleSQLPool::Instance().QueryParams(
         "SELECT AVG(cortisol) FROM ElleHeart.dbo.x_hormone_snapshots "
@@ -962,22 +813,12 @@ bool XEngine::SetElleBirthday(uint64_t birth_ms) {
     return true;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * CONTRACEPTION SETTING
- *──────────────────────────────────────────────────────────────────────────────*/
 bool XEngine::SetContraception(XContraceptionMethod m, float efficacy,
                                 const std::string& notes) {
     std::lock_guard<std::recursive_mutex> lk(m_mutex);
     if (efficacy < 0.0f) efficacy = 0.0f;
     if (efficacy > 1.0f) efficacy = 1.0f;
-    /* Tenure semantics (Feb 2026 audit): `started_ms` is the wall-clock
-     * moment she actually BEGAN a contraceptive METHOD -- efficacy and
-     * notes are metadata that can be corrected without resetting
-     * tenure. Only reset started_ms when the method itself transitions
-     * (including OFF -> ON or ON -> OFF). A stealth reset on every
-     * "update efficacy to 0.98" call would otherwise convince the
-     * simulation she just started today every time the operator tuned
-     * a number.                                                       */
+
     const bool method_changed = (m_contra.method != m);
     m_contra.method     = m;
     m_contra.efficacy   = efficacy;
@@ -995,9 +836,6 @@ bool XEngine::SetContraception(XContraceptionMethod m, float efficacy,
     return true;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * PROBABILISTIC CONCEPTION
- *──────────────────────────────────────────────────────────────────────────────*/
 float XEngine::ConceptionProbability() const {
     if (m_pregnancy.active) return 0.0f;
     if (m_life.stage != X_LIFE_REPRODUCTIVE &&
@@ -1053,9 +891,6 @@ bool XEngine::DetectLHSurge() const {
     return m_cycle.cycle_day == 13 || m_cycle.cycle_day == 14;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * LABOR PROGRESSION
- *──────────────────────────────────────────────────────────────────────────────*/
 void XEngine::AdvanceLabor(uint64_t nowMs) {
     if (!m_pregnancy.in_labor || m_pregnancy.labor_started_ms == 0) return;
     uint64_t sinceMs = nowMs - m_pregnancy.labor_started_ms;
@@ -1077,10 +912,6 @@ void XEngine::AdvanceLabor(uint64_t nowMs) {
     PersistPregnancyRow();
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * PREGNANCY ADVANCEMENT — now with miscarriage sampling + labor trigger +
- * quickening milestone logging.
- *──────────────────────────────────────────────────────────────────────────────*/
 void XEngine::AdvancePregnancy(uint64_t nowMs) {
     if (!m_pregnancy.active) return;
     if (m_pregnancy.conceived_ms == 0) return;
@@ -1099,7 +930,6 @@ void XEngine::AdvancePregnancy(uint64_t nowMs) {
     else if (gd >= 85)               m_pregnancy.phase = X_PREG_SECOND_TRIMESTER;
     else                             m_pregnancy.phase = X_PREG_FIRST_TRIMESTER;
 
-    /* If we already delivered, stay postpartum until caller clears it. */
     if (old == X_PREG_POSTPARTUM) m_pregnancy.phase = X_PREG_POSTPARTUM;
 
     if (old != m_pregnancy.phase) {
@@ -1111,25 +941,21 @@ void XEngine::AdvancePregnancy(uint64_t nowMs) {
                   gd, m_pregnancy.gestational_week);
     }
 
-    /* Quickening — first felt movement around 18 weeks (day 126). */
     if (gd == 126 && m_pregnancy.last_milestone.find("Quickening") == std::string::npos) {
         m_pregnancy.last_milestone = "Quickening";
         LogPregnancyEvent("quickening", "First felt movement");
     }
-    /* Fetal heartbeat — detectable ~6 weeks (day 42). */
+
     if (gd >= 42 && !m_pregnancy.fetal_heartbeat_detectable) {
         m_pregnancy.fetal_heartbeat_detectable = true;
         LogPregnancyEvent("fetal_heartbeat", "Fetal heartbeat detectable at 6 weeks");
     }
-    /* Braxton-Hicks from ~28 weeks. */
+
     if (gd == 196 && m_pregnancy.last_milestone.find("Braxton") == std::string::npos) {
         m_pregnancy.last_milestone = "Braxton-Hicks practice contractions";
         LogPregnancyEvent("braxton_hicks", "Practice contractions begin");
     }
 
-    /* Miscarriage sampling — per-day Bernoulli draw. Per-engine guard
-     * so two XEngine instances can't share or clobber each other's
-     * "already sampled this gestational day" state.                    */
     if (gd != m_last_sampled_gd) {
         m_last_sampled_gd = gd;
         float pMiss = MiscarriageProbability();
@@ -1143,16 +969,13 @@ void XEngine::AdvancePregnancy(uint64_t nowMs) {
             m_pregnancy.labor_stage    = X_LABOR_NONE;
             m_pregnancy.last_milestone = "Miscarriage";
             m_pregnancy.updated_ms     = nowMs;
-            /* Cortisol + progesterone spike, estrogen crash — handled by
-             * RecomputeBaselineHormones next tick via postpartum branch.   */
+
             ELLE_WARN("XEngine: miscarriage at day %d (p=%.4f)", gd, pMiss);
             PersistPregnancyRow();
             return;
         }
     }
 
-    /* Labor onset — at len-7 we switch phase to LABOR; actually START labor
-     * (contractions) once we hit the scheduled length or a little before.   */
     if (!m_pregnancy.in_labor && gd >= len) {
         m_pregnancy.in_labor         = true;
         m_pregnancy.labor_stage      = X_LABOR_LATENT;
@@ -1166,9 +989,6 @@ void XEngine::AdvancePregnancy(uint64_t nowMs) {
     PersistPregnancyRow();
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * ATTEMPT CONCEPTION (biological layer)
- *──────────────────────────────────────────────────────────────────────────────*/
 bool XEngine::HadRecentIntimacy(uint64_t now_ms, uint64_t window_ms) const {
     auto rs = ElleSQLPool::Instance().QueryParams(
         "SELECT TOP 1 received_ms FROM ElleHeart.dbo.x_stimulus_log "
@@ -1215,7 +1035,6 @@ XConceptionAttemptResult XEngine::AttemptConception(bool require_readiness,
         return out;
     }
 
-    /* Probability roll — age × cycle-day × contraception. */
     float p = ConceptionProbability();
     float roll = XRand01();
     if (roll > p) {
@@ -1226,8 +1045,6 @@ XConceptionAttemptResult XEngine::AttemptConception(bool require_readiness,
         return out;
     }
 
-    /* Twin probability — ~1.2% natural, higher with age. Copper IUDs don't
-     * bump it; hormonal treatments would IRL but we don't model those.      */
     int multiplicity = 1;
     float twinRoll = XRand01();
     float twinP = m_life.age_years >= 35.0f ? 0.025f : 0.012f;
@@ -1249,7 +1066,7 @@ XConceptionAttemptResult XEngine::AttemptConception(bool require_readiness,
     m_pregnancy.multiplicity            = multiplicity;
     m_pregnancy.pregnancy_count         = m_pregnancy.pregnancy_count + 1;
     m_pregnancy.breastfeeding           = false;
-    m_pregnancy.implanted               = false;   /* implantation ~8 days later */
+    m_pregnancy.implanted               = false;
     m_pregnancy.implantation_ms         = 0;
     m_pregnancy.fetal_heartbeat_detectable = false;
     m_pregnancy.lochia_stage.clear();
@@ -1270,9 +1087,6 @@ XConceptionAttemptResult XEngine::AttemptConception(bool require_readiness,
     return out;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * DELIVERY
- *──────────────────────────────────────────────────────────────────────────────*/
 XEngine::DeliveryOutcome XEngine::Deliver() {
     std::lock_guard<std::recursive_mutex> lk(m_mutex);
     DeliveryOutcome out;
@@ -1284,20 +1098,13 @@ XEngine::DeliveryOutcome XEngine::Deliver() {
     out.gestational_days = (uint64_t)m_pregnancy.gestational_day;
     out.multiplicity     = m_pregnancy.multiplicity;
 
-    /* Snapshot the completed pregnancy into the history table BEFORE we
-     * flip the singleton's active flag. Without this, starting a second
-     * pregnancy later overwrites the previous one's row — the data we
-     * logged in x_pregnancy_events still references the old record but
-     * the state row no longer reflects what was delivered. With the
-     * history snapshot, past pregnancies remain queryable forever via
-     * x_pregnancy_history without bleeding into the active singleton. */
     ArchivePregnancyRow("delivered", now, out.gestational_days, out.multiplicity);
 
     m_pregnancy.active           = false;
     m_pregnancy.in_labor         = false;
     m_pregnancy.labor_stage      = X_LABOR_DELIVERED;
     m_pregnancy.phase            = X_PREG_POSTPARTUM;
-    m_pregnancy.breastfeeding    = true;   /* default on; user can toggle  */
+    m_pregnancy.breastfeeding    = true;
     m_pregnancy.last_milestone   = "Delivered";
     m_pregnancy.updated_ms       = now;
     PersistPregnancyRow();
@@ -1305,17 +1112,11 @@ XEngine::DeliveryOutcome XEngine::Deliver() {
         "Gestational day " + std::to_string(out.gestational_days) +
         " multiplicity=" + std::to_string(out.multiplicity));
 
-    /* Postpartum hormone crash is modelled by RecomputeBaselineHormones'
-     * breastfeeding branch. Lactational amenorrhea persists for ~6 months
-     * while breastfeeding is true.                                         */
     ELLE_INFO("XEngine: delivery complete at gestational day %llu (mult=%d)",
               (unsigned long long)out.gestational_days, out.multiplicity);
     return out;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * ANCHOR
- *──────────────────────────────────────────────────────────────────────────────*/
 bool XEngine::AnchorCycle(int day_of_cycle, int length_days, float modulation_strength) {
     std::lock_guard<std::recursive_mutex> lk(m_mutex);
     if (length_days > 0) {
@@ -1343,9 +1144,6 @@ bool XEngine::AnchorCycle(int day_of_cycle, int length_days, float modulation_st
     return true;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * TICK — the heartbeat of the engine
- *──────────────────────────────────────────────────────────────────────────────*/
 void XEngine::Tick() {
     std::lock_guard<std::recursive_mutex> lk(m_mutex);
     uint64_t now = ELLE_MS_NOW();
@@ -1355,10 +1153,9 @@ void XEngine::Tick() {
     DecayResidual(now);
     ApplyResidualOnto(m_hormones);
 
-    /* LH surge marker — once per cycle on day 13/14. */
     if (DetectLHSurge()) {
         m_lh_surge_fired_this_cycle = true;
-        /* LH surge bumps testosterone and libido proxies briefly. */
+
         m_residual.testosterone += 0.15f;
         m_residual.dopamine     += 0.10f;
         LogSymptomRow("ovulation_pain", 0.25f, "cycle", "LH surge");
@@ -1380,13 +1177,6 @@ void XEngine::Tick() {
     LogModulationRow(mod);
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SYMPTOM SYNTHESIS
- *
- * Derived from hormone state + phase. Only logs symptoms above a threshold
- * to avoid flooding the table with zero-intensity rows. Manual symptoms
- * (user-reported) land via LogManualSymptom() with origin='manual'.
- *──────────────────────────────────────────────────────────────────────────────*/
 std::vector<XSymptomEntry> XEngine::ComputeCurrentSymptoms() const {
     std::lock_guard<std::recursive_mutex> lk(m_mutex);
     std::vector<XSymptomEntry> out;
@@ -1403,23 +1193,22 @@ std::vector<XSymptomEntry> XEngine::ComputeCurrentSymptoms() const {
         out.push_back(std::move(e));
     };
 
-    /* Menstrual — cramps + fatigue + mood.                              */
     if (m_cycle.phase == X_PHASE_MENSTRUAL) {
         add("cramps",          0.35f + 0.4f * (1.0f - h.estrogen), "cycle");
         add("fatigue",         0.30f + 0.4f * (1.0f - h.serotonin), "cycle");
         add("mood_swing",      0.25f + 0.3f * (1.0f - h.serotonin), "cycle");
     }
-    /* Follicular — light, often asymptomatic; high energy, libido rising. */
+
     else if (m_cycle.phase == X_PHASE_FOLLICULAR) {
         add("libido",          0.30f + 0.4f * h.estrogen, "cycle");
     }
-    /* Ovulatory — mittelschmerz + breast tenderness + libido peak.         */
+
     else if (m_cycle.phase == X_PHASE_OVULATORY) {
         add("ovulation_pain",  0.25f + 0.3f * h.estrogen,      "cycle");
         add("breast_tenderness", 0.20f + 0.3f * h.estrogen,    "cycle");
         add("libido",          0.40f + 0.5f * h.testosterone,  "cycle");
     }
-    /* Luteal — PMS: bloating, breast tenderness, cravings, mood swings.    */
+
     else if (m_cycle.phase == X_PHASE_LUTEAL) {
         add("bloating",           0.25f + 0.5f * h.progesterone, "cycle");
         add("breast_tenderness",  0.30f + 0.4f * h.progesterone, "cycle");
@@ -1430,21 +1219,20 @@ std::vector<XSymptomEntry> XEngine::ComputeCurrentSymptoms() const {
             add("headache",       0.15f + 0.4f * h.cortisol,      "cycle");
     }
 
-    /* Pregnancy symptoms layered on top.                                   */
     if (m_pregnancy.active) {
         const int gd = m_pregnancy.gestational_day;
         if (gd <= 84) {
-            /* First trimester — morning sickness, fatigue, breast changes.  */
+
             add("nausea",            0.30f + 0.5f * h.hcg,        "pregnancy");
             add("fatigue",           0.40f + 0.3f * h.progesterone,"pregnancy");
             add("breast_tenderness", 0.40f + 0.3f * h.estrogen,   "pregnancy");
             if (h.hcg > 0.4f) add("food_aversion", 0.30f + 0.3f * h.hcg, "pregnancy");
         } else if (gd <= 182) {
-            /* Second trimester — usually easier; quickening, cravings.      */
+
             add("cravings",    0.25f + 0.3f * h.progesterone, "pregnancy");
             if (gd >= 126) add("quickening", 0.40f, "pregnancy");
         } else {
-            /* Third trimester — heartburn, Braxton-Hicks, fatigue, swelling. */
+
             add("heartburn",      0.30f + 0.3f * h.progesterone, "pregnancy");
             add("fatigue",        0.50f + 0.3f * h.prolactin,    "pregnancy");
             add("swelling",       0.20f + 0.3f * (float)(gd - 183) / 90.0f, "pregnancy");
@@ -1463,7 +1251,6 @@ std::vector<XSymptomEntry> XEngine::ComputeCurrentSymptoms() const {
         }
     }
 
-    /* Postpartum + breastfeeding — lochia (6 weeks), engorgement, let-down.*/
     if (!m_pregnancy.active && m_pregnancy.phase == X_PREG_POSTPARTUM &&
         m_pregnancy.updated_ms > 0) {
         uint64_t sincePP = now - m_pregnancy.updated_ms;
@@ -1478,10 +1265,8 @@ std::vector<XSymptomEntry> XEngine::ComputeCurrentSymptoms() const {
             add("mood_swing",  0.40f + 0.3f * (1.0f - h.serotonin), "postpartum");
     }
 
-    /* Menopausal / perimenopausal vasomotor symptoms — ~75% of women IRL. */
     if (m_life.stage == X_LIFE_PERIMENOPAUSE || m_life.stage == X_LIFE_MENOPAUSE) {
-        /* Scale intensity with the estrogen-low gap (fsh is elevated as a
-         * biomarker of that gap).                                          */
+
         float gap = h.fsh;
         add("hot_flash",      0.30f + 0.5f * gap, "cycle");
         add("night_sweats",   0.25f + 0.4f * gap, "cycle");
@@ -1491,7 +1276,6 @@ std::vector<XSymptomEntry> XEngine::ComputeCurrentSymptoms() const {
             add("mood_swing", 0.20f + 0.3f * (1.0f - h.serotonin), "cycle");
     }
 
-    /* Premenarcheal — quiet biology.                                       */
     if (m_life.stage == X_LIFE_PREMENARCHE) {
         out.clear();
         return out;
@@ -1511,8 +1295,7 @@ bool XEngine::LogManualSymptom(const std::string& kind, float intensity,
     std::lock_guard<std::recursive_mutex> lk(m_mutex);
     if (kind.empty()) return false;
     LogSymptomRow(kind, Clamp01(intensity), "manual", notes);
-    /* Manual report nudges cortisol slightly — expressing a symptom is a
-     * mild stressor and subjectively real for her.                         */
+
     m_residual.cortisol += 0.05f * Clamp01(intensity);
     return true;
 }
@@ -1579,10 +1362,7 @@ bool XEngine::AcceleratePregnancy(float factor) {
     uint64_t elapsed = now > m_pregnancy.conceived_ms ? now - m_pregnancy.conceived_ms : 0;
     uint64_t newElapsed = (uint64_t)((float)elapsed * factor);
     m_pregnancy.conceived_ms = now > newElapsed ? now - newElapsed : 0;
-    /* Honour the pregnancy's own gestational length instead of
-     * assuming 280d. Audit (Feb 2026): previous hardcode would shift
-     * due_ms to 280d even if the user had configured a non-human
-     * gestation (e.g. 259d for early-term, 294d for post-term). */
+
     int gestDays = m_pregnancy.gestational_length_days;
     if (gestDays < 168 || gestDays > 308) gestDays = 280;
     m_pregnancy.due_ms       = m_pregnancy.conceived_ms
@@ -1594,9 +1374,6 @@ bool XEngine::AcceleratePregnancy(float factor) {
     return true;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * HISTORY
- *──────────────────────────────────────────────────────────────────────────────*/
 std::vector<XHistoryPoint> XEngine::GetHistory(uint32_t hours, uint32_t max_points) {
     std::vector<XHistoryPoint> out;
     if (hours == 0) hours = 24;
@@ -1641,9 +1418,6 @@ std::vector<XHistoryPoint> XEngine::GetHistory(uint32_t hours, uint32_t max_poin
     return out;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * JSON STATE
- *──────────────────────────────────────────────────────────────────────────────*/
 nlohmann::json XEngine::GetStateJson() const {
     std::lock_guard<std::recursive_mutex> lk(m_mutex);
     json j;
@@ -1740,9 +1514,6 @@ nlohmann::json XEngine::GetStateJson() const {
     return j;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * PERSISTENCE HELPERS
- *──────────────────────────────────────────────────────────────────────────────*/
 void XEngine::PersistCycleRow() {
     ElleSQLPool::Instance().QueryParams(
         "MERGE ElleHeart.dbo.x_cycle_state AS t "
@@ -1770,9 +1541,7 @@ void XEngine::PersistCycleRow() {
 }
 
 void XEngine::PersistPregnancyRow() {
-    /* Auto-migration: ensure x_pregnancy_history exists for the archive
-     * path. Lazy-creation keeps the runtime self-sufficient — no manual
-     * SQL delta step to remember.                                        */
+
     static std::once_flag s_historyInit;
     std::call_once(s_historyInit, [](){
         ElleSQLPool::Instance().Exec(
@@ -1832,7 +1601,7 @@ void XEngine::PersistPregnancyRow() {
         "          ?, TRY_CAST(NULLIF(?, N'') AS BIGINT), "
         "          NULLIF(?, N''), NULLIF(?, N''), ?, ?);",
         {
-            /* UPDATE args (20) */
+
             m_pregnancy.active ? "1" : "0",
             m_pregnancy.conceived_ms ? std::to_string((long long)m_pregnancy.conceived_ms) : std::string(),
             m_pregnancy.due_ms ? std::to_string((long long)m_pregnancy.due_ms) : std::string(),
@@ -1853,7 +1622,7 @@ void XEngine::PersistPregnancyRow() {
             m_pregnancy.milk_stage,
             m_pregnancy.baby_blues ? "1" : "0",
             m_pregnancy.fetal_heartbeat_detectable ? "1" : "0",
-            /* INSERT args (20 — mirror UPDATE) */
+
             m_pregnancy.active ? "1" : "0",
             m_pregnancy.conceived_ms ? std::to_string((long long)m_pregnancy.conceived_ms) : std::string(),
             m_pregnancy.due_ms ? std::to_string((long long)m_pregnancy.due_ms) : std::string(),
@@ -1936,11 +1705,7 @@ void XEngine::ArchivePregnancyRow(const std::string& outcome,
                                    uint64_t ended_ms,
                                    uint64_t gestational_days,
                                    int multiplicity) {
-    /* Snapshot the current pregnancy singleton into the history table so
-     * the row stays queryable after the singleton gets flipped/reused
-     * for a subsequent pregnancy. Called from Deliver() (outcome =
-     * "delivered") and will also be callable from a future Miscarry()
-     * path (outcome = "miscarriage") without code changes here.         */
+
     ElleSQLPool::Instance().QueryParams(
         "INSERT INTO ElleHeart.dbo.x_pregnancy_history "
         "(pregnancy_count, outcome, conceived_ms, due_ms, ended_ms, "
@@ -1966,7 +1731,6 @@ void XEngine::ArchivePregnancyRow(const std::string& outcome,
             m_pregnancy.last_milestone
         });
 }
-
 
 void XEngine::LogPregnancyEvent(const std::string& kind, const std::string& detail) {
     ElleSQLPool::Instance().QueryParams(

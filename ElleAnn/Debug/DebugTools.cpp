@@ -1,13 +1,3 @@
-/*******************************************************************************
- * ServiceHarness.cpp — Run any Elle service outside of SCM (debug mode)
- * QueueInspector.cpp — Live view of IntentQueue/ActionQueue
- * EmotionViewer.cpp — Dump 102 emotional dimensions in real-time
- * AsmTestBench.cpp — Test ASM DLL exports directly
- ******************************************************************************/
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SERVICE HARNESS — Debug tool to run services without SCM
-// ═══════════════════════════════════════════════════════════════════════════
 #ifdef BUILD_SERVICE_HARNESS
 
 #include "../Shared/ElleTypes.h"
@@ -19,7 +9,7 @@
 
 int main(int argc, char* argv[]) {
     std::cout << "=== ELLE-ANN Debug Service Harness ===\n\n";
-    
+
     if (argc < 2) {
         std::cout << "Usage: ServiceHarness.exe <service_name> [config_path]\n\n"
                   << "Services:\n"
@@ -41,9 +31,6 @@ int main(int argc, char* argv[]) {
     std::cout << "Config loaded. Starting " << serviceName << " in harness mode...\n";
     std::cout << "Press Ctrl+C to stop.\n\n";
 
-    // In a real implementation, this would dynamically load and instantiate
-    // the service class, bypassing SCM registration
-    
     std::cout << "Service harness running. Type 'quit' to exit.\n";
     std::string cmd;
     while (std::getline(std::cin, cmd)) {
@@ -62,9 +49,6 @@ int main(int argc, char* argv[]) {
 }
 #endif
 
-// ═══════════════════════════════════════════════════════════════════════════
-// QUEUE INSPECTOR — Real-time view of Intent and Action queues
-// ═══════════════════════════════════════════════════════════════════════════
 #ifdef BUILD_QUEUE_INSPECTOR
 
 #include "../Shared/ElleTypes.h"
@@ -80,7 +64,7 @@ void PrintIntentQueue() {
         "ORDER BY CreatedMs DESC");
 
     std::cout << "\n=== INTENT QUEUE ===\n";
-    std::cout << std::setw(8) << "ID" << std::setw(10) << "Type" 
+    std::cout << std::setw(8) << "ID" << std::setw(10) << "Type"
               << std::setw(10) << "Status" << std::setw(8) << "Urgency"
               << std::setw(10) << "Conf" << "  Description\n";
     std::cout << std::string(80, '-') << "\n";
@@ -90,8 +74,6 @@ void PrintIntentQueue() {
         return;
     }
 
-    /* Bounded column access so a schema drift or a NULL that decayed to
-     * an empty-string value doesn't index out-of-bounds. Audit #130. */
     auto col = [](const SQLRow& r, size_t i) -> std::string {
         return (i < r.values.size()) ? r.values[i] : std::string("?");
     };
@@ -137,10 +119,10 @@ void PrintActionQueue() {
 
 int main() {
     std::cout << "=== ELLE-ANN Queue Inspector ===\n";
-    
+
     ElleConfig::Instance().Load("elle_master_config.json");
     auto& svc = ElleConfig::Instance().GetService();
-    
+
     if (!ElleSQLPool::Instance().Initialize(svc.sql_connection_string, 2)) {
         std::cerr << "Failed to connect to SQL Server!\n";
         return 1;
@@ -160,9 +142,6 @@ int main() {
 }
 #endif
 
-// ═══════════════════════════════════════════════════════════════════════════
-// EMOTION VIEWER — Live 102-dimension emotional state display
-// ═══════════════════════════════════════════════════════════════════════════
 #ifdef BUILD_EMOTION_VIEWER
 
 #include "../Shared/ElleTypes.h"
@@ -205,9 +184,7 @@ void DisplayEmotions() {
     }
 
     auto& row = rs.rows[0];
-    /* Guard every column access -- the schema could drift, or NULLs
-     * could degrade to empty strings. Audit #130: debug tooling must
-     * not crash on imperfect data.                                   */
+
     auto col = [&](size_t i) -> std::string {
         return (i < row.values.size()) ? row.values[i] : std::string("?");
     };
@@ -216,8 +193,6 @@ void DisplayEmotions() {
               << "  Dominance: " << col(3)
               << "  Tick: "    << col(4) << "\n\n";
 
-    /* Parse dimensions CSV defensively. One bad token used to throw
-     * std::invalid_argument mid-display and crash the whole tool.    */
     std::vector<float> values;
     values.reserve(128);
     const std::string dims = col(0);
@@ -234,7 +209,7 @@ void DisplayEmotions() {
     const size_t kNames = sizeof(emotionNames) / sizeof(emotionNames[0]);
     const size_t limit  = std::min<size_t>(values.size(), kNames);
     for (size_t i = 0; i < limit; i++) {
-        if (values[i] < 0.01f) continue; // Skip inactive
+        if (values[i] < 0.01f) continue;
 
         std::cout << std::setw(18) << std::left << emotionNames[i] << " ";
         int bars = (int)(values[i] * 40);
@@ -252,7 +227,7 @@ void DisplayEmotions() {
 
 int main() {
     std::cout << "=== ELLE-ANN Emotion Viewer ===\n";
-    
+
     ElleConfig::Instance().Load("elle_master_config.json");
     auto& svc = ElleConfig::Instance().GetService();
     ElleSQLPool::Instance().Initialize(svc.sql_connection_string, 2);
@@ -268,9 +243,6 @@ int main() {
 }
 #endif
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ASM TEST BENCH — Direct calls to ASM DLL exports
-// ═══════════════════════════════════════════════════════════════════════════
 #ifdef BUILD_ASM_TESTBENCH
 
 #define ELLE_IMPORT_ASM
@@ -280,7 +252,6 @@ int main() {
 int main() {
     std::cout << "=== ELLE-ANN ASM Test Bench ===\n\n";
 
-    // Load DLLs
     HMODULE hHW = LoadLibraryA("Elle.ASM.Hardware.dll");
     HMODULE hProc = LoadLibraryA("Elle.ASM.Process.dll");
     HMODULE hFile = LoadLibraryA("Elle.ASM.FileIO.dll");
@@ -294,7 +265,6 @@ int main() {
               << "  Memory:   " << (hMem ? "OK" : "FAILED") << "\n"
               << "  Crypto:   " << (hCrypto ? "OK" : "FAILED") << "\n\n";
 
-    // Test RDTSC
     if (hHW) {
         typedef int(__stdcall* RDTSC_fn)(ULONGLONG*);
         auto fn = (RDTSC_fn)GetProcAddress(hHW, "ASM_RDTSC");
@@ -305,7 +275,6 @@ int main() {
         }
     }
 
-    // Test CPUID
     if (hHW) {
         typedef int(__stdcall* CPUID_fn)(DWORD, DWORD*, DWORD*, DWORD*, DWORD*);
         auto fn = (CPUID_fn)GetProcAddress(hHW, "ASM_CPUID");
@@ -320,7 +289,6 @@ int main() {
         }
     }
 
-    // Test CRC32
     if (hCrypto) {
         typedef DWORD(__stdcall* CRC32_fn)(const void*, DWORD);
         auto fn = (CRC32_fn)GetProcAddress(hCrypto, "ASM_CRC32");
@@ -331,7 +299,6 @@ int main() {
         }
     }
 
-    // Test FastMemCopy
     if (hMem) {
         typedef void(__stdcall* MemCopy_fn)(void*, const void*, DWORD);
         auto fn = (MemCopy_fn)GetProcAddress(hMem, "ASM_FastMemCopy");
@@ -344,7 +311,7 @@ int main() {
     }
 
     std::cout << "\nAll tests complete.\n";
-    
+
     if (hHW) FreeLibrary(hHW);
     if (hProc) FreeLibrary(hProc);
     if (hFile) FreeLibrary(hFile);
@@ -355,22 +322,6 @@ int main() {
 }
 #endif
 
-// ═══════════════════════════════════════════════════════════════════════════
-// MEMORY HARNESS — Exercise the STM→LTM consolidation pipeline end-to-end
-//
-// Build flag: BUILD_MEMORY_HARNESS
-// Links against: ../Shared/* and ../Services/Elle.Service.Memory/MemoryEngine.cpp
-//
-// What it does:
-//   1. Loads elle_master_config.json + opens the ODBC pool
-//   2. Creates a MemoryEngine (no SCM, no IPC — pure in-process)
-//   3. Seeds STM with entries spanning every priority tier
-//      (critical / high / normal / low / fleeting)
-//   4. Runs DecaySTM() in a loop to simulate the subconscious tick
-//   5. Calls ConsolidateMemories() to force the conscious flush
-//   6. Prints STM residency and relevance at each stage so the user can
-//      confirm the Python-parity decay curve is behaving correctly.
-// ═══════════════════════════════════════════════════════════════════════════
 #ifdef BUILD_MEMORY_HARNESS
 
 #include "../Shared/ElleTypes.h"
@@ -412,7 +363,7 @@ int main() {
     auto& svc = ElleConfig::Instance().GetService();
     if (!ElleSQLPool::Instance().Initialize(svc.sql_connection_string, 2)) {
         std::cerr << "Failed to open SQL pool — LTM writes will fail!\n";
-        /* Harness still exercises STM logic even without SQL. */
+
     }
 
     MemoryEngine eng;
@@ -434,7 +385,6 @@ int main() {
     }
     DumpSTM(eng, "After seed");
 
-    /* Subconscious tick simulation: 3 decay passes with brief waits.            */
     for (int pass = 1; pass <= 3; pass++) {
         Sleep(2000);
         eng.DecaySTM();
@@ -443,7 +393,6 @@ int main() {
         DumpSTM(eng, label);
     }
 
-    /* Access-boost verification: recall "Kage" — the critical entry should bump. */
     std::cout << "\nRecall(\"Kage\") to verify access-boost...\n";
     auto hits = eng.Recall("Kage", 5, 0.0f);
     for (auto& h : hits) {
@@ -454,12 +403,10 @@ int main() {
                   << " | " << std::string(h.content).substr(0, 60) << "\n";
     }
 
-    /* Conscious / on-demand flush.                                              */
     std::cout << "\nForcing ConsolidateMemories() (conscious path)...\n";
     eng.ConsolidateMemories();
     DumpSTM(eng, "After conscious consolidation");
 
-    /* Shutdown-flush test.                                                      */
     std::cout << "\nCalling Shutdown() to flush remainder...\n";
     eng.Shutdown();
     std::cout << "Final STM count: " << eng.STMCount() << " (should be 0)\n";

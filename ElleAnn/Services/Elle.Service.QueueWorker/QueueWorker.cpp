@@ -1,7 +1,3 @@
-/*******************************************************************************
- * QueueWorker.cpp — Intent/Action Queue Bridge
- * Polls SQL queues, routes intents to cognitive, actions to executor.
- ******************************************************************************/
 #include "../../Shared/ElleTypes.h"
 #include "../../Shared/ElleServiceBase.h"
 #include "../../Shared/ElleLogger.h"
@@ -20,7 +16,7 @@ public:
 
 protected:
     bool OnStart() override {
-        SetTickInterval(500); /* Poll every 500ms */
+        SetTickInterval(500);
         ELLE_INFO("Queue worker started (poll interval: 500ms)");
         return true;
     }
@@ -30,26 +26,17 @@ protected:
     }
 
     void OnTick() override {
-        /* DB poll back-off. If the intent or action poll fails (SQL
-         * down, pool exhausted, etc.), we exponentially back off so the
-         * log doesn't drown in per-tick errors and the SQL box isn't
-         * being hammered while it's already distressed. Recovery is
-         * immediate on the next successful poll.                        */
+
         if (m_dbCooldownTicks > 0) {
             m_dbCooldownTicks--;
             return;
         }
 
-        /* Poll intent queue */
         std::vector<ELLE_INTENT_RECORD> intents;
         bool intentsOk = ElleDB::GetPendingIntents(intents, 10);
         for (auto& intent : intents) {
             auto msg = ElleIPCMessage::Create(IPC_INTENT_REQUEST, SVC_QUEUE_WORKER, SVC_COGNITIVE);
-            /* Serialize only the fields Cognitive needs — ELLE_INTENT_RECORD
-             * contains response[65536] that QueueWorker never fills, making
-             * the binary payload 82 KB which exceeds ELLE_PIPE_BUFFER_SIZE
-             * (64 KB) and caused fragmented delivery + deserialization failure.
-             * JSON payload stays well under 10 KB for any real intent.     */
+
             json j;
             j["id"]             = intent.id;
             j["type"]           = intent.type;
@@ -67,7 +54,6 @@ protected:
             m_intentsRouted++;
         }
 
-        /* Poll action queue */
         std::vector<ELLE_ACTION_RECORD> actions;
         bool actionsOk = ElleDB::GetPendingActions(actions, 10);
         for (auto& action : actions) {
@@ -85,29 +71,22 @@ protected:
             m_consecutiveDbFailures = 0;
         } else {
             m_consecutiveDbFailures++;
-            /* Back-off schedule: 1, 2, 4, 8, 16 ticks (capped). With a
-             * 500 ms tick this is 0.5s → 8s pause. */
+
             uint32_t backoff = 1u << std::min<uint32_t>(m_consecutiveDbFailures, 4u);
             m_dbCooldownTicks = backoff;
             if (m_consecutiveDbFailures == 1 || (m_consecutiveDbFailures % 16) == 0) {
                 ELLE_ERROR("Queue DB poll failed (%u consecutive) — backing off %u ticks",
                            m_consecutiveDbFailures, backoff);
             }
-            return; /* don't run the reaper against a broken DB */
+            return;
         }
 
-        /* Periodic stats */
         m_pollCount++;
-        if (m_pollCount % 120 == 0) { /* Every ~60 seconds */
+        if (m_pollCount % 120 == 0) {
             ELLE_INFO("Queue stats: %llu intents, %llu actions routed",
                       m_intentsRouted, m_actionsRouted);
         }
 
-        /* TIMEOUT REAPER — runs every 10 ticks (~5s). The atomic claim
-         * flips rows to PROCESSING/LOCKED; if a consumer crashes or
-         * wedges, rows would otherwise sit there forever. The reaper
-         * re-queues rows past their TimeoutMs (up to max retries /
-         * attempts) or marks them FAILED/TIMEOUT terminal.             */
         if (m_pollCount % 10 == 0) {
             auto& cfg = ElleConfig::Instance();
             uint32_t intentTimeout = (uint32_t)cfg.GetInt("cognitive.intent_timeout_ms", 120000);
@@ -125,8 +104,8 @@ protected:
         }
     }
 
-    void OnMessage(const ElleIPCMessage& msg, ELLE_SERVICE_ID /*sender*/) override {
-        /* Forward responses back to SQL queues */
+    void OnMessage(const ElleIPCMessage& msg, ELLE_SERVICE_ID ) override {
+
         if (msg.header.msg_type == IPC_INTENT_RESPONSE) {
             ELLE_INTENT_RECORD intent;
             if (msg.GetPayload(intent)) {
@@ -151,7 +130,7 @@ private:
     uint64_t m_intentsReaped = 0;
     uint64_t m_actionsReaped = 0;
     uint32_t m_pollCount = 0;
-    /* DB poll back-off state — see OnTick(). */
+
     uint32_t m_consecutiveDbFailures = 0;
     uint32_t m_dbCooldownTicks       = 0;
 };

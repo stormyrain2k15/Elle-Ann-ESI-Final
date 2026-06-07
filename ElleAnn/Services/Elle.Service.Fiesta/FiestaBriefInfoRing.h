@@ -1,16 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * FiestaBriefInfoRing.h — handle ⇆ display-name cache.
- *
- *   Populated from server-pushed BRIEFINFO_LOGINCHARACTER /
- *   BRIEFINFO_BRIEFINFODELETE packets in FiestaClient.  Used to
- *   resolve `speaker_handle` in chat broadcasts into a human-readable
- *   name for downstream Cognitive consumption.
- *
- *   This header is platform-portable on purpose — it lives apart
- *   from FiestaConnection.h (which pulls in winsock2.h) so the
- *   Linux smoke test under `backend/tests/fiesta_smoke.cpp` can
- *   exercise the ring without depending on Windows headers.
- *══════════════════════════════════════════════════════════════════════════════*/
 #pragma once
 #ifndef ELLE_FIESTA_BRIEFINFO_RING_H
 #define ELLE_FIESTA_BRIEFINFO_RING_H
@@ -25,9 +12,7 @@ namespace Fiesta {
 
 class BriefInfoRing {
 public:
-    /** Memory-cap safety net. The cap evicts a stale entry rather
-     *  than refusing the insert — preferring fresh data over old in
-     *  griefer / spawn-flood scenarios. */
+
     static constexpr size_t kMaxEntries = 4096;
 
     void Insert(uint16_t handle, const std::string& name) {
@@ -41,7 +26,7 @@ public:
         std::lock_guard<std::mutex> lk(m_mx);
         m_map.erase(handle);
     }
-    /** Returns the display name for `handle` if known, else empty. */
+
     std::string Resolve(uint16_t handle) const {
         std::lock_guard<std::mutex> lk(m_mx);
         const auto it = m_map.find(handle);
@@ -61,5 +46,5 @@ private:
     std::unordered_map<uint16_t, std::string> m_map;
 };
 
-}  /* namespace Fiesta */
+}
 #endif

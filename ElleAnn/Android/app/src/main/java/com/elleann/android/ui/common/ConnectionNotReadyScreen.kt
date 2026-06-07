@@ -16,18 +16,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-/**
- * ConnectionNotReadyScreen — shown when a route depends on an
- * initialised [com.elleann.android.data.ElleWebSocket] but the
- * companion has not yet finished its first connect (cold start
- * before [com.elleann.android.data.AppContainerExtended.initWebSocket]
- * runs, or a transient drop while the auto-reconnect backs off).
- *
- * Renders a clear "reconnecting" state instead of the previous
- * silent blank tab. Provides a manual retry that calls back into
- * [onRetry] which is wired by the host to
- * `containerExtended.reconnectWebSocketIfNeeded()`.
- */
 @Composable
 fun ConnectionNotReadyScreen(
     onRetry: () -> Unit,

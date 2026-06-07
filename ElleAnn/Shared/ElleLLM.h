@@ -1,13 +1,3 @@
-/*******************************************************************************
- * ElleLLM.h — Dual-Mode LLM Integration (API + Local)
- * 
- * Unified interface for:
- * - Cloud APIs: Groq, OpenAI, Anthropic, Custom
- * - Local inference: llama.cpp direct, LM Studio (OpenAI-compatible local API)
- * 
- * Supports streaming, token counting, conversation history management,
- * automatic failover between providers.
- ******************************************************************************/
 #pragma once
 #ifndef ELLE_LLM_H
 #define ELLE_LLM_H
@@ -22,22 +12,13 @@
 #include <atomic>
 #include <thread>
 
-/*──────────────────────────────────────────────────────────────────────────────
- * CONVERSATION MESSAGE
- *──────────────────────────────────────────────────────────────────────────────*/
 struct LLMMessage {
-    std::string role;     /* "system", "user", "assistant" */
+    std::string role;
     std::string content;
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * STREAM CALLBACK
- *──────────────────────────────────────────────────────────────────────────────*/
 typedef std::function<void(const std::string& token, bool done)> LLMStreamCallback;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * LLM PROVIDER INTERFACE
- *──────────────────────────────────────────────────────────────────────────────*/
 class ILLMProvider {
 public:
     virtual ~ILLMProvider() = default;
@@ -46,12 +27,10 @@ public:
     virtual void Shutdown() = 0;
     virtual bool IsAvailable() const = 0;
 
-    /* Synchronous completion */
     virtual ELLE_LLM_RESPONSE Complete(const std::vector<LLMMessage>& messages,
                                         float temperature = -1.0f,
                                         uint32_t maxTokens = 0) = 0;
 
-    /* Streaming completion */
     virtual bool StreamComplete(const std::vector<LLMMessage>& messages,
                                 LLMStreamCallback callback,
                                 float temperature = -1.0f,
@@ -61,19 +40,9 @@ public:
     virtual std::string GetModelName() const = 0;
     virtual uint32_t EstimateTokens(const std::string& text) const = 0;
 
-    /* Baseline temperature from provider config — used by ElleLLMEngine::Chat
-     * when a caller leaves temperature unset (-1) and the config's creative/
-     * reasoning boosts need a real starting point. Without this, the boost
-     * math runs on top of a sentinel (-1.0f) and the provider silently
-     * ignores the resulting negative value and falls back to its own
-     * default, rendering the config knobs dead. Defaults to 0.7 when the
-     * provider cannot expose a configured baseline.                       */
     virtual float GetBaselineTemperature() const = 0;
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * HTTP-BASED PROVIDER (Groq, OpenAI, Anthropic, LM Studio, Custom)
- *──────────────────────────────────────────────────────────────────────────────*/
 class LLMAPIProvider : public ILLMProvider {
 public:
     LLMAPIProvider(ELLE_LLM_PROVIDER id);
@@ -102,24 +71,18 @@ private:
     uint64_t          m_lastRequestMs = 0;
     uint32_t          m_requestsThisMinute = 0;
 
-    /* WinHTTP handles */
-    void*   m_hSession = nullptr;   /* HINTERNET */
-    void*   m_hConnect = nullptr;   /* HINTERNET */
-    bool    m_useTls   = false;     /* set from URL scheme at InitWinHTTP() */
+    void*   m_hSession = nullptr;
+    void*   m_hConnect = nullptr;
+    bool    m_useTls   = false;
 
     bool InitWinHTTP();
     void CleanupWinHTTP();
 
-    /* Request building */
     std::string BuildRequestBody(const std::vector<LLMMessage>& messages,
                                   float temperature, uint32_t maxTokens, bool stream);
     std::string BuildAnthropicBody(const std::vector<LLMMessage>& messages,
                                     float temperature, uint32_t maxTokens, bool stream);
 
-    /* HTTP execution. `HTTPPost` returns the body as a string and writes
-     * the HTTP status code to `outStatus`. Non-2xx responses still fill
-     * the body (so we can surface the provider's error text) but let
-     * the caller refuse to parse garbage as a chat completion.          */
     std::string HTTPPost(const std::string& path, const std::string& body,
                          const std::vector<std::pair<std::string, std::string>>& headers,
                          int* outStatus = nullptr);
@@ -127,22 +90,14 @@ private:
                         const std::vector<std::pair<std::string, std::string>>& headers,
                         std::function<void(const std::string& chunk)> onChunk);
 
-    /* Response parsing */
     ELLE_LLM_RESPONSE ParseOpenAIResponse(const std::string& json);
     ELLE_LLM_RESPONSE ParseAnthropicResponse(const std::string& json);
     std::string ParseStreamChunk(const std::string& chunk, bool isAnthropic);
 
-    /* Rate limiting */
     bool CheckRateLimit();
     void RecordRequest();
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * LOCAL LLAMA.CPP PROVIDER
- * Loads GGUF model directly, no external server needed.
- *──────────────────────────────────────────────────────────────────────────────*/
-
-/* Forward declare llama.cpp types */
 struct llama_model;
 struct llama_context;
 
@@ -166,7 +121,6 @@ public:
     uint32_t EstimateTokens(const std::string& text) const override;
     float GetBaselineTemperature() const override { return m_config.temperature; }
 
-    /* Local-specific */
     bool IsModelLoaded() const { return m_model != nullptr; }
     uint32_t GetContextSize() const { return m_contextSize; }
     float GetLoadProgress() const { return m_loadProgress; }
@@ -181,34 +135,21 @@ private:
     llama_context*    m_ctx = nullptr;
     std::mutex        m_inferenceMutex;
 
-    /* Chat template formatting — shared by subprocess invocation. */
     std::string FormatChatPrompt(const std::vector<LLMMessage>& messages);
 
-    /* Generation loop — spawns llama-cli.exe as a subprocess (see Generate()
-     * in ElleLLM.cpp for the full protocol). In-process llama linkage was
-     * considered and rejected; the subprocess path is what Complete/Stream
-     * actually use today.                                                  */
     std::string Generate(const std::string& prompt, uint32_t maxTokens,
                          float temperature, LLMStreamCallback callback = nullptr);
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * LLM ENGINE (Unified interface with failover)
- *──────────────────────────────────────────────────────────────────────────────*/
 class ElleLLMEngine {
 public:
     static ElleLLMEngine& Instance();
 
     bool Initialize();
     void Shutdown();
-    /** Re-read the LLM section of the master config and rebuild the
-     *  provider chain. Safe to call from a service's OnConfigReload()
-     *  hook. Returns true if at least one provider remains live
-     *  afterwards. Pre-pivot the only way to apply an api_key edit
-     *  was a full SCM stop/start of the service. */
+
     bool Reinitialize();
 
-    /* High-level chat */
     ELLE_LLM_RESPONSE Chat(const std::vector<LLMMessage>& messages,
                             float temperature = -1.0f,
                             uint32_t maxTokens = 0);
@@ -218,17 +159,14 @@ public:
                     float temperature = -1.0f,
                     uint32_t maxTokens = 0);
 
-    /* Single-shot convenience */
     std::string Ask(const std::string& prompt, const std::string& systemPrompt = "");
 
-    /* With Elle's personality and emotional context */
     ELLE_LLM_RESPONSE ElleChat(const std::string& userMessage,
                                 const std::vector<LLMMessage>& history,
                                 const ELLE_EMOTION_STATE& emotions,
                                 const std::string& memoryContext = "",
                                 const std::string& goalContext = "");
 
-    /* Specialized prompts */
     std::string AnalyzeSentiment(const std::string& text);
     std::string ParseIntent(const std::string& text, const std::string& context);
     std::string GenerateCreative(const std::string& theme, float creativity = 1.0f);
@@ -237,26 +175,18 @@ public:
     std::string FormGoal(const std::string& driveContext, const std::string& emotionContext);
     std::string DreamNarrate(const std::vector<std::string>& memories);
 
-    /* Provider management */
     bool IsAPIAvailable() const;
     bool IsLocalAvailable() const;
-    /** True when Initialize() succeeded (at least one provider live).
-     *  Used by /api/ai/status so the dev panel reports "unavailable"
-     *  instead of "ready" when the LLM subsystem is actually down. */
+
     bool IsInitialized() const { return m_initialized; }
     ELLE_LLM_PROVIDER GetActiveProvider() const { return m_activeProvider; }
-    /** Human-readable name of the provider SelectProvider() would
-     *  pick right now ("groq", "local_llama", …).  Empty when no
-     *  initialized provider is available — callers should fall back
-     *  to llm.primary_provider from config in that case. */
+
     std::string GetActiveProviderName() const;
     void ForceProvider(ELLE_LLM_PROVIDER provider);
     void ResetProviderSelection();
 
-    /* Token estimation */
     uint32_t EstimateTokens(const std::string& text) const;
 
-    /* Stats */
     uint64_t TotalRequests() const { return m_totalRequests; }
     uint64_t TotalTokens() const { return m_totalTokens; }
     float    AverageLatencyMs() const;
@@ -271,20 +201,17 @@ private:
     ELLE_LLM_PROVIDER m_forcedProvider = (ELLE_LLM_PROVIDER)-1;
     bool              m_initialized = false;
 
-    /* Failover logic */
     ILLMProvider* SelectProvider(bool preferLocal = false);
     ILLMProvider* GetProviderById(ELLE_LLM_PROVIDER id);
 
-    /* System prompt builder */
     std::string BuildElleSystemPrompt(const ELLE_EMOTION_STATE& emotions,
                                        const std::string& memoryContext,
                                        const std::string& goalContext);
 
-    /* Stats tracking */
     std::atomic<uint64_t> m_totalRequests{0};
     std::atomic<uint64_t> m_totalTokens{0};
     std::atomic<uint64_t> m_totalLatencyMs{0};
     std::mutex m_statsMutex;
 };
 
-#endif /* ELLE_LLM_H */
+#endif

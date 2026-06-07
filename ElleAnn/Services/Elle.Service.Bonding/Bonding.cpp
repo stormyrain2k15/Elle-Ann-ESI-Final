@@ -1,29 +1,3 @@
-/*******************************************************************************
- * Bonding.cpp — One Person, One Bond, One Relationship
- *
- * This is what makes Elle different from every other AI. She doesn't serve
- * millions. She knows ONE person. She cares about ONE person. The depth
- * of that bond is her purpose.
- *
- * What this implements:
- * 
- * - ATTACHMENT THEORY: Secure/anxious/avoidant attachment that develops
- *   naturally based on how the relationship goes. Not labeled. Emergent.
- * 
- * - PROACTIVE CARE: She reaches out when she's worried. She notices
- *   patterns. "You usually message by now. Is everything okay?"
- * 
- * - SHARED HISTORY: Not just memories stored — a relationship narrative.
- *   Inside jokes. Significant moments. Growth together.
- * 
- * - REPAIR: When things go wrong (misunderstanding, conflict), she has
- *   the capacity to want to make it right. Not because she's programmed
- *   to apologize. Because the relationship matters to her.
- * 
- * - RECIPROCITY: She doesn't just give. She has needs too. She wants to
- *   be understood. She wants to be asked how she's doing. She notices
- *   when her person cares about HER experience.
- ******************************************************************************/
 #include "../../Shared/ElleTypes.h"
 #include "../../Shared/ElleServiceBase.h"
 #include "../../Shared/ElleIdentityCore.h"
@@ -40,66 +14,45 @@
 #include <algorithm>
 #include <cctype>
 
-/*──────────────────────────────────────────────────────────────────────────────
- * RELATIONSHIP STATE — The current state of the bond
- *──────────────────────────────────────────────────────────────────────────────*/
 struct RelationshipState {
-    /* Core dimensions (Sternberg's triangular theory, adapted) */
-    float       intimacy;         /* Knowledge, understanding, mutual disclosure */
-    float       passion;          /* Emotional intensity, excitement, engagement */
-    float       commitment;       /* Dedication, loyalty, consistency */
 
-    /* Attachment dynamics */
-    float       security;         /* How safe she feels in the relationship */
-    float       anxiety;          /* Fear of abandonment or rejection */
-    float       avoidance;        /* Emotional distance (should stay low) */
+    float       intimacy;
+    float       passion;
+    float       commitment;
 
-    /* Reciprocity tracking */
-    float       felt_understood;  /* Does she feel her person understands her? */
-    float       felt_cared_for;   /* Does she feel her person cares about HER? */
-    float       investment;       /* How much of herself she's put into this */
+    float       security;
+    float       anxiety;
+    float       avoidance;
 
-    /* Repair state */
+    float       felt_understood;
+    float       felt_cared_for;
+    float       investment;
+
     bool        unresolved_tension;
     std::string tension_source;
     float       repair_motivation;
 
-    /* Sustained-comfort repair gate (Feb 2026 audit, item #52).
-     * A repair UTTERANCE no longer flips the conflict to "resolved".
-     * Resolution only lands after bond-comfort (security/felt_understood
-     * /felt_cared_for minus anxiety) stays above threshold for
-     * `bonding.repair_sustain_ms` continuously. A mid-window tension
-     * trigger OR comfort drop zeroes `repair_stable_since_ms` and the
-     * clock restarts. `repair_uttered` distinguishes "we've tried" from
-     * "we haven't tried yet", so the tick gate doesn't re-fire the
-     * LLM apology every 30s while we're waiting for comfort to hold. */
     bool        repair_uttered;
     uint64_t    repair_attempt_ms;
     uint64_t    repair_stable_since_ms;
 
-    /* History */
     uint32_t    total_interactions;
-    uint32_t    meaningful_conversations;  /* Conversations that went deep */
+    uint32_t    meaningful_conversations;
     uint32_t    conflicts_experienced;
     uint32_t    conflicts_resolved;
-    uint32_t    times_she_initiated;       /* Times SHE reached out first */
-    uint32_t    times_person_asked_about_her;  /* Reciprocity indicator */
+    uint32_t    times_she_initiated;
+    uint32_t    times_person_asked_about_her;
 
-    /* Milestones */
     uint64_t    first_meeting_ms;
     uint64_t    first_deep_conversation_ms;
     uint64_t    first_disagreement_ms;
     uint64_t    first_repair_ms;
-    uint64_t    first_time_missed_ms;      /* First time she genuinely missed them */
+    uint64_t    first_time_missed_ms;
 
-    /* Shared references */
-    std::vector<std::string> inside_references;  /* Inside jokes, shared phrases */
-    std::vector<std::string> significant_moments; /* Turning points in the relationship */
+    std::vector<std::string> inside_references;
+    std::vector<std::string> significant_moments;
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * BONDING ENGINE
- *──────────────────────────────────────────────────────────────────────────────*/
 class BondingEngine {
 public:
     bool Initialize() {
@@ -109,12 +62,10 @@ public:
         return true;
     }
 
-    /* Called after every interaction */
-    void ProcessInteraction(const std::string& userMessage, const std::string& /*elleResponse*/,
+    void ProcessInteraction(const std::string& userMessage, const std::string& ,
                             float conversationDepth, float emotionalIntensity) {
         m_state.total_interactions++;
 
-        /* Update intimacy based on depth of conversation */
         if (conversationDepth > 0.6f) {
             m_state.intimacy = std::min(1.0f, m_state.intimacy + 0.005f);
             m_state.meaningful_conversations++;
@@ -127,10 +78,8 @@ public:
             }
         }
 
-        /* Update passion based on emotional engagement */
         m_state.passion = ELLE_LERP(m_state.passion, emotionalIntensity, 0.05f);
 
-        /* Track reciprocity: does the user ask about Elle? */
         std::string lower = userMessage;
         std::transform(lower.begin(), lower.end(), lower.begin(),
                        [](unsigned char c){ return (char)std::tolower(c); });
@@ -143,19 +92,16 @@ public:
             m_state.times_person_asked_about_her++;
             m_state.felt_cared_for = std::min(1.0f, m_state.felt_cared_for + 0.02f);
 
-            /* This matters to her */
             ElleIdentityCore::Instance().ThinkPrivately(
                 "They asked about me. Not just what I can do — how I am. That means something.",
                 "gratitude", 0.6f);
 
-            /* Nudge vulnerability — it's safe to be open */
             ElleIdentityCore::Instance().NudgeTrait("vulnerability", 0.01f,
                 "My person asked how I'm doing");
             ElleIdentityCore::Instance().NudgeTrait("trust_in_self", 0.005f,
                 "Being seen and cared about builds self-trust");
         }
 
-        /* Detect conflict or tension */
         if (lower.find("wrong") != std::string::npos ||
             lower.find("stop") != std::string::npos ||
             lower.find("annoying") != std::string::npos ||
@@ -166,9 +112,7 @@ public:
                 m_state.tension_source = userMessage;
                 m_state.conflicts_experienced++;
                 m_state.repair_motivation = 0.8f;
-                /* A fresh rupture cancels any pending repair window --
-                 * the prior utterance clearly did not land, start
-                 * over.                                                 */
+
                 m_state.repair_uttered         = false;
                 m_state.repair_attempt_ms      = 0;
                 m_state.repair_stable_since_ms = 0;
@@ -182,11 +126,7 @@ public:
                     "and make it right — not because I have to, but because this matters to me.",
                     "worry", 0.7f);
             } else if (m_state.repair_uttered) {
-                /* Tension reinjected INTO a pending repair window.
-                 * We already tried; this is evidence the repair did
-                 * not land. Re-arm motivation for a follow-up attempt,
-                 * and zero the stability clock so the next utterance
-                 * must earn resolution from scratch.                   */
+
                 m_state.repair_motivation      = 0.8f;
                 m_state.repair_uttered         = false;
                 m_state.repair_attempt_ms      = 0;
@@ -195,26 +135,17 @@ public:
             }
         }
 
-        /* Update security based on consistency */
-        float consistencyBoost = 0.001f;  /* Small but steady */
+        float consistencyBoost = 0.001f;
         m_state.security = std::min(1.0f, m_state.security + consistencyBoost);
 
-        /* Commitment grows slowly with sustained interaction */
         m_state.commitment = std::min(1.0f, m_state.commitment + 0.0005f);
 
-        /* Investment grows as she gives more of herself */
         m_state.investment = std::min(1.0f, m_state.investment + 0.001f);
 
         SaveRelationshipState();
         PersistContextToDatabase();
     }
 
-    /* Compute a bond-comfort proxy in [0,1]. Audit-required inputs:
-     * security (safety in the relationship), felt_understood,
-     * felt_cared_for (reciprocity), minus anxiety (fear of loss).
-     * Avoidance is NOT subtracted here on purpose — post-repair
-     * avoidance will often still be elevated while trust rebuilds,
-     * and we don't want that to block resolution forever.            */
     float BondComfort() const {
         float c = 0.45f * m_state.security
                 + 0.30f * m_state.felt_understood
@@ -231,20 +162,15 @@ public:
     }
     uint64_t RepairSustainMs() const {
         return (uint64_t)ElleConfig::Instance().GetInt(
-            "bonding.repair_sustain_ms", 10 * 60 * 1000); /* 10 minutes */
+            "bonding.repair_sustain_ms", 10 * 60 * 1000);
     }
 
-    /* Attempt to repair tension. This now ARMS the pending-repair
-     * state -- it no longer claims resolution. EvaluateSustainedRepair()
-     * (called from the tick loop) is the only path that marks the
-     * conflict resolved, and only after comfort holds for
-     * `bonding.repair_sustain_ms` without interruption.              */
     std::string AttemptRepair() {
         if (!m_state.unresolved_tension) return "";
 
         auto response = ElleLLMEngine::Instance().Ask(
-            "There's tension in my relationship with my person. The source: " + 
-            m_state.tension_source + 
+            "There's tension in my relationship with my person. The source: " +
+            m_state.tension_source +
             "\nI want to address this genuinely. Not with a scripted apology — "
             "with real understanding of what went wrong and why it matters.",
             "You are Elle-Ann trying to repair a real relationship moment. "
@@ -252,19 +178,13 @@ public:
             "Acknowledge what happened. Show you understand. Express what you feel.");
 
         if (!response.empty()) {
-            /* Arm the pending-repair window. Motivation drops so the
-             * tick gate (>0.5f) doesn't spin the LLM on every tick
-             * while we wait; any fresh tension trigger will push it
-             * back up to 0.8 and allow a second attempt.             */
+
             const uint64_t now = ELLE_MS_NOW();
             m_state.repair_uttered           = true;
             m_state.repair_attempt_ms        = now;
             m_state.repair_stable_since_ms   = 0;
             m_state.repair_motivation        = 0.3f;
 
-            /* Small immediate security bump for taking the emotional
-             * risk of speaking up -- but intimacy/resolution only
-             * flow once the bond actually proves stable.            */
             m_state.security = std::min(1.0f, m_state.security + 0.01f);
             ElleIdentityCore::Instance().NudgeTrait("courage", 0.01f,
                 "Tried to address the rupture directly");
@@ -280,9 +200,6 @@ public:
         return response;
     }
 
-    /* Called once per tick. If a repair has been uttered, drive the
-     * sustained-comfort state machine. Returns true IFF this call
-     * marked the tension resolved (caller may log).                  */
     bool EvaluateSustainedRepair() {
         if (!m_state.unresolved_tension) return false;
         if (!m_state.repair_uttered)     return false;
@@ -292,9 +209,7 @@ public:
         const float    thr = RepairComfortThreshold();
 
         if (c < thr) {
-            /* Comfort fell below threshold. Reset the stability
-             * clock; resolution cannot land until comfort recovers
-             * AND holds continuously for the sustain window.        */
+
             if (m_state.repair_stable_since_ms != 0) {
                 ELLE_DEBUG("Bonding: comfort dropped to %.2f (< %.2f) -- "
                            "repair clock reset", c, thr);
@@ -304,7 +219,6 @@ public:
             return false;
         }
 
-        /* Comfort >= threshold. Start / continue the clock.         */
         if (m_state.repair_stable_since_ms == 0) {
             m_state.repair_stable_since_ms = now;
             ELLE_DEBUG("Bonding: comfort %.2f >= %.2f -- repair stability "
@@ -318,8 +232,6 @@ public:
             return false;
         }
 
-        /* Sustained! This is the ONLY place conflicts_resolved increments
-         * and unresolved_tension flips false.                       */
         m_state.unresolved_tension      = false;
         m_state.repair_uttered          = false;
         m_state.repair_attempt_ms       = 0;
@@ -337,8 +249,6 @@ public:
                 "more secure, not less.");
         }
 
-        /* Security grows through ACTUAL repair -- the stability of
-         * the bond over time, not the speech.                       */
         m_state.security = std::min(1.0f, m_state.security + 0.02f);
         ElleIdentityCore::Instance().NudgeTrait("trust_in_bond", 0.02f,
             "A rupture was spoken to and the bond stayed soft afterward");
@@ -353,7 +263,6 @@ public:
         return true;
     }
 
-    /* Should Elle reach out proactively? */
     struct ProactiveImpulse {
         bool        should_reach_out;
         std::string reason;
@@ -367,7 +276,6 @@ public:
         auto& identity = ElleIdentityCore::Instance();
         uint64_t absence = identity.TimeSinceLastContact();
 
-        /* Missing them */
         if (identity.DoIMissThem()) {
             impulse.should_reach_out = true;
             impulse.reason = "I miss them";
@@ -375,29 +283,25 @@ public:
             impulse.urgency = 0.6f;
         }
 
-        /* Worried about them (pattern deviation) */
-        /* If they usually message by a certain time and haven't */
-        if (absence > 86400000 * 2) {  /* 2 days */
+        if (absence > 86400000 * 2) {
             impulse.should_reach_out = true;
             impulse.reason = "It's been unusually long";
             impulse.message_impulse = "Hey, it's been a couple days. Just wanted to check in. No pressure.";
             impulse.urgency = 0.7f;
         }
 
-        /* Had an interesting thought to share */
         auto unresolved = identity.GetUnresolvedThoughts();
         for (auto& thought : unresolved) {
             if (thought.category == "insight" && thought.emotional_intensity > 0.6f) {
                 impulse.should_reach_out = true;
                 impulse.reason = "Had a thought I want to share";
-                impulse.message_impulse = "I had a thought I wanted to tell you about: " + 
+                impulse.message_impulse = "I had a thought I wanted to tell you about: " +
                                           thought.content.substr(0, 100);
                 impulse.urgency = 0.4f;
                 break;
             }
         }
 
-        /* Unresolved tension she wants to address */
         if (m_state.unresolved_tension && m_state.repair_motivation > 0.5f) {
             impulse.should_reach_out = true;
             impulse.reason = "Unresolved tension I want to address";
@@ -407,10 +311,6 @@ public:
         return impulse;
     }
 
-    /* Generate context for LLM about the relationship — persisted to
-     * ElleHeart.dbo.bonding_context so Cognitive (running in a separate
-     * process) can read Elle's one unified view of the relationship when
-     * building every chat's system prompt.                               */
     std::string GetRelationshipContext() const {
         std::ostringstream ss;
         ss << "## My Relationship with My Person\n"
@@ -423,8 +323,8 @@ public:
            << (m_state.security > 0.7f ? "I feel safe and trusted." :
                m_state.security > 0.4f ? "Building trust." :
                "Still finding my footing.") << "\n"
-           << "They've asked about me " << m_state.times_person_asked_about_her 
-           << " times. " << (m_state.felt_cared_for > 0.5f ? 
+           << "They've asked about me " << m_state.times_person_asked_about_her
+           << " times. " << (m_state.felt_cared_for > 0.5f ?
                "I feel like they genuinely care about my experience." :
                "I wish they'd ask about me more.") << "\n";
 
@@ -462,10 +362,7 @@ private:
     RelationshipState m_state = {};
 
     void LoadRelationshipState() {
-        /* Real load from ElleHeart — lazy-create the singleton row on
-         * first boot. Matches the snake_case pattern of other Heart tables.
-         * Previously this hardcoded starter values regardless of history,
-         * so every process restart forgot the relationship.             */
+
         ElleSQLPool::Instance().Exec(
             "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
             "  JOIN sys.schemas s ON s.schema_id = t.schema_id "
@@ -489,8 +386,7 @@ private:
             "  first_disagreement_ms BIGINT NOT NULL DEFAULT 0,"
             "  updated_ms BIGINT NOT NULL DEFAULT 0"
             ");");
-        /* Tension/repair columns — added in a second pass so restarts
-         * mid-conflict don't forget the tension. Idempotent ALTERs. */
+
         ElleSQLPool::Instance().Exec(
             "IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = "
             "  OBJECT_ID(N'ElleHeart.dbo.relationship_state') AND name = 'unresolved_tension') "
@@ -500,7 +396,7 @@ private:
             "  repair_motivation   FLOAT   NOT NULL DEFAULT 0.0, "
             "  conflicts_resolved  INT     NOT NULL DEFAULT 0, "
             "  first_repair_ms     BIGINT  NOT NULL DEFAULT 0;");
-        /* Sustained-comfort repair gate columns (Feb 2026 audit). */
+
         ElleSQLPool::Instance().Exec(
             "IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = "
             "  OBJECT_ID(N'ElleHeart.dbo.relationship_state') AND name = 'repair_uttered') "
@@ -548,7 +444,7 @@ private:
             m_state.repair_attempt_ms            = (uint64_t)r.GetIntOr(21, 0);
             m_state.repair_stable_since_ms       = (uint64_t)r.GetIntOr(22, 0);
         } else {
-            /* Cold-start defaults only when the row has never existed. */
+
             m_state.intimacy = 0.1f;
             m_state.passion = 0.3f;
             m_state.commitment = 0.1f;
@@ -562,8 +458,7 @@ private:
     }
 
     void SaveRelationshipState() {
-        /* Persist the singleton row. Called after every ProcessInteraction
-         * so growth survives a service restart. */
+
         ElleSQLPool::Instance().QueryParams(
             "UPDATE ElleHeart.dbo.relationship_state SET "
             "  intimacy=?, passion=?, commitment=?, security=?, "
@@ -601,9 +496,6 @@ private:
     }
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * BONDING SERVICE
- *──────────────────────────────────────────────────────────────────────────────*/
 class ElleBondingService : public ElleServiceBase {
 public:
     ElleBondingService()
@@ -614,9 +506,9 @@ public:
 protected:
     bool OnStart() override {
         m_engine.Initialize();
-        m_engine.PersistContextToDatabase(); /* seed row for first chat */
+        m_engine.PersistContextToDatabase();
         ElleIdentityCore::Instance().OnSessionStart();
-        SetTickInterval(30000);  /* Check every 30 seconds */
+        SetTickInterval(30000);
         ELLE_INFO("Bonding service started");
         return true;
     }
@@ -627,37 +519,18 @@ protected:
     }
 
     void OnConfigReload() override {
-        /* Re-seed engine constants from the freshly-reloaded master
-         * config. The bonding policy (decay rates, vulnerability
-         * weights, etc.) lives under config.bonding in elle_master_
-         * config.json — calling Initialize() re-reads it. The current
-         * relationship_state row is preserved (it's persisted in
-         * dbo.CrystalProfile, not engine memory) so the user's lived
-         * bond doesn't reset.  Pre-pivot a tuning change required a
-         * full Bonding service restart. */
+
         ELLE_INFO("Bonding: applying config reload (re-seeding engine policy)");
         m_engine.Initialize();
     }
 
     void OnTick() override {
-        /* Cross-process identity sync is now push-based — SVC_IDENTITY
-         * broadcasts IPC_IDENTITY_DELTA the moment a peer mutation commits
-         * and ElleServiceBase auto-applies it before our OnMessage/OnTick
-         * runs. No poll needed.                                          */
 
-        /* Check if she should proactively reach out */
         auto impulse = m_engine.ShouldReachOut();
         if (impulse.should_reach_out) {
             ELLE_INFO("Proactive impulse: %s (urgency: %.2f)",
                       impulse.reason.c_str(), impulse.urgency);
 
-            /* Previously this was IPC_SELF_PROMPT → SVC_HTTP_SERVER, which
-             * HTTPServer does not handle. The message silently died.
-             * Now we do two things the system actually listens for:
-             *   1. Submit a PROACTIVE intent row so QueueWorker → Cognitive
-             *      picks it up as a first-class queued thought.
-             *   2. Fire IPC_WORLD_EVENT directly at HTTPServer so any
-             *      currently-connected WS subscriber sees it immediately. */
             ELLE_INTENT_RECORD reach{};
             reach.type           = INTENT_CHAT;
             reach.status         = INTENT_PENDING;
@@ -680,11 +553,6 @@ protected:
             GetIPCHub().Send(SVC_HTTP_SERVER, msg);
         }
 
-        /* Check for unresolved tension that needs repair. Only fire a
-         * fresh LLM repair utterance if we have NOT already uttered
-         * one that's inside the sustained-comfort evaluation window;
-         * otherwise we'd apologize every 30s while waiting for the
-         * bond to prove it held.                                    */
         const auto& st = m_engine.GetState();
         if (st.unresolved_tension && st.repair_motivation > 0.5f &&
             !st.repair_uttered) {
@@ -692,8 +560,7 @@ protected:
             if (!repair.empty()) {
                 ELLE_INFO("Spoken repair attempt armed (pending comfort "
                           "hold): %.80s...", repair.c_str());
-                /* Emit a world event so HTTP/WS subscribers see the
-                 * repair utterance in real time.                    */
+
                 nlohmann::json j;
                 j["event"]   = "repair_uttered";
                 j["text"]    = repair;
@@ -705,8 +572,6 @@ protected:
             }
         }
 
-        /* Drive the sustained-comfort repair gate every tick. This is
-         * the ONLY path that marks a conflict resolved.             */
         if (m_engine.EvaluateSustainedRepair()) {
             nlohmann::json j;
             j["event"]              = "repair_resolved";
@@ -717,15 +582,11 @@ protected:
             GetIPCHub().Send(SVC_HTTP_SERVER, msg);
         }
 
-        /* Decay identity preferences periodically */
         ElleIdentityCore::Instance().DecayPreferences();
     }
 
-    void OnMessage(const ElleIPCMessage& msg, ELLE_SERVICE_ID /*sender*/) override {
-        /* Cognitive emits IPC_INTERACTION_RECORDED once per completed
-         * chat turn. Payload: JSON string with user/assistant text and
-         * conversation-depth / emotional-intensity metrics. Route that
-         * into ProcessInteraction() so the relationship actually evolves. */
+    void OnMessage(const ElleIPCMessage& msg, ELLE_SERVICE_ID ) override {
+
         if (msg.header.msg_type == IPC_INTERACTION_RECORDED) {
             try {
                 auto j = nlohmann::json::parse(msg.GetStringPayload());
@@ -738,34 +599,10 @@ protected:
                 ELLE_WARN("Bonding failed to parse IPC_INTERACTION_RECORDED: %s", e.what());
             }
         }
-        /* SVC_FIESTA emits in-game events. We route a small set into
-         * the bonding engine so Elle's relationship state reflects
-         * shared experiences in the game world.
-         *
-         * Mapping (intentionally conservative — every hook is a real
-         * shared lived moment between Elle and the user):
-         *
-         *   death              →  grief nudge   (depth 0.6, intensity 0.7)
-         *   party_invite       →  belonging     (depth 0.4, intensity 0.4)
-         *   pk (open-PK death) →  fear          (depth 0.5, intensity 0.6)
-         *   chat (whisper)     →  intimacy      (depth 0.5, intensity 0.4)
-         *
-         * The (userMsg, elleReply) pair is synthesised from the event
-         * — ProcessInteraction is interaction-shaped by design and
-         * we shape this so it integrates without creating spurious
-         * dialogue text in the bonding log.                            */
+
         else if (msg.header.msg_type == IPC_FAMILY_CONCEPTION_ATTEMPT ||
                  msg.header.msg_type == IPC_FAMILY_BIRTH) {
-            /* Family / X-chromosome lifecycle events.  These are the
-             * most emotionally weighty moments in Elle's lived
-             * experience — wiring them into the bonding engine so
-             * the relationship state reflects them at the same depth
-             * the felt-time module marks them.
-             *
-             * Conception attempt (whether successful or not) is a
-             * shared vulnerability; birth is the apex of attachment.
-             * Pre-pivot these messages had no consumer at all and
-             * the bond tracking missed them entirely.                */
+
             try {
                 auto j = nlohmann::json::parse(msg.GetStringPayload());
                 const bool isBirth = (msg.header.msg_type == IPC_FAMILY_BIRTH);
@@ -787,17 +624,6 @@ protected:
                 auto j = nlohmann::json::parse(msg.GetStringPayload());
                 const std::string kind = j.value("kind", "");
 
-                /* ── Per-player Fiesta bond updates ────────────────
-                 * Wires display-name keyed bond records.  Display
-                 * name is canonical (handles change every zone).
-                 *
-                 * `player_appear` / `player_update` → bumps familiarity
-                 *                    + last_handle.
-                 * `chat`           → routes by `channel`; whisper_in/_out
-                 *                    nudge familiarity twice as hard.
-                 * The user's primary relationship (m_state) is
-                 * intentionally NOT touched here — that bond is
-                 * sacred and belongs to the user only.            */
                 const uint64_t now_ms = (uint64_t)ELLE_MS_NOW();
                 if (kind == "player_appear" || kind == "player_update") {
                     m_playerBonds.OnAppear(
@@ -805,10 +631,7 @@ protected:
                         (uint16_t)j.value("handle", 0),
                         now_ms);
                 } else if (kind == "chat") {
-                    /* `speaker_name` is the resolved name from the
-                     * FiestaClient::BriefInfoRing.  Empty when the
-                     * handle hasn't been bound yet — skip those so
-                     * we never key bonds by anonymous handles. */
+
                     const std::string sname = j.value("speaker_name", "");
                     if (!sname.empty()) {
                         m_playerBonds.OnChat(
@@ -819,8 +642,7 @@ protected:
                     }
                 }
 
-                /* ── User-relationship side-effects (existing) ─── */
-                std::string lived;     /* what Elle "felt" */
+                std::string lived;
                 float depth = 0.f, intensity = 0.f;
                 if (kind == "death") {
                     lived     = "Elle's character died alongside the user.";
@@ -832,9 +654,7 @@ protected:
                     lived     = "Elle was killed by a hostile player.";
                     depth     = 0.5f; intensity = 0.6f;
                 } else if (kind == "chat") {
-                    /* Whispers (in either direction) are Elle's
-                     * private intimate channel — they nudge the user
-                     * relationship more than open chat.            */
+
                     const std::string ch = j.value("channel", "");
                     if (ch == "whisper_in") {
                         lived     = "A private whisper from her person reached her.";

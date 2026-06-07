@@ -1,21 +1,9 @@
-#!/usr/bin/env python3
-"""
-Generate per-service _<service>serverinfo.txt files matching Fiesta's
-0oneServerInfo.txt / ZoneServerInfo.txt pattern.
-
-Each file:
-  * declares MY_SERVER with the service's canonical name, subdir, ID
-  * #includes the master _ServerInfo.txt for socket / ODBC data
-
-Drop into /app/ElleAnn/9Data/ServerInfo/ alongside the master file.
-"""
 import os, sys
 
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "9Data", "ServerInfo")
 OUT_DIR = os.path.abspath(OUT_DIR)
 os.makedirs(OUT_DIR, exist_ok=True)
 
-# (filename_stem, svc_name, subdir_label, server_id, world, zone)
 SERVICES = [
     ("_QueueWorker",    "PG_Elle_QueueWorker",   "_QueueWorker",    100, 0, 0),
     ("_HTTP",           "PG_Elle_HTTP",          "_HTTP",           101, 0, 0),

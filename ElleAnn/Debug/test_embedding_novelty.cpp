@@ -1,24 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * test_embedding_novelty.cpp — Unit test for the hashed-trigram embedding
- *
- *   Validates three properties the novelty signal relies on:
- *
- *     1. Encode(x) is deterministic — identical input → identical vector.
- *     2. Identical text has cosine == 1.0 (unit-norm → self-dot == 1).
- *     3. Related text has higher cosine than unrelated text
- *        (morphological nearness survives the hashing trick).
- *
- *   This file is intentionally standalone: it only depends on the
- *   embedding library, not the full identity core. It's set up to build
- *   on Linux with g++ for container-side sanity plus on Windows under
- *   the existing Shared vcxproj when added to Debug targets. Not built
- *   in CI yet; invoked manually:
- *
- *     g++ -std=c++17 -O2 -I../Shared \
- *         ../Shared/ElleEmbedding.cpp \
- *         test_embedding_novelty.cpp \
- *         -o test_embedding_novelty && ./test_embedding_novelty
- *══════════════════════════════════════════════════════════════════════════════*/
 #include "ElleEmbedding.h"
 
 #include <cassert>
@@ -43,7 +22,6 @@ static float cosine_of(const std::string& a, const std::string& b) {
 int main() {
     std::printf("ElleEmbedding novelty signal — unit test\n");
 
-    /* 1. Determinism */
     ElleEmbedding v1{}, v2{};
     ElleEmbeddings::Encode("The cat sat on the mat.", v1);
     ElleEmbeddings::Encode("The cat sat on the mat.", v2);
@@ -51,17 +29,14 @@ int main() {
     for (size_t i = 0; i < ELLE_EMBEDDING_DIM; i++) if (v1[i] != v2[i]) { same = false; break; }
     CHECK(same, "Encode is deterministic");
 
-    /* 2. Self-similarity == 1 (unit-norm dot with self) */
     float self = ElleEmbeddings::Cosine(v1, v1);
     CHECK(std::fabs(self - 1.0f) < 1e-5f, "cosine(x, x) == 1.0 for non-empty x");
 
-    /* 3. Empty text produces zero vector, cosine == 0 */
     ElleEmbedding vz{};
     ElleEmbeddings::Encode("", vz);
     float zs = ElleEmbeddings::Cosine(vz, vz);
     CHECK(zs == 0.0f, "Empty text → zero vector → cosine 0");
 
-    /* 4. Morphologically-related text clusters above unrelated */
     float near1 = cosine_of("I love my cat",       "I love cats");
     float near2 = cosine_of("I love my cat",       "My cat is sleeping");
     float far1  = cosine_of("I love my cat",       "Quantum chromodynamics");
@@ -72,7 +47,6 @@ int main() {
     CHECK(near1 > far2,  "related cat-talk > unrelated finance");
     CHECK(near2 > far1,  "related cat-talk #2 > unrelated physics");
 
-    /* 5. Novelty direction: completely-different text has cosine near 0 */
     float disjoint = cosine_of("aaaaaaaaaaaaaaaaaaaa",
                                "The quick brown fox jumps over the lazy dog");
     CHECK(std::fabs(disjoint) < 0.4f, "disjoint content → low cosine magnitude");

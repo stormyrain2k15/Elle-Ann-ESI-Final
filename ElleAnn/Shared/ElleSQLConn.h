@@ -1,9 +1,3 @@
-/*******************************************************************************
- * ElleSQLConn.h — SQL Server Connection Pool via Named Pipes
- * 
- * Manages a pool of SQL Server connections using named pipe transport.
- * Thread-safe, connection recycling, prepared statement caching.
- ******************************************************************************/
 #pragma once
 #ifndef ELLE_SQL_CONN_H
 #define ELLE_SQL_CONN_H
@@ -18,43 +12,25 @@
 #include <functional>
 #include <unordered_map>
 
-/* Forward declare ODBC types to avoid header dependency */
 typedef void* SQLHENV;
 typedef void* SQLHDBC;
 typedef void* SQLHSTMT;
-typedef short SQLRETURN;   /* ODBC return code */
+typedef short SQLRETURN;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SQL RESULT SET
- *──────────────────────────────────────────────────────────────────────────────*/
 struct SQLColumn {
     std::string name;
-    int32_t     type;       /* SQL_C_CHAR, SQL_C_LONG, etc. */
+    int32_t     type;
     uint32_t    size;
 };
 
 struct SQLRow {
     std::vector<std::string> values;
-    
+
     const std::string& operator[](size_t idx) const { return values[idx]; }
 
-    /* Row accessors.
-     *
-     * Policy (Feb 2026 audit, item #20/#76/#121): the silent-default
-     * zero-arg style has been eliminated at the type level. If you
-     * accept a fallback, you state it explicitly with
-     * `GetIntOr(idx, fallback)`. If you need to distinguish missing /
-     * malformed / valid, you use `TryGetInt(idx, out)`. There is no
-     * longer a zero-arg overload that silently returns 0 on bad data;
-     * call sites that would have used it now make the tolerance
-     * visible at the call site.                                        */
     [[nodiscard]] int64_t     GetIntOr(size_t idx, int64_t fallback) const;
     [[nodiscard]] double      GetFloatOr(size_t idx, double fallback) const;
 
-    /* Strict getters — return `false` on NULL, out-of-range, OR
-     * non-numeric contents. Caller reads `outVal` only when the helper
-     * returns true. Prefer these for any code path where a bad cell
-     * should NOT silently become 0/0.0 (audit fields, counters, ids).  */
     bool        TryGetInt(size_t idx, int64_t& outVal) const;
     bool        TryGetFloat(size_t idx, double& outVal) const;
 
@@ -74,9 +50,6 @@ struct SQLResultSet {
     int         ColIndex(const std::string& name) const;
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SQL CONNECTION (single connection wrapper)
- *──────────────────────────────────────────────────────────────────────────────*/
 class SQLConnection {
 public:
     SQLConnection();
@@ -114,40 +87,27 @@ private:
     void FreeHandles();
     std::string GetDiagnostics(int16_t handleType, void* handle);
 
-    /* Shared fetch path for Execute / ExecuteParams. Handles
-     * SUCCESS_WITH_INFO as success and loops SQLGetData on truncation. */
     SQLResultSet CollectStatementResults(SQLHSTMT hStmt, SQLRETURN execRet);
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * SQL CONNECTION POOL
- *──────────────────────────────────────────────────────────────────────────────*/
 class ElleSQLPool {
 public:
     static ElleSQLPool& Instance();
 
     bool Initialize(const std::string& connectionString, uint32_t poolSize = 8);
     void Shutdown();
-    /** Re-build the pool with a fresh connection string (e.g. after the
-     *  operator edited elle_master_config.json's `database` block and
-     *  fired POST /api/admin/config/reload).  Drains in-flight checkouts,
-     *  closes all idle handles, then re-Initialize()s.  Returns true if
-     *  the new pool came up healthy.  Pre-pivot a DB credential edit
-     *  required a full service restart. */
+
     bool Reinitialize(const std::string& connectionString, uint32_t poolSize = 8);
 
-    /* Acquire/Release pattern */
     std::shared_ptr<SQLConnection> Acquire(uint32_t timeoutMs = 5000);
     void Release(std::shared_ptr<SQLConnection> conn);
 
-    /* Convenience: auto-acquire, execute, release */
     SQLResultSet Query(const std::string& sql);
     SQLResultSet QueryParams(const std::string& sql, const std::vector<std::string>& params);
     SQLResultSet CallProc(const std::string& proc, const std::vector<std::string>& params);
     bool         Exec(const std::string& sql);
     int64_t      Scalar(const std::string& sql);
 
-    /* Pool stats */
     uint32_t AvailableConnections() const;
     uint32_t TotalConnections() const { return m_poolSize; }
     uint64_t TotalQueries() const { return m_totalQueries; }
@@ -168,29 +128,20 @@ private:
     bool CreateConnection(std::shared_ptr<SQLConnection>& conn);
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * DATABASE HELPER — High-level operations for Elle-specific tables
- *──────────────────────────────────────────────────────────────────────────────*/
 namespace ElleDB {
 
-    /* Intent Queue */
     bool SubmitIntent(const ELLE_INTENT_RECORD& intent);
     bool GetPendingIntents(std::vector<ELLE_INTENT_RECORD>& out, uint32_t maxCount = 10);
     bool UpdateIntentStatus(uint64_t intentId, ELLE_INTENT_STATUS status, const std::string& response = "");
-    /* Timeout reaper — re-queue intents stuck in PROCESSING past their
-     * TimeoutMs. Returns how many rows were reaped. Rows whose retry_count
-     * exceeds max_retries are marked FAILED instead.                       */
+
     uint32_t ReapStaleIntents(uint32_t defaultTimeoutMs = 120000, uint32_t maxRetries = 3);
 
-    /* Action Queue */
     bool SubmitAction(const ELLE_ACTION_RECORD& action);
     bool GetPendingActions(std::vector<ELLE_ACTION_RECORD>& out, uint32_t maxCount = 10);
     bool UpdateActionStatus(uint64_t actionId, ELLE_ACTION_STATUS status, const std::string& result = "");
-    /* Timeout reaper — re-queue actions stuck in LOCKED/EXECUTING past
-     * their timeout_ms. Rows past max attempts are marked ACTION_TIMEOUT.  */
+
     uint32_t ReapStaleActions(uint32_t defaultTimeoutMs = 60000, uint32_t maxAttempts = 3);
 
-    /* Queue diagnostics — cheap COUNT-style reads for /api/diag/queues.    */
     struct QueueSnapshot {
         uint32_t intent_pending        = 0;
         uint32_t intent_processing     = 0;
@@ -209,48 +160,28 @@ namespace ElleDB {
     };
     bool GetQueueSnapshot(QueueSnapshot& out);
 
-    /* Messages */
-    bool StoreMessage(uint64_t convoId, uint32_t role, const std::string& content, 
+    bool StoreMessage(uint64_t convoId, uint32_t role, const std::string& content,
                       const ELLE_EMOTION_STATE& emotions, float sentiment);
     bool GetConversationHistory(uint64_t convoId, std::vector<ELLE_CONVERSATION_MSG>& out, uint32_t limit = 50);
 
-    /* Memories */
     bool StoreMemory(const ELLE_MEMORY_RECORD& mem);
-    bool RecallMemories(const std::string& query, std::vector<ELLE_MEMORY_RECORD>& out, 
+    bool RecallMemories(const std::string& query, std::vector<ELLE_MEMORY_RECORD>& out,
                         uint32_t maxCount = 10, float minRelevance = 0.3f);
-    /* Newest-first: pulls the `maxCount` LTM rows with the largest
-     * created_ms. Used by MemoryEngine::RecallRecent to merge STM tail +
-     * LTM head into a single chronologically-accurate recent view (the
-     * previous implementation returned only the STM deque tail, which
-     * was misleadingly named — a hot LTM row older than some stale STM
-     * entry would never surface).                                        */
+
     bool RecallRecentLTM(std::vector<ELLE_MEMORY_RECORD>& out, uint32_t maxCount = 10);
     bool UpdateMemoryAccess(uint64_t memId);
     bool PromoteToMTM(uint64_t memId);
     bool PromoteToLTM(uint64_t memId);
     bool ArchiveMemory(uint64_t memId);
 
-    /* X-Chromosome subjective layer — reads the wife's lived-experience
-     * answers written by Lua/scripts/x_subjective.lua into
-     * ElleHeart.dbo.x_subjective. Returns the empty string if the key
-     * has never been filled. See that Lua file for the question list.    */
     std::string GetSubjective(const std::string& key);
 
-    /* Emotions */
     bool StoreEmotionSnapshot(const ELLE_EMOTION_STATE& state);
     bool GetLatestEmotionState(ELLE_EMOTION_STATE& out);
 
-    /* Trust */
     bool UpdateTrust(int32_t delta, const std::string& reason);
     bool GetTrustState(ELLE_TRUST_STATE& out);
 
-    /*──────────────────────────────────────────────────────────────────────
-     * Paired devices — persistent audit of Android (or other companion)
-     * devices that have completed /api/auth/pair. See
-     * SQL/ElleAnn_PairedDevicesDelta.sql for the schema. The HTTP server
-     * keeps an in-memory pairing-code registry for the 5-minute handshake
-     * window; THIS table is the long-lived record.
-     *──────────────────────────────────────────────────────────────────────*/
     struct PairedDeviceRow {
         std::string device_id;
         std::string device_name;
@@ -259,108 +190,69 @@ namespace ElleDB {
         uint64_t    last_seen_ms  = 0;
         bool        revoked       = false;
         uint64_t    revoked_at_ms = 0;
-        std::string jwt_fingerprint;   /* first 32 hex chars of SHA-256(jwt) */
+        std::string jwt_fingerprint;
     };
 
-    /* Upsert a device's pairing row. New devices inherit revoked=0; an
-     * existing device that re-pairs gets its row's ExpiresMs / PairedAtMs
-     * refreshed and Revoked forced back to 0. Idempotent by device_id.    */
     bool UpsertPairedDevice(const PairedDeviceRow& row);
 
-    /* Look up a pairing record by device_id. Returns false when the row
-     * doesn't exist (caller must fail the 401 in that case).              */
     bool GetPairedDevice(const std::string& device_id, PairedDeviceRow& out);
 
-    /* Admin: list paired devices (newest first). Caller controls limit.   */
     bool ListPairedDevices(std::vector<PairedDeviceRow>& out, uint32_t limit = 50);
 
-    /* Admin: mark a device revoked. Sets Revoked=1 and RevokedAtMs=now.   */
     bool RevokePairedDevice(const std::string& device_id);
 
-    /* Touch LastSeenMs — called on every authenticated request once full
-     * JWT verification is wired through the gate. Noop-safe.              */
     bool TouchPairedDeviceLastSeen(const std::string& device_id);
 
-    /*──────────────────────────────────────────────────────────────────────
-     * OPAQUE SESSION TOKENS — ElleSystem.dbo.Sessions
-     *
-     *   Post-Feb-2026 pivot auth: each POST /api/auth/login creates one
-     *   session row with a 64-hex-char token.  Tokens NEVER expire;
-     *   invalidation is by DELETE (explicit logout) or by tUser block/
-     *   delete (checked at gate time).  No JWT, no signing, no secret
-     *   key, no refresh flow — one row per live login.
-     *──────────────────────────────────────────────────────────────────────*/
     struct SessionRow {
-        std::string token;            /* 64 hex chars (32 random bytes) */
+        std::string token;
         int64_t     nUserNo      = 0;
         std::string sUserID;
         std::string sUserName;
-        int32_t     nAuthID      = 0; /* cached from tUser at login     */
+        int32_t     nAuthID      = 0;
         uint64_t    created_ms   = 0;
         uint64_t    last_seen_ms = 0;
         std::string device_name;
         std::string peer_addr;
     };
 
-    /* Create + insert.  Caller supplies the token (opaque string from
-     * ElleCrypto::RandomHex).  Returns false on SQL failure; row is
-     * rejected if a token collision somehow occurs (vanishingly
-     * unlikely for 256-bit random — but explicit > implicit).         */
     bool CreateSession(const SessionRow& row);
 
-    /* Token → row lookup.  Returns false when the token is unknown
-     * (token was logged out, or never existed).                       */
     bool GetSessionByToken(const std::string& token, SessionRow& out);
 
-    /* Best-effort LastSeenMs touch.  Called from the auth gate after
-     * a successful token resolution.  Failure is logged but swallowed
-     * — we don't 5xx a live request over a stats update.              */
     bool TouchSessionLastSeen(const std::string& token);
 
-    /* Explicit logout — delete the row.  Idempotent. */
     bool DeleteSession(const std::string& token);
 
-    /* Mass logout by user (e.g. admin revokes an account).  Returns
-     * rowcount for logging. */
     int  DeleteSessionsForUser(int64_t nUserNo);
 
-    /* Admin listing — for the dev-panel "active sessions" strip. */
     bool ListSessions(std::vector<SessionRow>& out, uint32_t limit = 50);
 
-
-    /* Goals */
     bool StoreGoal(const ELLE_GOAL_RECORD& goal);
-    /* StoreGoal + return the DB-assigned IDENTITY id so callers don't
-     * have to invent their own in-memory id and then desync from the
-     * actual row. Returns 0 on failure.                                 */
+
     uint64_t StoreGoalReturningId(const ELLE_GOAL_RECORD& goal);
     bool UpdateGoalProgress(uint64_t goalId, float progress);
     bool UpdateGoalStatus(uint64_t goalId, uint32_t status);
     bool GetActiveGoals(std::vector<ELLE_GOAL_RECORD>& out);
 
-    /* World Model */
     bool StoreEntity(const ELLE_WORLD_ENTITY& entity);
     bool GetEntity(const std::string& name, ELLE_WORLD_ENTITY& out);
     bool UpdateEntityInteraction(uint64_t entityId);
-    /* Hydrate every persisted entity — used by WorldModel on boot so the
-     * in-memory entity list starts warm instead of cold on every restart. */
+
     bool GetAllEntities(std::vector<ELLE_WORLD_ENTITY>& out);
 
-    /* Memory listing / CRUD (real backing in dbo.memory) */
     struct MemoryRow {
         int64_t id; int type; int tier;
         std::string content; std::string summary;
         float emotional_valence; float importance; float relevance;
         int access_count; uint64_t created_ms; uint64_t last_access_ms;
     };
-    bool ListMemories(std::vector<MemoryRow>& out, int memory_type /* -1 = all */,
+    bool ListMemories(std::vector<MemoryRow>& out, int memory_type ,
                       uint32_t limit, uint32_t offset);
     bool GetMemory(int64_t memId, MemoryRow& out);
     bool DeleteMemory(int64_t memId);
     bool UpdateMemoryContent(int64_t memId, const std::string& content,
                               const std::string& summary, float importance);
 
-    /* Conversations CRUD */
     struct ConversationRow {
         int32_t id; int32_t user_id; std::string title;
         std::string started_at; std::string last_message_at;
@@ -370,17 +262,14 @@ namespace ElleDB {
     bool ListConversations(std::vector<ConversationRow>& out, uint32_t limit = 50);
     bool GetConversation(int32_t convId, ConversationRow& out);
 
-    /* Voice calls */
     bool StartVoiceCall(int32_t user_id, int32_t conv_id, std::string& callId);
     bool EndVoiceCall(const std::string& callId);
 
-    /* Generic counts */
     int64_t CountTable(const std::string& table);
 
-    /* Intimacy layer — reads from prior-system tables */
     struct CrystalProfile {
         bool        found = false;
-        std::string traits;                /* JSON blob */
+        std::string traits;
         std::string vulnerability_patterns;
         std::string comfort_patterns;
         std::string trigger_patterns;
@@ -399,7 +288,7 @@ namespace ElleDB {
         std::string summary;
         std::string unresolved_questions;
     };
-    /* Return up to `limit` unresolved threads ordered by weight desc */
+
     bool GetOpenThreads(std::vector<ElleThread>& out, uint32_t limit = 5);
 
     struct UserPresence {
@@ -412,23 +301,16 @@ namespace ElleDB {
     bool GetUserPresence(int32_t user_id, UserPresence& out);
     bool UpdateUserPresenceOnInteraction(int32_t user_id);
 
-    /* Workers/Services */
     bool RegisterWorker(ELLE_SERVICE_ID svc, const std::string& name);
     bool UpdateWorkerHeartbeat(ELLE_SERVICE_ID svc);
     bool GetWorkerStatuses(std::vector<ELLE_SERVICE_STATUS>& out);
 
-    /* Logging */
     bool WriteLog(ELLE_LOG_LEVEL level, ELLE_SERVICE_ID svc, const std::string& msg);
-    bool GetRecentLogs(std::vector<ELLE_LOG_ENTRY>& out, uint32_t count = 100, 
+    bool GetRecentLogs(std::vector<ELLE_LOG_ENTRY>& out, uint32_t count = 100,
                        ELLE_LOG_LEVEL minLevel = LOG_INFO);
 
-    /* Analytics */
     bool RecordMetric(const std::string& name, double value);
 
-    /*──────────────────────────────────────────────────────────────────────
-     * Education — learned_subjects / education_references / learning_milestones / skills
-     * Ported from legacy Python `app/routers/education.py`.
-     *──────────────────────────────────────────────────────────────────────*/
     struct LearnedSubject {
         int32_t     id = 0;
         std::string subject;
@@ -463,13 +345,13 @@ namespace ElleDB {
         std::string skill_name;
         std::string category;
         int32_t     proficiency = 0;
-        int32_t     learned_from_subject_id = 0;  /* 0 = null */
+        int32_t     learned_from_subject_id = 0;
         int32_t     times_used = 0;
         std::string last_used;
         std::string notes;
     };
     bool ListSubjects(std::vector<LearnedSubject>& out,
-                      const std::string& category /* empty = all */, uint32_t limit = 50);
+                      const std::string& category , uint32_t limit = 50);
     bool GetSubject(int32_t subject_id, LearnedSubject& out);
     bool CreateSubject(const LearnedSubject& in, int32_t& newId);
     bool UpdateSubject(int32_t subject_id, const LearnedSubject& patch,
@@ -478,21 +360,17 @@ namespace ElleDB {
     bool AddSubjectReference(const EducationReference& in);
     bool ListSubjectMilestones(int32_t subject_id, std::vector<LearningMilestone>& out);
     bool AddSubjectMilestone(const LearningMilestone& in);
-    bool ListSkills(std::vector<Skill>& out, const std::string& category /* empty = all */);
+    bool ListSkills(std::vector<Skill>& out, const std::string& category );
     bool CreateSkill(const Skill& in, int32_t& newId);
     bool RecordSkillUse(const std::string& skill_name);
 
-    /*──────────────────────────────────────────────────────────────────────
-     * Video — job queue + avatar registry
-     * Ported from legacy Python `app/services/video_generator.py`.
-     *──────────────────────────────────────────────────────────────────────*/
     struct VideoJob {
         int64_t     id = 0;
         std::string job_uuid;
         std::string text;
         std::string avatar_path;
         int64_t     call_id = 0;
-        std::string status;         /* queued|running|done|failed */
+        std::string status;
         int32_t     progress = 0;
         std::string output_path;
         std::string error;
@@ -503,14 +381,14 @@ namespace ElleDB {
     bool CreateVideoJob(const std::string& text, const std::string& avatar_path,
                         int64_t call_id, VideoJob& out);
     bool GetVideoJob(const std::string& job_uuid, VideoJob& out);
-    bool ClaimNextVideoJob(VideoJob& out);  /* atomic queued→running */
+    bool ClaimNextVideoJob(VideoJob& out);
     bool UpdateVideoJobProgress(const std::string& job_uuid, int32_t progress);
     bool CompleteVideoJob(const std::string& job_uuid, const std::string& output_path);
     bool FailVideoJob(const std::string& job_uuid, const std::string& error);
 
     struct UserAvatar {
         int32_t     id = 0;
-        int32_t     user_id = 0;    /* 0 = unset; RegisterAvatar must fail if unchanged */
+        int32_t     user_id = 0;
         std::string label;
         std::string file_path;
         std::string mime_type;
@@ -520,10 +398,6 @@ namespace ElleDB {
     bool GetDefaultAvatar(int32_t user_id, UserAvatar& out);
     bool ListAvatars(int32_t user_id, std::vector<UserAvatar>& out);
 
-    /*──────────────────────────────────────────────────────────────────────
-     * Dictionary loader state (companion to dictionary_words)
-     * Ported from legacy `dictionary_loader.py` progress tracking.
-     *──────────────────────────────────────────────────────────────────────*/
     struct DictionaryLoaderState {
         std::string status;
         int32_t     loaded = 0;
@@ -542,16 +416,8 @@ namespace ElleDB {
                               const std::string& example);
     int64_t CountDictionaryWords();
 
-    /*──────────────────────────────────────────────────────────────────────
-     * Drives — derived from current emotional snapshot + goal backlog.
-     * Consumed by GoalEngine and SelfPrompt which both previously carried
-     * an always-zero m_drives stub. Single source of truth = the live
-     * EmotionalEngine state (via SQL) + a count of active goals.
-     *──────────────────────────────────────────────────────────────────────*/
     bool DeriveDriveState(ELLE_DRIVE_STATE& out);
 
-    /* Persist the emotional engine's 102-dim state on shutdown so it's
-     * restored on next boot instead of resetting to baseline.             */
     bool PersistEmotionSnapshot(const ELLE_EMOTION_STATE& state);
     bool LoadLatestEmotionSnapshot(ELLE_EMOTION_STATE& out);
 
@@ -561,10 +427,10 @@ namespace ElleDB {
         float       arousal  = 0.0f;
         float       dominance= 0.0f;
     };
-    /* Reads snapshots newer than (now - hours). Chronological order. */
+
     bool GetEmotionHistory(uint32_t hours,
                            std::vector<EmotionHistoryPoint>& out,
                            uint32_t maxPoints = 500);
 }
 
-#endif /* ELLE_SQL_CONN_H */
+#endif

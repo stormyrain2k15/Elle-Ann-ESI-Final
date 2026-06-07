@@ -59,12 +59,11 @@ android {
 }
 
 dependencies {
-    // Core
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
 
-    // Compose BOM — all Compose versions aligned
     val composeBom = platform(libs.compose.bom)
     implementation(composeBom)
     implementation(libs.compose.ui)
@@ -73,35 +72,27 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons)
 
-    // Lifecycle
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.lifecycle.runtime.ktx)
     implementation(libs.lifecycle.process)
     implementation(libs.activity.compose)
 
-    // Navigation
     implementation(libs.navigation.compose)
 
-    // Networking
     implementation(libs.retrofit.core)
     implementation(libs.retrofit.kotlinx.serialization)
     implementation(libs.okhttp.core)
     implementation(libs.okhttp.logging)
 
-    // Security
     implementation(libs.security.crypto)
 
-    // QR scanning
     implementation(libs.zxing.android)
 
-    // Image loading
     implementation(libs.coil.compose)
 
-    // Debug
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)
 
-    // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.espresso.core)

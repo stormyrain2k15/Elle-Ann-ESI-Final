@@ -1,11 +1,7 @@
-/*******************************************************************************
- * ElleTypes.cpp — definitions of cross-module tables declared in ElleTypes.h
- ******************************************************************************/
 #include "ElleTypes.h"
 
-/* Order MUST match enum ELLE_EMOTION_ID exactly. 94 entries. */
 const ELLE_EMOTION_META kEmotionMeta[ELLE_EMOTION_COUNT] = {
-    /* PRIMARY (8) */
+
     {"joy",            "primary"},
     {"sadness",        "primary"},
     {"anger",          "primary"},
@@ -14,7 +10,7 @@ const ELLE_EMOTION_META kEmotionMeta[ELLE_EMOTION_COUNT] = {
     {"surprise",       "primary"},
     {"contempt",       "primary"},
     {"trust",          "primary"},
-    /* SECONDARY (16) */
+
     {"love",           "secondary"},
     {"anticipation",   "secondary"},
     {"disappointment", "secondary"},
@@ -31,7 +27,7 @@ const ELLE_EMOTION_META kEmotionMeta[ELLE_EMOTION_COUNT] = {
     {"despair",        "secondary"},
     {"amusement",      "secondary"},
     {"awe",            "secondary"},
-    /* TERTIARY (32) */
+
     {"curiosity",      "tertiary"},
     {"wonder",         "tertiary"},
     {"nostalgia",      "tertiary"},
@@ -64,7 +60,7 @@ const ELLE_EMOTION_META kEmotionMeta[ELLE_EMOTION_COUNT] = {
     {"confusion",      "tertiary"},
     {"disbelief",      "tertiary"},
     {"ambivalence",    "tertiary"},
-    /* META-COGNITIVE (16) */
+
     {"certainty",           "meta"},
     {"doubt",               "meta"},
     {"insight",             "meta"},
@@ -81,7 +77,7 @@ const ELLE_EMOTION_META kEmotionMeta[ELLE_EMOTION_COUNT] = {
     {"overwhelm",           "meta"},
     {"focus",               "meta"},
     {"distraction",         "meta"},
-    /* SOCIAL (14) */
+
     {"belonging",      "social"},
     {"isolation",      "social"},
     {"empathy",        "social"},
@@ -96,7 +92,7 @@ const ELLE_EMOTION_META kEmotionMeta[ELLE_EMOTION_COUNT] = {
     {"safety",         "social"},
     {"dominance",      "social"},
     {"submission",     "social"},
-    /* EXISTENTIAL (8) */
+
     {"existential_dread",  "existential"},
     {"purpose",            "existential"},
     {"meaninglessness",    "existential"},

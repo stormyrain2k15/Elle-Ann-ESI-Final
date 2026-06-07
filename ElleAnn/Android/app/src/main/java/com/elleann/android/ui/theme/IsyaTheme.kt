@@ -19,7 +19,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.shape.RoundedCornerShape
 
-// ─── Isya Dark Color Scheme (always dark — Isya Night is default) ────────────
 private val IsyaDarkColorScheme = darkColorScheme(
     primary            = IsyaGold,
     onPrimary          = IsyaNight,
@@ -51,9 +50,6 @@ private val IsyaDarkColorScheme = darkColorScheme(
     scrim              = Color(0x99000000uL),
 )
 
-// ─── Typography ──────────────────────────────────────────────────────────────
-// Using system fonts in fantasy-adjacent weights; custom fonts can be
-// dropped into res/font/ and referenced here via FontFamily(Font(...))
 private val IsyaTypography = Typography(
     displayLarge = TextStyle(
         fontFamily = FontFamily.Serif,
@@ -171,7 +167,6 @@ private val IsyaTypography = Typography(
     ),
 )
 
-// ─── Shapes ──────────────────────────────────────────────────────────────────
 private val IsyaShapes = Shapes(
     extraSmall = RoundedCornerShape(4.dp),
     small      = RoundedCornerShape(8.dp),
@@ -180,7 +175,6 @@ private val IsyaShapes = Shapes(
     extraLarge = RoundedCornerShape(24.dp),
 )
 
-// ─── Custom theme extensions ──────────────────────────────────────────────────
 data class IsyaExtendedColors(
     val gold: Color,
     val goldBright: Color,
@@ -227,13 +221,11 @@ private val LocalIsyaColors = staticCompositionLocalOf {
     )
 }
 
-/** Access Isya custom colors: `IsyaTheme.colors.gold` */
 object IsyaTheme {
     val colors: IsyaExtendedColors
         @Composable get() = LocalIsyaColors.current
 }
 
-// ─── Theme composable ─────────────────────────────────────────────────────────
 @Composable
 fun ElleAnnTheme(
     content: @Composable () -> Unit

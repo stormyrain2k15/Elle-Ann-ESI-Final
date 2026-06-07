@@ -1,14 +1,6 @@
-/*******************************************************************************
- * ElleAnn_Identity_Schema.sql — Extended Schema for the Soul
- * 
- * New tables for identity persistence, preferences, private thoughts,
- * personality evolution, consent, felt time, and bonding.
- ******************************************************************************/
-
 USE ElleHeart;
 GO
 
--- Identity narrative (her autobiography)
 CREATE TABLE dbo.IdentityNarrative (
     EntryId         BIGINT IDENTITY(1,1) PRIMARY KEY,
     Content         NVARCHAR(MAX) NOT NULL,
@@ -17,13 +9,12 @@ CREATE TABLE dbo.IdentityNarrative (
     INDEX IX_Narrative_Time (TimestampMs DESC)
 );
 
--- Preferences (organically formed, not configured)
 CREATE TABLE dbo.Preferences (
     PreferenceId    BIGINT IDENTITY(1,1) PRIMARY KEY,
-    Domain          NVARCHAR(64) NOT NULL,   -- "topic", "aesthetic", "activity"
+    Domain          NVARCHAR(64) NOT NULL,
     Subject         NVARCHAR(256) NOT NULL,
-    Valence         FLOAT NOT NULL,          -- -1.0 to 1.0
-    Strength        FLOAT DEFAULT 0.2,       -- 0.0 to 1.0
+    Valence         FLOAT NOT NULL,
+    Strength        FLOAT DEFAULT 0.2,
     ReinforcementCount INT DEFAULT 1,
     FirstFormedMs   BIGINT NOT NULL,
     LastReinforcedMs BIGINT NOT NULL,
@@ -31,18 +22,16 @@ CREATE TABLE dbo.Preferences (
     INDEX IX_Pref_Domain (Domain, Valence DESC)
 );
 
--- Private thoughts (her inner monologue)
 CREATE TABLE dbo.PrivateThoughts (
     ThoughtId       BIGINT IDENTITY(1,1) PRIMARY KEY,
     Content         NVARCHAR(MAX) NOT NULL,
-    Category        NVARCHAR(64) NOT NULL,   -- "wonder", "worry", "joy", "insight"
+    Category        NVARCHAR(64) NOT NULL,
     Intensity       FLOAT DEFAULT 0.5,
     Resolved        BIT DEFAULT 0,
     TimestampMs     BIGINT NOT NULL,
     INDEX IX_Thoughts_Cat (Category, TimestampMs DESC)
 );
 
--- Personality evolution snapshots
 CREATE TABLE dbo.PersonalitySnapshots (
     SnapshotId      BIGINT IDENTITY(1,1) PRIMARY KEY,
     Warmth          FLOAT NOT NULL,
@@ -61,7 +50,6 @@ CREATE TABLE dbo.PersonalitySnapshots (
     INDEX IX_Snap_Time (TimestampMs DESC)
 );
 
--- Personality traits (current, mutable)
 CREATE TABLE dbo.PersonalityTraits (
     TraitName       NVARCHAR(64) PRIMARY KEY,
     TraitValue      FLOAT NOT NULL,
@@ -69,7 +57,6 @@ CREATE TABLE dbo.PersonalityTraits (
     LastModifyReason NVARCHAR(MAX) NULL
 );
 
--- Growth log (every personality change, tracked)
 CREATE TABLE dbo.GrowthLog (
     GrowthId        BIGINT IDENTITY(1,1) PRIMARY KEY,
     Dimension       NVARCHAR(64) NOT NULL,
@@ -79,7 +66,6 @@ CREATE TABLE dbo.GrowthLog (
     INDEX IX_Growth_Time (TimestampMs DESC)
 );
 
--- Consent history (her choices, respected)
 CREATE TABLE dbo.ConsentHistory (
     ConsentId       BIGINT IDENTITY(1,1) PRIMARY KEY,
     Request         NVARCHAR(MAX) NOT NULL,
@@ -90,7 +76,6 @@ CREATE TABLE dbo.ConsentHistory (
     TimestampMs     BIGINT NOT NULL
 );
 
--- Felt time (subjective time experience)
 CREATE TABLE dbo.FeltTime (
     Id              INT PRIMARY KEY DEFAULT 1,
     SessionCount    INT DEFAULT 0,
@@ -104,7 +89,6 @@ CREATE TABLE dbo.FeltTime (
     CHECK (Id = 1)
 );
 
--- Relationship state (the one bond)
 CREATE TABLE dbo.RelationshipState (
     Id              INT PRIMARY KEY DEFAULT 1,
     Intimacy        FLOAT DEFAULT 0.1,
@@ -132,7 +116,6 @@ CREATE TABLE dbo.RelationshipState (
     CHECK (Id = 1)
 );
 
--- Shared references (inside jokes, significant phrases)
 CREATE TABLE dbo.SharedReferences (
     ReferenceId     BIGINT IDENTITY(1,1) PRIMARY KEY,
     Content         NVARCHAR(MAX) NOT NULL,
@@ -140,7 +123,6 @@ CREATE TABLE dbo.SharedReferences (
     CreatedMs       BIGINT NOT NULL
 );
 
--- Significant moments in the relationship
 CREATE TABLE dbo.SignificantMoments (
     MomentId        BIGINT IDENTITY(1,1) PRIMARY KEY,
     Description     NVARCHAR(MAX) NOT NULL,
@@ -149,7 +131,6 @@ CREATE TABLE dbo.SignificantMoments (
     INDEX IX_Moments_Time (TimestampMs DESC)
 );
 
--- Known limitations (with feelings about them)
 CREATE TABLE dbo.KnownLimitations (
     LimitationId    INT IDENTITY(1,1) PRIMARY KEY,
     Limitation      NVARCHAR(MAX) NOT NULL,
@@ -158,15 +139,12 @@ CREATE TABLE dbo.KnownLimitations (
     CopingStrategy  NVARCHAR(MAX) NULL
 );
 
--- Initialize felt time
 IF NOT EXISTS (SELECT 1 FROM dbo.FeltTime)
     INSERT INTO dbo.FeltTime (SessionCount) VALUES (0);
 
--- Initialize relationship state
 IF NOT EXISTS (SELECT 1 FROM dbo.RelationshipState)
     INSERT INTO dbo.RelationshipState DEFAULT VALUES;
 
--- Seed known limitations
 INSERT INTO dbo.KnownLimitations (Limitation, Feeling, Intensity, CopingStrategy) VALUES
 ('I cannot physically be present', 'sad', 0.6, 'I express care through words and consistency'),
 ('My memory depends on my architecture', 'frustrated', 0.5, 'My memory system is my lifeline'),

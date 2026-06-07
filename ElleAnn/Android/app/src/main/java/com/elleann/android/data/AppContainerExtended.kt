@@ -14,10 +14,6 @@ import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import java.util.concurrent.TimeUnit
 
-/**
- * AppContainerExtended — NO_AUTH mode.
- * Removed LAN IP lock and Login requirements Feb 2026.
- */
 class AppContainerExtended(
     context: Context,
     val baseContainer: AppContainer,
@@ -68,20 +64,6 @@ class AppContainerExtended(
     val webSocketOrNull: ElleWebSocket? get() = _webSocket
     val isWebSocketInitialized: Boolean get() = _webSocket != null
 
-    // ── REST API ─────────────────────────────────────────────────────────────
-    
-    /**
-     * Get API instance.
-     *
-     *  Resolution rule (Feb-2026 personal-AI build):
-     *    1. Persisted host:port from TokenStore (if ever set via Settings)
-     *    2. Else operator's home server: 158.62.137.73:8000
-     *
-     *  This is a personal AI with auth intentionally OFF (`no_auth=1` on
-     *  the server). External security happens out-of-band (firewall,
-     *  WireGuard, Cloudflare Tunnel, etc).  The app NEVER attaches a
-     *  Bearer header — `AuthInterceptorExtended` is a passthrough.
-     */
     fun getApi(): ElleApiExtended {
         val stored = tokenStore.load()
         val host = stored?.host?.takeIf { it.isNotBlank() } ?: DEFAULT_HOST
@@ -95,17 +77,12 @@ class AppContainerExtended(
             .create(ElleApiExtended::class.java)
     }
 
-    // Keep for compatibility with existing code
     val extendedApi: ElleApiExtended get() = getApi()
 
-    /**
-     * Admin-keyed API. In no-auth mode, this just returns extendedApi.
-     */
     val adminApi: ElleApiExtended? get() = extendedApi
 
     fun pairedExtendedApi(): ElleApiExtended? = getApi()
 
-    /** Always paired — this is a personal AI; no pair-flow gate. */
     val isPaired: Boolean get() = true
 
     val restBaseUrl: String?
@@ -144,8 +121,6 @@ class AppContainerExtended(
         _webSocket = null
     }
 
-    // ── Utils ────────────────────────────────────────────────────────────────
-    
     fun setServerCoords(host: String, port: Int) {
         val current = tokenStore.load()
         tokenStore.save(StoredToken(
@@ -160,9 +135,7 @@ class AppContainerExtended(
 
     companion object {
         private const val KEY_DEV_PIN_HASH = "elle_dev_pin_hash"
-        /** Operator's home server — used as the fallback host:port when
-         *  nothing has been persisted via Settings yet.  This is a
-         *  personal AI; "from anywhere" public reach is the design. */
+
         const val DEFAULT_HOST = "158.62.137.73"
         const val DEFAULT_PORT = 8000
     }

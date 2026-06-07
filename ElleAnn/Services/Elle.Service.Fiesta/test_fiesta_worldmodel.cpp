@@ -1,20 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * test_fiesta_worldmodel.cpp — Phase 6b-Alpha regression test.
- *
- *   Drives the headless WorldModel through the lifecycle a real Fiesta
- *   session produces, and asserts the JSON snapshot reports what
- *   Cognitive will see on `{"op":"get_world"}`.
- *
- *   Scope: WorldModel ONLY — independent of Client / Connection /
- *   cipher, so this test compiles and runs on Linux with no Windows
- *   shim needed (uses only <mutex>, <chrono>, nlohmann/json).
- *
- *   Compile (Linux portable):
- *     g++ -std=c++17 -I . -I ../../Shared \
- *         Services/Elle.Service.Fiesta/test_fiesta_worldmodel.cpp \
- *         -o /tmp/test_fiesta_worldmodel
- *══════════════════════════════════════════════════════════════════════════════*/
-
 #include "FiestaWorldModel.h"
 
 #include <cassert>
@@ -43,7 +26,6 @@ static void test_player_upsert_then_remove() {
     auto j = w.SnapshotJson();
     assert(j["entities"].size() == 2);
 
-    /* Names survive the round-trip and the kind is "player". */
     bool sawCrystal = false, sawBob = false;
     for (const auto& e : j["entities"]) {
         assert(e["kind"] == "player");
@@ -65,15 +47,13 @@ static void test_mob_carries_mob_id() {
     auto& e = j["entities"][0];
     assert(e["kind"]   == "mob");
     assert(e["mob_id"] == 5012);
-    /* Mobs don't carry a name — snapshot should omit the field cleanly. */
+
     assert(!e.contains("name"));
     std::fprintf(stderr, "[PASS] mob carries mob_id (no name)\n");
 }
 
 static void test_mob_then_player_same_handle() {
-    /* Server reuses handles after REGEN — a mob handle can later be a
-     * player (or the opposite) when the slot cycles. Upsert must replace
-     * kind + fields, not merge stale ones. */
+
     WorldModel w;
     w.UpsertMob(0x3000, 4242);
     w.UpsertPlayer(0x3000, "Reused");
@@ -122,17 +102,7 @@ static void test_self_handle_update() {
 }
 
 static void test_full_session_simulation() {
-    /* Walk through a realistic capture order:
-     *   1. SEED_ACK → SetLoginState("login_connecting")
-     *   2. CHAR_BASE_CMD (self) → UpdateSelfBase
-     *   3. MAP_LOGINCOMPLETE_CMD → SetLoginState("in_game")
-     *   4. BRIEFINFO login_character (Crystal)
-     *   5. BRIEFINFO login_character (Bob)
-     *   6. REGEN_MOB goblin
-     *   7. MoveTo(100,200) — self position
-     *   8. BRIEFINFO briefinfo_delete Crystal leaves
-     *   9. get_world snapshot → Bob + goblin + us at (100,200) on RouN
-     */
+
     WorldModel w;
     w.SetLoginState("login_connecting");
     w.UpdateSelfBase(5, "ElleAnn");
@@ -155,7 +125,6 @@ static void test_full_session_simulation() {
     assert(j["zone"]["map"]       == "RouN");
     assert(j["entities"].size()   == 2);
 
-    /* Verify Crystal is gone, Bob + goblin remain. */
     bool sawBob = false, sawGoblin = false;
     for (const auto& e : j["entities"]) {
         const std::string name = e.value("name", std::string(""));

@@ -1,28 +1,5 @@
 package com.elleann.android.ui.shneditor
 
-/*══════════════════════════════════════════════════════════════════════════════
- * SHNDiffView.kt — unified diff between an in-memory SHN and a server copy.
- *
- *   Purpose
- *   -------
- *   Before hitting "Save to server", the operator can preview exactly what
- *   rows will change.  The diff is row-keyed by column[0] if it looks like
- *   a primary key (integer-typed), otherwise by row index.
- *
- *   Output kinds
- *   ------------
- *     Added    — row exists in local but not server (new row you inserted)
- *     Removed  — row exists in server but not local (row you deleted)
- *     Changed  — same key, at least one cell differs
- *     Same     — skipped from the rendered list
- *
- *   Wire-up
- *   -------
- *   SHNScreen shows a "Diff" icon next to "Save to server" once a file is
- *   open; tapping fetches `GET /api/shn/get` for the same (root, name),
- *   parses with the active encoding, and hands both sides to this view.
- *══════════════════════════════════════════════════════════════════════════════*/
-
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -45,15 +22,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.elleann.android.ui.theme.*
 
-/* Row-level diff kind. */
 enum class DiffKind { Added, Removed, Changed }
 
 data class DiffRow(
     val kind:         DiffKind,
     val key:          String,
-    val localCells:   List<String>,     // empty for Removed
-    val serverCells:  List<String>,     // empty for Added
-    /** Column indices whose cells differ; empty for Added/Removed.      */
+    val localCells:   List<String>,
+    val serverCells:  List<String>,
+
     val changedCols:  Set<Int>,
 )
 
@@ -62,16 +38,13 @@ data class DiffSummary(
     val removed: Int,
     val changed: Int,
     val rows:    List<DiffRow>,
-    /** Columns that exist on only one side — flagged so the operator
-     *  doesn't assume cell-level diffs cover a schema change.           */
+
     val columnSchemaDelta: String?,
 )
 
 private fun pickKey(row: List<Any>, cols: List<SHNColumn>): String {
     if (cols.isEmpty() || row.isEmpty()) return ""
-    /* Prefer column[0] if it's an integer type (Fiesta data tables almost
-     * universally lead with an ID). Otherwise fall back to a joined hash
-     * of all cells — stable and still deterministic.                    */
+
     val c0 = cols[0]
     val isIntKey = c0.type.toInt() in
         listOf(1, 2, 3, 11, 12, 13, 20, 0x10, 0x12, 0x15, 0x16, 0x1b)
@@ -89,8 +62,6 @@ fun computeDiff(local: SHNFile, server: SHNFile): DiffSummary {
     val out = mutableListOf<DiffRow>()
     var added = 0; var removed = 0; var changed = 0
 
-    /* Schema delta — simple name list compare. Different column types or
-     * different column order at the same index is also a schema delta.  */
     val schemaDelta: String? = run {
         val ln = local.columns.map  { "${it.name}:${it.type.toInt()}" }
         val sn = server.columns.map { "${it.name}:${it.type.toInt()}" }
@@ -100,8 +71,6 @@ fun computeDiff(local: SHNFile, server: SHNFile): DiffSummary {
              "(first diff at col ${ln.zip(sn).indexOfFirst { it.first != it.second }})"
     }
 
-    /* Added / Changed — iterate local first so the display order matches
-     * what the operator sees in the editor.                              */
     for ((k, lrow) in localByKey) {
         val srow = serverByKey[k]
         if (srow == null) {
@@ -118,8 +87,7 @@ fun computeDiff(local: SHNFile, server: SHNFile): DiffSummary {
             for (i in 0 until n) {
                 if (lrow[i].toString() != srow[i].toString()) diffs.add(i)
             }
-            /* If the two rows have different lengths (schema delta), mark
-             * every trailing index so the operator sees the full picture.*/
+
             if (lrow.size != srow.size) {
                 for (i in n until maxOf(lrow.size, srow.size)) diffs.add(i)
             }
@@ -135,7 +103,6 @@ fun computeDiff(local: SHNFile, server: SHNFile): DiffSummary {
         }
     }
 
-    /* Removed — whatever's on server but not local. */
     for ((k, srow) in serverByKey) {
         if (!localByKey.containsKey(k)) {
             removed++
@@ -153,8 +120,6 @@ fun computeDiff(local: SHNFile, server: SHNFile): DiffSummary {
         rows = out, columnSchemaDelta = schemaDelta,
     )
 }
-
-// ─── UI ──────────────────────────────────────────────────────────────────────
 
 @androidx.compose.runtime.Composable
 fun SHNDiffView(
@@ -201,8 +166,6 @@ fun SHNDiffView(
             return@Column
         }
 
-        /* Header row with column names so the colour-highlighted cells
-         * are readable at a glance.                                     */
         Row(
             Modifier.fillMaxWidth().horizontalScroll(hScroll)
                 .border(1.dp, IsyaMuted.copy(alpha = 0.2f))
@@ -243,10 +206,6 @@ fun SHNDiffView(
                     })
                     DiffCell(dr.key, 80.dp, IsyaGold)
 
-                    /* For Changed rows, render the local value but colour
-                     * the diffing cells so the operator spots them
-                     * instantly. For Added, show local; for Removed,
-                     * show server. */
                     when (dr.kind) {
                         DiffKind.Added -> {
                             dr.localCells.forEach { cell ->

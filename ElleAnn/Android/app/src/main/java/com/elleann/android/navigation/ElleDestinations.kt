@@ -9,10 +9,6 @@ import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.ui.graphics.vector.ImageVector
 
-/**
- * Top-level navigation destinations for the bottom navigation bar.
- * Each corresponds to one of the 5 main tabs.
- */
 sealed class TopLevelDestination(
     val route: String,
     val icon: ImageVector,
@@ -49,34 +45,29 @@ sealed class TopLevelDestination(
     }
 }
 
-/** All named routes in the app */
 object ElleRoutes {
-    // Top-level tabs
+
     const val ELLE   = "elle"
     const val CHAT   = "chat"
     const val MEMORY = "memory"
     const val WORLD  = "world"
     const val DEV    = "dev"
 
-    // Auth — kept for legacy deeplink references; no_auth mode never navigates here.
     const val PAIR   = "pair"
 
-    // Chat sub-screens
-    const val CONVERSATION_LIST = "chat/conversations"  // alias for CHAT, retained for deeplinks
+    const val CONVERSATION_LIST = "chat/conversations"
     const val CHAT_SCREEN       = "chat/conversation/{conversationId}"
     const val VIDEO_CALL        = "chat/video/{callId}"
 
     fun chatScreen(conversationId: Long) = "chat/conversation/$conversationId"
     fun videoCall(callId: Long) = "chat/video/$callId"
 
-    // Memory sub-screens
-    const val MEMORY_SPACE   = "memory/space"           // alias for MEMORY, retained for deeplinks
+    const val MEMORY_SPACE   = "memory/space"
     const val MEMORY_BROWSER = "memory/browser"
     const val MEMORY_DETAIL  = "memory/detail/{memoryId}"
 
     fun memoryDetail(memoryId: Long) = "memory/detail/$memoryId"
 
-    // World sub-screens (all nested under world)
     const val WORLD_GOALS         = "world/goals"
     const val WORLD_THOUGHTS      = "world/thoughts"
     const val WORLD_INNER_LIFE    = "world/inner-life"
@@ -96,7 +87,6 @@ object ElleRoutes {
 
     fun worldSubjectDetail(subjectId: Int) = "world/learning/subject/$subjectId"
 
-    // Dev sub-screens
     const val DEV_DASHBOARD     = "dev/dashboard"
     const val DEV_LOGS          = "dev/logs"
     const val DEV_SERVICES      = "dev/services"
@@ -118,7 +108,6 @@ object ElleRoutes {
     const val DEV_SHN_EDITOR    = "dev/shn-editor"
     const val DEV_PIN           = "dev/pin"
 
-    // Settings
     const val SETTINGS          = "settings"
     const val SETTINGS_ADMIN_KEY = "settings/admin-key"
     const val SETTINGS_COLOR_CODE = "settings/color-code"

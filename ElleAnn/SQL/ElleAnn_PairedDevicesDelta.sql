@@ -1,28 +1,3 @@
-/*******************************************************************************
- * ElleAnn_PairedDevicesDelta.sql — Device Pairing Audit Delta
- *
- * Creates ElleCore.dbo.PairedDevices to persist the set of Android (or other
- * companion) devices that have successfully completed the /api/auth/pair
- * handshake. Each row is the authoritative record of:
- *
- *     - which device_id was paired
- *     - when it was paired (PairedAtMs)
- *     - which issuance expires when (ExpiresMs)
- *     - whether the token has been revoked (Revoked)
- *
- * The HTTP server's in-memory pairing-code registry is transient — codes are
- * generated, consumed once, and discarded. This table is the persistent
- * record that survives restarts and answers questions like:
- *
- *     - "list every device that has ever paired" (audit)
- *     - "revoke device X going forward"         (ops)
- *     - "when was this device last reissued?"   (forensics)
- *
- * Companion to the JWT path in Services/Elle.Service.HTTP/HTTPServer.cpp
- * (/api/auth/pair, /api/auth/pair-code).
- *
- * Idempotent — uses IF NOT EXISTS guards throughout.
- ******************************************************************************/
 USE ElleCore;
 GO
 
@@ -39,17 +14,11 @@ BEGIN
         LastSeenMs      BIGINT        NULL,
         Revoked         BIT           NOT NULL DEFAULT 0,
         RevokedAtMs     BIGINT        NULL,
-        JwtFingerprint  NVARCHAR(64)  NOT NULL   /* SHA-256(jwt) hex, first
-                                                  * 32 chars — enough for
-                                                  * lookup, not enough to
-                                                  * reconstruct the token.   */
+        JwtFingerprint  NVARCHAR(64)  NOT NULL
     );
 END
 GO
 
-/* Index by PairedAtMs for chronological audit listings. Revoked devices
- * tend to be at the tail of the range; filtered index keeps the hot path
- * (active devices) cheap.                                                 */
 IF NOT EXISTS (
     SELECT 1 FROM sys.indexes
     WHERE name = 'IX_PairedDevices_Active_PairedAtMs'

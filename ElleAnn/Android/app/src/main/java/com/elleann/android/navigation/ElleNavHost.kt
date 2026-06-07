@@ -32,10 +32,6 @@ import com.elleann.android.data.models.ShnSaveRequest
 import kotlinx.coroutines.launch
 import android.util.Base64 as AndroidBase64
 
-/**
- * ElleNavHost — root navigation graph.
- * Login page removed Feb 2026 for no_auth / injected identity mode.
- */
 @Composable
 fun ElleNavHost(
     container: AppContainer,
@@ -47,16 +43,11 @@ fun ElleNavHost(
 ) {
     val navController = rememberNavController()
 
-    /* Personal AI — no pairing flow.  Cold start ALWAYS lands on the
-     * main Elle scaffold; the configured host falls back to the
-     * operator-supplied default (158.62.137.73:8000) when nothing's
-     * persisted yet.  Pair screen is reachable from Settings if ever
-     * needed, but never a forced gate.                               */
     NavHost(
         navController    = navController,
         startDestination = ElleRoutes.ELLE,
     ) {
-        // ── Main scaffold with bottom nav ─────────────────────────────────────
+
         composable(ElleRoutes.ELLE) {
             MainScaffold(
                 container         = container,
@@ -68,7 +59,6 @@ fun ElleNavHost(
             )
         }
 
-        // Settings overlay
         composable(ElleRoutes.SETTINGS) {
             SettingsScreen(
                 containerExtended = containerExtended,
@@ -97,9 +87,6 @@ fun ElleNavHost(
     }
 }
 
-/**
- * MainScaffold — the persistent bottom-nav shell containing all 5 tabs.
- */
 @Composable
 private fun MainScaffold(
     container: AppContainer,
@@ -111,7 +98,6 @@ private fun MainScaffold(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
 
-    // Dev PIN state
     var devUnlocked by remember { mutableStateOf(!containerExtended.hasDevPin()) }
 
     Scaffold(
@@ -154,7 +140,6 @@ private fun MainScaffold(
     }
 }
 
-/** Navigation graph for the tab content area */
 @Composable
 private fun TabNavHost(
     navController: NavHostController,
@@ -172,12 +157,10 @@ private fun TabNavHost(
         modifier         = modifier,
     ) {
 
-        // ── ELLE TAB ──────────────────────────────────────────────────────────
         composable(ElleRoutes.ELLE) {
             val ws = containerExtended.webSocketOrNull
             if (ws == null) {
-                // If WS isn't ready, we show a button to retry or connect.
-                // In no_auth mode, we just need the host configured.
+
                 ConnectionNotReadyScreen(onRetry = { containerExtended.reconnectWebSocketIfNeeded() })
                 return@composable
             }
@@ -189,7 +172,6 @@ private fun TabNavHost(
             )
         }
 
-        // ── CHAT TAB ──────────────────────────────────────────────────────────
         composable(ElleRoutes.CHAT) {
             ConversationListScreen(
                 containerExtended = containerExtended,
@@ -226,7 +208,6 @@ private fun TabNavHost(
             )
         }
 
-        // ── MEMORY TAB ────────────────────────────────────────────────────────
         composable(ElleRoutes.MEMORY) {
             MemoryBrowserScreen(
                 containerExtended = containerExtended,
@@ -257,7 +238,6 @@ private fun TabNavHost(
             )
         }
 
-        // ── WORLD TAB ─────────────────────────────────────────────────────────
         composable(ElleRoutes.WORLD) {
             WorldScreen(
                 containerExtended = containerExtended,
@@ -265,7 +245,7 @@ private fun TabNavHost(
                 onSettings        = onSettings,
             )
         }
-        // World sub-screens
+
         composable(ElleRoutes.WORLD_GOALS)         { GoalsSection(containerExtended, { navController.popBackStack() }) }
         composable(ElleRoutes.WORLD_THOUGHTS)      { ThoughtsSection(containerExtended, { navController.popBackStack() }) }
         composable(ElleRoutes.WORLD_INNER_LIFE)    { PrivateInnerLifeSection(containerExtended, { navController.popBackStack() }) }
@@ -303,7 +283,6 @@ private fun TabNavHost(
             XChronicleSection(containerExtended, ws, { navController.popBackStack() })
         }
 
-        // ── DEV TAB ───────────────────────────────────────────────────────────
         composable("${ElleRoutes.DEV}_pin") {
             DevPinScreen(
                 containerExtended = containerExtended,

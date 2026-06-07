@@ -3,25 +3,12 @@ package com.elleann.android.data.models
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-// ════════════════════════════════════════════════════════════════════════════
-// MEMORY MODELS
-// Source: ElleAnn_MemoryDelta.sql + ElleTypes.h + HTTPServer.cpp
-// ════════════════════════════════════════════════════════════════════════════
-
-/**
- * Memory type integers as written to SQL.
- * NOTE: Cognitive writes type=1 (episodic); Memory engine writes MEM_EPISODIC=0.
- * Both 0 and 1 represent episodic/human memories. Dream writes type=0 (zero-init).
- * All types shown in 3D space EXCEPT working memory (if present).
- * Content prefix "[Dream insight]" distinguishes dream entries at type=0.
- */
 object MemoryType {
-    const val EPISODIC_OR_DREAM = 0  // Memory engine + Dream service default
-    const val EPISODIC_COGNITIVE = 1 // Cognitive engine explicit
+    const val EPISODIC_OR_DREAM = 0
+    const val EPISODIC_COGNITIVE = 1
     const val SEMANTIC           = 2
     const val PROCEDURAL         = 3
 
-    /** Types to SHOW in 3D space and browser — all meaningful human/internal memories */
     val showInSpace = setOf(EPISODIC_OR_DREAM, EPISODIC_COGNITIVE, SEMANTIC, PROCEDURAL)
 
     fun isDreamContent(content: String): Boolean =
@@ -29,10 +16,10 @@ object MemoryType {
 }
 
 object MemoryTier {
-    const val STM     = 0 // Short-term, RAM
-    const val BUFFER  = 1 // Working buffer (MemoryDelta uses 1=STM, 2=MTM — check runtime)
-    const val LTM     = 2 // Long-term, SQL
-    const val ARCHIVE = 3 // Deep storage
+    const val STM     = 0
+    const val BUFFER  = 1
+    const val LTM     = 2
+    const val ARCHIVE = 3
 }
 
 @Serializable
@@ -70,8 +57,6 @@ data class SelfImageResponse(
     @SerialName("updated_at") val updatedAt: String = "",
 )
 
-// ── Memory file attach ──────────────────────────────────────────────────────
-/** POST /api/memory/{id}/files — attach a file (path or bytes b64) to a memory */
 @Serializable
 data class AttachFileRequest(
     @SerialName("file_path") val filePath: String? = null,
@@ -79,11 +64,6 @@ data class AttachFileRequest(
     @SerialName("mime_type") val mimeType: String? = null,
     @SerialName("file_b64")  val fileB64:  String? = null,
 )
-
-// ════════════════════════════════════════════════════════════════════════════
-// EMOTION MODELS
-// Source: EmotionHistory, /api/emotions, /api/emotional-context/*
-// ════════════════════════════════════════════════════════════════════════════
 
 @Serializable
 data class EmotionDimension(
@@ -136,17 +116,11 @@ data class EmotionGrowthResponse(
     val growth: List<Map<String, Float>> = emptyList(),
 )
 
-// ── Emotion dimension manual set ────────────────────────────────────────────
-/** PUT /api/emotions/dimensions/{name} — manually set a dimension's value */
 @Serializable
 data class SetEmotionDimensionRequest(
     val value:    Float,
     val baseline: Float? = null,
 )
-
-// ════════════════════════════════════════════════════════════════════════════
-// CONVERSATION & CHAT MODELS
-// ════════════════════════════════════════════════════════════════════════════
 
 @Serializable
 data class Conversation(
@@ -167,7 +141,7 @@ data class ConversationListResponse(
 data class Message(
     @SerialName("message_id") val messageId: Long = 0L,
     @SerialName("conversation_id") val conversationId: Long,
-    val role: Int, // 0=system, 1=user, 2=elle, 3=internal
+    val role: Int,
     val content: String,
     @SerialName("timestamp_ms") val timestampMs: Long,
     @SerialName("emotion_snapshot") val emotionSnapshot: String? = null,
@@ -215,17 +189,12 @@ data class InteractionRequest(
     val kind: String = "interaction",
 )
 
-// ════════════════════════════════════════════════════════════════════════════
-// VIDEO MODELS
-// Source: video_jobs + user_avatars SQL tables, C:\elle\videogen output dir
-// ════════════════════════════════════════════════════════════════════════════
-
 @Serializable
 data class VideoJob(
     @SerialName("job_id") val jobId: String,
     val id: Long = 0L,
-    val status: String,          // queued | running | done | failed
-    val progress: Int = 0,       // 0..100
+    val status: String,
+    val progress: Int = 0,
     @SerialName("output_path") val outputPath: String? = null,
     val error: String? = null,
     @SerialName("avatar_path") val avatarPath: String? = null,
@@ -236,11 +205,7 @@ data class VideoJob(
     val isDone: Boolean get() = status == "done"
     val isFailed: Boolean get() = status == "failed"
     val isRunning: Boolean get() = status == "running" || status == "queued"
-    /** REST URL to retrieve the completed video file. Pre-pivot this
-     *  pointed at the port-8080 Apache stripe; post-pivot the C++ HTTP
-     *  service serves the mp4 directly on the main paired port, so
-     *  callers pass the same `restBase` (host:port) they use for
-     *  every other API call. */
+
     fun videoUrl(restBase: String): String? =
         if (isDone) "$restBase/api/video/file/$jobId" else null
 }
@@ -279,18 +244,13 @@ data class VideoCallSession(
     @SerialName("started_ms") val startedMs: Long,
 )
 
-// ════════════════════════════════════════════════════════════════════════════
-// GOAL MODELS
-// Source: Goals table, /api/goals
-// ════════════════════════════════════════════════════════════════════════════
-
 @Serializable
 data class Goal(
     val id: Long,
     val description: String,
     val progress: Float = 0f,
-    val status: Int = 0,       // 0=active, 1=paused, 2=completed, 3=failed, 4=abandoned
-    val priority: Int = 2,     // 0=critical, 1=high, 2=medium, 3=low, 4=idle
+    val status: Int = 0,
+    val priority: Int = 2,
     val motivation: Float = 0.8f,
     @SerialName("deadline_ms") val deadlineMs: Long = 0L,
     @SerialName("created_ms") val createdMs: Long = 0L,
@@ -306,15 +266,11 @@ data class Goal(
 @Serializable
 data class GoalListResponse(val goals: List<Goal> = emptyList())
 
-// ════════════════════════════════════════════════════════════════════════════
-// AI / SELF-PROMPT MODELS
-// ════════════════════════════════════════════════════════════════════════════
-
 @Serializable
 data class SelfPrompt(
     val id: Long,
     val prompt: String,
-    val source: String = "",     // open NVARCHAR(64) — accumulates at runtime
+    val source: String = "",
     @SerialName("created_ms") val createdMs: Long,
 )
 
@@ -365,10 +321,6 @@ data class AnalyzeEmotionResponse(
     val dominant_emotion: String = "",
 )
 
-// ════════════════════════════════════════════════════════════════════════════
-// AGENT MODELS
-// ════════════════════════════════════════════════════════════════════════════
-
 @Serializable
 data class Agent(
     val id: Int = 0,
@@ -393,10 +345,6 @@ data class CreateAgentRequest(
 @Serializable
 data class AgentChatRequest(val message: String)
 
-// ════════════════════════════════════════════════════════════════════════════
-// TOOL MODELS
-// ════════════════════════════════════════════════════════════════════════════
-
 @Serializable
 data class AiTool(
     val id: Int = 0,
@@ -416,10 +364,6 @@ data class CreateToolRequest(
     val description: String? = null,
     val config: String? = null,
 )
-
-// ════════════════════════════════════════════════════════════════════════════
-// HARDWARE ACTION MODELS
-// ════════════════════════════════════════════════════════════════════════════
 
 @Serializable
 data class HardwareInfo(
@@ -455,11 +399,6 @@ data class CompleteHardwareActionRequest(
     val result: String? = null,
     val error: String? = null,
 )
-
-// ════════════════════════════════════════════════════════════════════════════
-// EDUCATION MODELS
-// Source: learned_subjects, education_references, learning_milestones, skills
-// ════════════════════════════════════════════════════════════════════════════
 
 @Serializable
 data class LearnedSubject(
@@ -513,10 +452,6 @@ data class Skill(
 @Serializable
 data class SkillListResponse(val skills: List<Skill> = emptyList())
 
-// ════════════════════════════════════════════════════════════════════════════
-// DICTIONARY MODELS
-// ════════════════════════════════════════════════════════════════════════════
-
 @Serializable
 data class DictionaryWord(
     val id: Long = 0L,
@@ -544,10 +479,6 @@ data class DictionaryLoadStatus(
     @SerialName("last_word") val lastWord: String? = null,
     val progress: Float = 0f,
 )
-
-// ════════════════════════════════════════════════════════════════════════════
-// MODEL SLOT MODELS
-// ════════════════════════════════════════════════════════════════════════════
 
 @Serializable
 data class ModelSlot(
@@ -591,10 +522,6 @@ data class TokenCacheStats(
     @SerialName("hit_rate") val hitRate: Float = 0f,
 )
 
-// ════════════════════════════════════════════════════════════════════════════
-// MORALS MODEL
-// ════════════════════════════════════════════════════════════════════════════
-
 @Serializable
 data class MoralRule(
     val id: Int,
@@ -612,10 +539,6 @@ data class CreateMoralRuleRequest(
     val category: String? = null,
     @SerialName("is_hard_rule") val isHardRule: Boolean = false,
 )
-
-// ════════════════════════════════════════════════════════════════════════════
-// SERVER MODELS
-// ════════════════════════════════════════════════════════════════════════════
 
 @Serializable
 data class ServerStatus(
@@ -654,7 +577,7 @@ data class UpdateSettingsRequest(
 @Serializable
 data class LogEntry(
     val id: Long,
-    val level: Int,    // 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR, 4=FATAL
+    val level: Int,
     val service: Int,
     val message: String,
     @SerialName("created_ms") val createdMs: Long,
@@ -705,9 +628,6 @@ data class DiagRoutesResponse(
     val count: Int = 0,
 )
 
-// ── /api/diag/wires ──────────────────────────────────────────────────────────
-
-/** One row per peer service this HTTP process has exchanged IPC with. */
 @Serializable
 data class DiagWireRow(
     val service: String,
@@ -715,7 +635,7 @@ data class DiagWireRow(
     @SerialName("pipe_name") val pipeName: String = "",
     @SerialName("last_seen_ms") val lastSeenMs: Long = 0L,
     @SerialName("quiet_minutes") val quietMinutes: Long = 0L,
-    /** "up" / "stale" / "unknown" — human-readable. */
+
     val state: String = "unknown",
 )
 
@@ -726,15 +646,13 @@ data class DiagWiresResponse(
     val wires: List<DiagWireRow> = emptyList(),
 )
 
-// ── /api/diag/heartbeats ─────────────────────────────────────────────────────
-
 @Serializable
 data class DiagHeartbeatRow(
     @SerialName("service_id") val serviceId: Long = 0L,
     @SerialName("last_hb_ms") val lastHbMs: Long = 0L,
     @SerialName("quiet_sec")  val quietSec: Long = 0L,
     val healthy: Boolean = false,
-    /** "up" / "stale" / "down". */
+
     val state: String = "down",
 )
 
@@ -744,8 +662,6 @@ data class DiagHeartbeatsResponse(
     val heartbeats: List<DiagHeartbeatRow> = emptyList(),
 )
 
-// ── /api/diag/health ─────────────────────────────────────────────────────────
-
 @Serializable
 data class DiagHealthLLM(
     val provider: String = "",
@@ -753,7 +669,6 @@ data class DiagHealthLLM(
     val healthy: Boolean = false,
 )
 
-/** Aggregated system status — what the Health Banner consumes. */
 @Serializable
 data class DiagHealthResponse(
     @SerialName("ts_ms") val tsMs: Long = 0L,
@@ -765,11 +680,9 @@ data class DiagHealthResponse(
     @SerialName("intent_pending")  val intentPending: Long = 0L,
     @SerialName("action_pending")  val actionPending: Long = 0L,
     @SerialName("memory_count")    val memoryCount: Long = 0L,
-    /** Human-readable issue strings — empty when healthy. */
+
     val issues: List<String> = emptyList(),
 )
-
-// ── /api/memory/why ──────────────────────────────────────────────────────────
 
 @Serializable
 data class MemoryWhyHit(
@@ -806,26 +719,12 @@ data class PairedDevice(
 @Serializable
 data class PairedDevicesResponse(val devices: List<PairedDevice> = emptyList())
 
-// ════════════════════════════════════════════════════════════════════════════
-// SESSION
-// ════════════════════════════════════════════════════════════════════════════
-
 @Serializable
 data class SessionGreeting(
     val id: Long,
     val greeting: String,
 )
 
-/**
- * Response shape for GET /api/me — Feb 2026 pivot.
- *
- *   user_id              → tUser.nUserNo (canonical user id across services)
- *   username             → tUser.sUserID (the in-game login)
- *   device_id            → ANDROID_ID this paired with
- *   pairedAt / lastSeen  → ISO timestamps from PairedDevices
- *   authoritativeSource  → always "Account.dbo.tUser" (proof we no longer
- *                          ship a redundant ElleCore.Users table)
- */
 @Serializable
 data class MeResponse(
     @SerialName("user_id")              val userId:              Int = 0,
@@ -836,14 +735,6 @@ data class MeResponse(
     @SerialName("authoritative_source") val authoritativeSource: String = "",
 )
 
-/**
- * Cold-open recap — GET /api/me/recap.
- *
- *   "Since you last opened the app" tuple. Backed by 5 cheap SQL hits
- *   on the Elle side, designed so the home screen feels alive on
- *   resume instead of dead.  Fields are nullable / zero-valued when
- *   nothing is interesting; the UI hides empty rows.
- */
 @Serializable
 data class RecapResponse(
     @SerialName("user_id")               val userId:               Int = 0,
@@ -858,12 +749,6 @@ data class RecapResponse(
     @SerialName("open_threads")          val openThreads:          Long = 0,
     @SerialName("top_thread")            val topThread:            String = "",
 )
-
-// ════════════════════════════════════════════════════════════════════════════
-// X-CHROMOSOME MODELS
-// Source: ElleAnn_XChromosome_Schema.sql + /api/x/* routes
-// All routes are AUTH_USER (fail-closed default) — pairing is the gate
-// ════════════════════════════════════════════════════════════════════════════
 
 @Serializable
 data class XState(
@@ -964,11 +849,6 @@ data class LogSymptomRequest(
 data class CycleAnchorRequest(
     @SerialName("anchor_ms") val anchorMs: Long,
 )
-
-// ════════════════════════════════════════════════════════════════════════════
-// IDENTITY MODELS (Apache endpoints — no REST routes exist)
-// Source: identity_* SQL tables in ElleAnn_MemoryDelta.sql
-// ════════════════════════════════════════════════════════════════════════════
 
 @Serializable
 data class PrivateThought(
@@ -1080,17 +960,11 @@ data class ConsentLogEntry(
 @Serializable
 data class ConsentLogResponse(val log: List<ConsentLogEntry> = emptyList())
 
-
-// ════════════════════════════════════════════════════════════════════════════
-// TYPED REQUEST MODELS +20: replace weakly-typed maps/full-objects
-// ════════════════════════════════════════════════════════════════════════════
-
-/** Use this instead of passing full Memory object to POST /api/memory/ */
 @Serializable
 data class CreateMemoryRequest(
     val content: String,
-    @SerialName("memory_type") val memoryType: Int = 1,    // 1 = episodic (Cognitive convention)
-    val tier: Int = 2,                                      // 2 = LTM
+    @SerialName("memory_type") val memoryType: Int = 1,
+    val tier: Int = 2,
     val importance: Float = 0.5f,
     val summary: String? = null,
     @SerialName("user_id") val userId: Int? = null,
@@ -1098,29 +972,23 @@ data class CreateMemoryRequest(
     val tags: List<String> = emptyList(),
 )
 
-/** Typed video call start request */
 @Serializable
 data class StartVideoCallRequest(
     @SerialName("conversation_id") val conversationId: Long? = null,
     @SerialName("user_id") val userId: Int = 1,
 )
 
-
-/** Typed model for POST /api/x/conception/attempt */
 @Serializable
 data class AttemptConceptionRequest(
     val method: String? = null,
     val notes: String? = null,
 )
 
-/** Typed model for POST /api/x/pregnancy/accelerate */
 @Serializable
 data class AcceleratePregnancyRequest(
     val days: Int = 1,
 )
 
-// ── Learning subjects + milestones ──────────────────────────────────────────
-/** POST /api/learning/subjects — register a new learning subject */
 @Serializable
 data class CreateSubjectRequest(
     val name:        String,
@@ -1129,7 +997,6 @@ data class CreateSubjectRequest(
     val priority:    Float = 0.5f,
 )
 
-/** PATCH /api/learning/subjects/{id} — update fields */
 @Serializable
 data class UpdateSubjectRequest(
     val name:        String? = null,
@@ -1139,7 +1006,6 @@ data class UpdateSubjectRequest(
     val status:      String? = null,
 )
 
-/** POST /api/learning/subjects/{id}/milestones — add a milestone */
 @Serializable
 data class CreateMilestoneRequest(
     val title:       String,
@@ -1147,7 +1013,6 @@ data class CreateMilestoneRequest(
     @SerialName("target_date") val targetDate: String? = null,
 )
 
-/** POST /api/learning/subjects/{id}/references — add a reference URL */
 @Serializable
 data class CreateReferenceRequest(
     val url:         String,
@@ -1155,7 +1020,6 @@ data class CreateReferenceRequest(
     val description: String? = null,
 )
 
-/** POST /api/learning/skills — register a new skill */
 @Serializable
 data class CreateSkillRequest(
     val name:        String,
@@ -1164,8 +1028,6 @@ data class CreateSkillRequest(
     val proficiency: Float = 0f,
 )
 
-// ── Dictionary loader ───────────────────────────────────────────────────────
-/** POST /api/dictionary/load — bulk-load a dictionary file from disk */
 @Serializable
 data class LoadDictionaryRequest(
     val path:    String? = null,
@@ -1173,8 +1035,6 @@ data class LoadDictionaryRequest(
     val replace: Boolean = false,
 )
 
-// ── Model workers ───────────────────────────────────────────────────────────
-/** POST /api/models/workers — register a model-execution worker */
 @Serializable
 data class CreateModelWorkerRequest(
     val name:    String,
@@ -1185,26 +1045,9 @@ data class CreateModelWorkerRequest(
     @SerialName("api_key") val apiKey: String? = null,
 )
 
-// ── Pair request (companion app pairing) ────────────────────────────────────
-/** POST /api/auth/pair — typed companion-app pairing payload. */
 @Serializable
 data class PairRequest(
-    /* Mode A (legacy): admin issues a 6-digit code via /api/auth/pair-code,
-     * the device redeems it. `code` is the only credential.
-     *
-     * Mode B (game-account, Feb 2026): the device signs in with the
-     * user's actual game account — the same `sUserID`/`sUserPW` they
-     * use for the Fiesta client. Server authenticates against
-     * `Account.dbo.tUser`, then mints a JWT bound to this device.
-     * `code` is ignored (send "" or omit).
-     *
-     * Pick ONE of:
-     *   - set `code` (6 digits)     → Mode A
-     *   - set `gameUser + gamePass` → Mode B
-     *
-     * The backend's /api/auth/pair handler accepts both shapes on the
-     * same endpoint (Feb 2026 unification), so there's no separate
-     * "login" route the device has to learn. */
+
     val code:                                 String = "",
     @SerialName("device_name") val deviceName: String,
     @SerialName("device_id")   val deviceId:   String,
@@ -1212,14 +1055,6 @@ data class PairRequest(
     @SerialName("game_pass")   val gamePass:   String? = null,
 )
 
-/**
- * POST /api/auth/login — canonical auth endpoint post Feb 2026.
- *
- * Sends the user's game-account credentials straight to
- * `Account.dbo.tUser` (via `usp_GetLogin`); receives an opaque 64-hex
- * session token that never expires.  See ElleAnn_Sessions_Delta.sql
- * for the server-side storage.
- */
 @Serializable
 data class LoginRequest(
     val username: String,
@@ -1227,10 +1062,6 @@ data class LoginRequest(
     @SerialName("device_id")   val deviceId:   String? = null,
     @SerialName("device_name") val deviceName: String? = null,
 )
-
-// ════════════════════════════════════════════════════════════════════════════
-// COMMON RESPONSE WRAPPERS
-// ════════════════════════════════════════════════════════════════════════════
 
 @Serializable
 data class OkResponse(val ok: Boolean = true)
@@ -1241,22 +1072,16 @@ data class ErrorEnvelope(
     val details: String? = null,
 )
 
-/** Sealed class for network operation results */
 sealed class ApiResult<out T> {
     data class Success<T>(val data: T) : ApiResult<T>()
     data class Error(val message: String, val code: Int = 0) : ApiResult<Nothing>()
     data object Loading : ApiResult<Nothing>()
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// SHN EDITOR MODELS
-// Source: Services/Elle.Service.HTTP/HTTPServer.cpp /api/shn/* routes
-// ════════════════════════════════════════════════════════════════════════════
-
 @Serializable
 data class ShnSaveRequest(
-    val root: String,                       // "Hero" | "ReSystem"
-    val name: String,                       // <file>.shn — single path segment
+    val root: String,
+    val name: String,
     @SerialName("bytes_b64") val bytesB64: String,
 )
 

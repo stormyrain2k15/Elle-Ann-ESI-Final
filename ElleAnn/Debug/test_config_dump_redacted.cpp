@@ -1,16 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * test_config_dump_redacted.cpp — verifies ElleConfig::DumpJsonRedacted
- *   strips the standard sensitive-key set + preserves structure.
- *
- *   Compile:
- *     g++ -std=c++17 -Wall -Wextra -Werror \
- *         -I /app/ElleAnn/Debug/_winstub \
- *         -I /app/ElleAnn/Shared \
- *         test_config_dump_redacted.cpp -o tcdr
- *══════════════════════════════════════════════════════════════════════════════*/
-/* The real logger pulls in <windows.h> via ElleTypes.h. The _winstub
- * windows.h handles that. We don't need to override the ELLE_* macros
- * — the real logger is header-inline and works on Linux too. */
 #include <string>
 
 #include "/app/ElleAnn/Shared/ElleConfig.h"
@@ -26,7 +13,7 @@ static int g_fails = 0;
 } while (0)
 
 int main() {
-    /* Write a fixture, load defaults + layer it. */
+
     const char* fixture = R"JSON({
         "llm": {
             "primary_provider": "groq",
@@ -57,14 +44,12 @@ int main() {
     std::string dump = ElleConfig::Instance().DumpJsonRedacted();
     CHECK(!dump.empty(), "dump non-empty");
 
-    /* SECRETS — must NOT appear. */
     CHECK(dump.find("sk-LIVE-SECRET-1") == std::string::npos, "groq api_key redacted");
     CHECK(dump.find("sk-LIVE-SECRET-2") == std::string::npos, "openai api_key redacted");
     CHECK(dump.find("ADMIN-SECRET-XYZ") == std::string::npos, "admin_key redacted");
     CHECK(dump.find("JWT-SECRET-XYZ")   == std::string::npos, "jwt_secret redacted");
     CHECK(dump.find("REAL-PWD")         == std::string::npos, "fiesta.password redacted");
 
-    /* Non-secrets — MUST survive. */
     CHECK(dump.find("\"primary_provider\"") != std::string::npos, "key preserved");
     CHECK(dump.find("\"groq\"")             != std::string::npos, "string value preserved");
     CHECK(dump.find("\"127.0.0.1\"")        != std::string::npos, "host preserved");

@@ -1,49 +1,5 @@
 package com.elleann.android.ui.shneditor
 
-/*══════════════════════════════════════════════════════════════════════════════
- * SHNScreen.kt — SHN file editor screen for Elle-Ann Android app.
- *
- *   Port of SHNDecryptor v4.7 (C#) `SHNFile.cs` — Fiesta Online .shn binary
- *   data table editor. Reads, edits, and saves Fiesta data tables on the fly.
- *
- *   Round-trips through the Elle HTTP service under:
- *     GET  /api/shn/list?root=Hero|ReSystem        — enumerate server-side files
- *     GET  /api/shn/get?root=...&name=...          — fetch bytes (base64)
- *     POST /api/shn/save {root,name,bytes_b64}     — persist edits
- *
- *   Files live under <exe_dir>\9Data\Hero\ (server-side data tables) and
- *   <exe_dir>\ReSystem\ (client-side data tables — at repo root, NOT
- *   under 9Data — per the Fiesta client's on-disk layout).  See
- *   Services/Elle.Service.HTTP/HTTPServer.cpp for the server contract.
- *
- *   SHN binary layout:
- *     [0x20]  CryptHeader (opaque — preserved bit-exact on save)
- *     [4]     Total encrypted length (including CryptHeader + this field)
- *     [N]     XOR-encrypted payload
- *
- *   Payload (after decrypt):
- *     uint32  Header
- *     uint32  RecordCount
- *     uint32  DefaultRecordLength     (must equal 2 + Σ col.length)
- *     uint32  ColumnCount
- *     for each column:
- *       char[0x30]  Name (null-terminated, zero-padded)
- *       uint32      Type
- *       int32       Length
- *     for each record:
- *       uint16      Row length prefix
- *       [columns]   Binary-packed column data
- *
- *   Type table (canonical SHNFile.cs):
- *     1,12,0x10 → byte      2 → UInt16    3,11,0x12,0x1b → UInt32
- *     5 → float             13,0x15 → Int16             0x16 → Int32
- *     20 → SByte            9,0x18 → fixed-len string    0x1a → null-term string
- *
- *   Decrypt (symmetric): walk from end, XOR each byte with a rolling key
- *   that's a function of position and a moving key byte seeded from the
- *   payload length. Same routine encrypts and decrypts.
- *══════════════════════════════════════════════════════════════════════════════*/
-
 import android.net.Uri
 import android.util.Base64 as AndroidBase64
 import android.widget.Toast
@@ -89,8 +45,6 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.Charset
 
-// ─── Data model ──────────────────────────────────────────────────────────────
-
 data class SHNColumn(
     val name:   String,
     val type:   UInt,
@@ -105,11 +59,6 @@ data class SHNFile(
     val defaultRecordLength: UInt           = 0u,
 )
 
-/**
- * Supported text encodings for string-typed columns.
- * Canonical SHN Editor uses `Program.eT` — Western forks typically set
- * windows-1252; Korean Fiesta uses EUC-KR; CN fork uses GB2312.
- */
 enum class SHNEncoding(val displayName: String, val charsetName: String) {
     WIN1252   ("Windows-1252 (Western)", "windows-1252"),
     UTF8      ("UTF-8",                  "UTF-8"),
@@ -121,12 +70,10 @@ enum class SHNEncoding(val displayName: String, val charsetName: String) {
                              catch (_: Exception) { Charsets.ISO_8859_1 }
 }
 
-// ─── State ───────────────────────────────────────────────────────────────────
-
 data class SHNState(
     val file:         SHNFile?    = null,
     val fileName:     String      = "",
-    val serverRoot:   String      = "Hero",     // "Hero" | "ReSystem"
+    val serverRoot:   String      = "Hero",
     val loading:      Boolean     = false,
     val saving:       Boolean     = false,
     val error:        String?     = null,
@@ -139,11 +86,9 @@ data class SHNState(
     val serverFiles:  List<String> = emptyList(),
     val showBrowser:  Boolean     = false,
     val diffSummary:  DiffSummary? = null,
-    /** Server history for the currently-loaded file. Newest-first.   */
+
     val history:      List<com.elleann.android.data.models.ShnHistoryEntry> = emptyList(),
 )
-
-// ─── Decrypt / Encrypt (symmetric) — canonical SHNFile.cs:Decrypt ───────────
 
 private fun shnCrypt(data: ByteArray) {
     if (data.isEmpty()) return
@@ -158,8 +103,6 @@ private fun shnCrypt(data: ByteArray) {
         key = k
     }
 }
-
-// ─── Binary reader helpers ────────────────────────────────────────────────────
 
 private fun ByteBuffer.readFixedString(len: Int, charset: Charset): String {
     val bytes = ByteArray(len)
@@ -178,8 +121,6 @@ private fun ByteBuffer.readNullTermString(charset: Charset): String {
     }
     return String(buf.toByteArray(), charset)
 }
-
-// ─── Parse ───────────────────────────────────────────────────────────────────
 
 private fun parseSHN(raw: ByteArray, charset: Charset): SHNFile {
     if (raw.size < 0x28) throw IllegalArgumentException("File too small (<0x28 bytes)")
@@ -211,9 +152,6 @@ private fun parseSHN(raw: ByteArray, charset: Charset): SHNFile {
         SHNColumn(name, type, len)
     }
 
-    /* Record-length sanity check — canonical SHNFile.cs:139 throws
-     * "Wrong record length!" on mismatch. Matches the 2-byte row
-     * prefix + sum of column lengths.                                    */
     val expectedRecLen = 2u + columns.sumOf { it.length.toUInt() }
     if (expectedRecLen != defRecLen) {
         throw IllegalArgumentException(
@@ -222,7 +160,7 @@ private fun parseSHN(raw: ByteArray, charset: Charset): SHNFile {
     }
 
     val rows = (0u until recordCount).map {
-        bb.short // row length prefix — skip
+        bb.short
         columns.map { col ->
             when (col.type.toInt()) {
                 1, 12, 0x10       -> bb.get().toUByte().toLong()
@@ -248,8 +186,6 @@ private fun parseSHN(raw: ByteArray, charset: Charset): SHNFile {
     )
 }
 
-// ─── Serialize back to SHN bytes ─────────────────────────────────────────────
-
 private fun serializeSHN(file: SHNFile, charset: Charset): ByteArray {
     val payloadOut = ByteArrayOutputStream()
     fun writeLE32(out: ByteArrayOutputStream, v: Int) {
@@ -274,9 +210,7 @@ private fun serializeSHN(file: SHNFile, charset: Charset): ByteArray {
 
     writeLE32(payloadOut, file.header.toInt())
     writeLE32(payloadOut, file.rows.size)
-    /* Recompute DefaultRecordLength from current columns so column
-     * create/delete/edit round-trips correctly — matches canonical
-     * SHNFile.cs:GetDefaultRecLen().                                    */
+
     val newDefRecLen = 2 + file.columns.sumOf { it.length }
     writeLE32(payloadOut, newDefRecLen)
     writeLE32(payloadOut, file.columns.size)
@@ -288,10 +222,9 @@ private fun serializeSHN(file: SHNFile, charset: Charset): ByteArray {
         writeLE32(payloadOut, col.length)
     }
 
-    /* Rows — compute & backfill the 2-byte length prefix per row.     */
     for (row in file.rows) {
         val rowBuf = ByteArrayOutputStream()
-        writeLE16(rowBuf, 0) // placeholder
+        writeLE16(rowBuf, 0)
         for ((col, value) in file.columns.zip(row)) {
             when (col.type.toInt()) {
                 1, 12, 0x10       -> rowBuf.write((value as? Long ?: 0L).toInt() and 0xFF)
@@ -314,7 +247,7 @@ private fun serializeSHN(file: SHNFile, charset: Charset): ByteArray {
     }
 
     val payload = payloadOut.toByteArray()
-    shnCrypt(payload)  // encrypt == decrypt (symmetric)
+    shnCrypt(payload)
 
     val result = ByteArrayOutputStream()
     result.write(file.cryptHeader)
@@ -323,8 +256,6 @@ private fun serializeSHN(file: SHNFile, charset: Charset): ByteArray {
     result.write(payload)
     return result.toByteArray()
 }
-
-// ─── CSV export (canonical SHNFile.cs:exportCVS) ─────────────────────────────
 
 private fun exportCsv(file: SHNFile, rows: List<List<Any>>): String {
     val sb = StringBuilder()
@@ -341,8 +272,6 @@ private fun exportCsv(file: SHNFile, rows: List<List<Any>>): String {
     }
     return sb.toString()
 }
-
-// ─── ViewModel ───────────────────────────────────────────────────────────────
 
 class SHNViewModel : ViewModel() {
 
@@ -392,12 +321,6 @@ class SHNViewModel : ViewModel() {
                 _editRows.clear(); file.rows.forEach { _editRows.add(it.toMutableList()) }
                 _editColumns.clear(); _editColumns.addAll(file.columns)
 
-                /* Auto-detect mismatched encoding — if the first
-                 * string-typed column's first row decodes mostly to
-                 * non-printable bytes, the active encoding is wrong.
-                 * Surface a clear banner so the operator switches
-                 * BEFORE editing & saving (silent re-encode would
-                 * otherwise corrupt the file).                          */
                 val mismatch = detectEncodingMismatch(file)
                 _state.update { it.copy(
                     loading = false, file = file, fileName = name,
@@ -414,10 +337,6 @@ class SHNViewModel : ViewModel() {
         }
     }
 
-    /* Heuristic: scan the first 8 rows' first string-typed column. If
-     * >40% of decoded chars are non-printable / replacement (U+FFFD),
-     * the active encoding is almost certainly wrong.  Returns null when
-     * no string column exists or sample looks fine.                    */
     private fun detectEncodingMismatch(file: SHNFile): String? {
         val strColIdx = file.columns.indexOfFirst {
             it.type.toInt() in listOf(9, 0x18, 0x1a)
@@ -452,9 +371,6 @@ class SHNViewModel : ViewModel() {
     fun setStatus(text: String?, ok: Boolean = false) =
         _state.update { it.copy(statusBanner = text, statusIsOk = ok) }
 
-    /* Compare the current in-memory edit state against a freshly-parsed
-     * server copy of the same file. Called from the SHNScreen "Diff"
-     * button — see the server-browser flow in SHNScreen for the fetch.*/
     fun computeAndShowDiff(serverBytes: ByteArray) {
         val enc = _state.value.encoding.charset()
         viewModelScope.launch {
@@ -520,7 +436,7 @@ class SHNViewModel : ViewModel() {
     fun addColumn(name: String, type: UInt, length: Int) {
         if (name.isBlank()) return
         _editColumns.add(SHNColumn(name, type, length))
-        // default value per row
+
         val defaultVal: Any = when (type.toInt()) {
             5 -> 0.0; 9, 0x18, 0x1a -> ""; else -> 0L
         }
@@ -543,8 +459,6 @@ class SHNViewModel : ViewModel() {
         )}
     }
 
-    /* Bulk column rename — cheap rename, no value change. Mirrors
-     * canonical `columnRename`.                                          */
     fun renameColumn(idx: Int, newName: String) {
         if (idx !in _editColumns.indices || newName.isBlank()) return
         val old = _editColumns[idx]
@@ -556,9 +470,6 @@ class SHNViewModel : ViewModel() {
         )}
     }
 
-    /* Bulk multiply/divide — applies a numeric operation to every row's
-     * cell in [colIdx]. Mirrors canonical `columnMultiply`/`columnDivide`.
-     * Skips string-typed columns. Multiply/divide-by-zero is rejected.   */
     enum class BulkOp { Multiply, Divide, Add, Set }
 
     fun bulkOpColumn(colIdx: Int, op: BulkOp, factorStr: String): String? {
@@ -589,10 +500,6 @@ class SHNViewModel : ViewModel() {
         return null
     }
 
-    /* SQL export — generates a CREATE TABLE + INSERT script for the
-     * current file. Mirrors canonical `SHNFile.CreateSQL`. The table
-     * name defaults to the filename stem; types are mapped to SQL
-     * Server equivalents (Fiesta's deploy target).                     */
     fun sqlExport(): String? {
         val file = snapshotFile() ?: return null
         val tableName = state.value.fileName.removeSuffix(".shn").ifBlank { "shn_table" }
@@ -604,8 +511,8 @@ class SHNViewModel : ViewModel() {
         file.columns.forEachIndexed { i, col ->
             val sqlType = when (col.type.toInt()) {
                 1, 12, 0x10  -> "TINYINT"
-                2            -> "SMALLINT"   // unsigned 16
-                3, 11, 0x12, 0x1b -> "BIGINT"// unsigned 32 → BIGINT to keep range
+                2            -> "SMALLINT"
+                3, 11, 0x12, 0x1b -> "BIGINT"
                 5            -> "REAL"
                 13, 0x15     -> "SMALLINT"
                 0x16         -> "INT"
@@ -688,8 +595,6 @@ class SHNViewModel : ViewModel() {
     }
 }
 
-// ─── Screen ──────────────────────────────────────────────────────────────────
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SHNScreen(
@@ -707,11 +612,7 @@ fun SHNScreen(
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
         val name = uri.lastPathSegment?.substringAfterLast('/') ?: "unknown.shn"
-        /* Read the bytes SYNCHRONOUSLY inside .use{} — the previous version
-         * launched a coroutine inside the .use block, which let .use{}
-         * close the stream BEFORE the coroutine read from it on the IO
-         * dispatcher.  Result: every "Local file" pick failed silently
-         * with a closed-stream IOException (or empty parse).            */
+
         val bytes: ByteArray? = runCatching {
             ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
         }.getOrNull()
@@ -756,13 +657,11 @@ fun SHNScreen(
     }
 
     var addColDialog  by remember { mutableStateOf(false) }
-    var bulkOpDialog  by remember { mutableStateOf<Int?>(null) }   // colIdx
-    var renameColDialog by remember { mutableStateOf<Int?>(null) } // colIdx
+    var bulkOpDialog  by remember { mutableStateOf<Int?>(null) }
+    var renameColDialog by remember { mutableStateOf<Int?>(null) }
     var pendingSaveToServer by remember { mutableStateOf(false) }
     var pendingSaveToDevice by remember { mutableStateOf(false) }
 
-    /* Refresh server history whenever the loaded filename changes — gives
-     * the operator the "last saved 2h ago by admin" line under the title. */
     LaunchedEffect(state.fileName) {
         if (api != null && state.fileName.isNotEmpty()) {
             runCatching { api.historySHN(state.fileName, 5) }
@@ -781,18 +680,10 @@ fun SHNScreen(
                 },
                 actions  = {
                     if (state.file != null) {
-                        // Save to server
+
                         if (onSaveToServer != null) {
                             IconButton(onClick = {
-                                /* CANONICAL-PARITY GUARD: SHN string columns
-                                 * are encoded via the active SHNEncoding.
-                                 * If the operator opens an EUC-KR file with
-                                 * Win1252 (default), all string cells decode
-                                 * as garbled Latin-1 — and saving re-encodes
-                                 * with Win1252, permanently corrupting the
-                                 * file.  We surface a one-tap confirm so the
-                                 * encoding choice is explicit before we
-                                 * touch bytes on the server.                */
+
                                 pendingSaveToServer = true
                             }, enabled = !state.saving) {
                                 if (state.saving)
@@ -801,7 +692,7 @@ fun SHNScreen(
                                     Icon(Icons.Rounded.CloudUpload, "Save to server", tint = IsyaMagic)
                             }
                         }
-                        // Diff against server
+
                         if (api != null) {
                             IconButton(onClick = {
                                 scope.launch {
@@ -842,7 +733,7 @@ fun SHNScreen(
                             Icon(Icons.Rounded.AddCircleOutline, "Add row", tint = IsyaSuccess)
                         }
                     }
-                    // Server browser
+
                     if (api != null) {
                         IconButton(onClick = {
                             scope.launch {
@@ -858,7 +749,7 @@ fun SHNScreen(
                             Icon(Icons.Rounded.CloudDownload, "Browse server", tint = IsyaMagic)
                         }
                     }
-                    // Open local file
+
                     IconButton(onClick = { filePicker.launch("*/*") }) {
                         Icon(Icons.Rounded.FolderOpen, "Open SHN", tint = IsyaCream)
                     }
@@ -868,7 +759,6 @@ fun SHNScreen(
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
 
-            // Root + encoding picker strip
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -908,7 +798,6 @@ fun SHNScreen(
                 }
             }
 
-            // Status
             state.error?.let { IsyaErrorState(it) }
             state.statusBanner?.let {
                 Box(
@@ -924,7 +813,6 @@ fun SHNScreen(
                 }
             }
 
-            // History banner — last-N saves for the loaded file
             if (state.history.isNotEmpty()) {
                 val last = state.history.first()
                 val ageMin = ((System.currentTimeMillis() - last.tsMs) / 60_000L).coerceAtLeast(0)
@@ -949,7 +837,6 @@ fun SHNScreen(
                 }
             }
 
-            // Server file browser
             if (state.showBrowser && api != null) {
                 ServerBrowser(
                     root  = state.serverRoot,
@@ -1021,8 +908,6 @@ fun SHNScreen(
         }
     }
 
-    /* Full-screen diff overlay — rendered on top of the table when
-     * `diffSummary` is non-null.  Dismiss returns to the table. */
     state.diffSummary?.let { summary ->
         SHNDiffView(
             summary   = summary,
@@ -1086,11 +971,6 @@ fun SHNScreen(
     }
 }
 
-/* SHN bytes round-trip through the active encoding. Silent re-encoding
- * with the wrong charset is the #1 cause of a save permanently breaking
- * a file (canonical SHN Editor has the same gotcha — there's just no
- * UI confirmation there).  This dialog forces an explicit acknowledgment
- * before we touch the bytes.                                           */
 @Composable
 private fun EncodingConfirmDialog(
     encodingDisplay: String,
@@ -1125,8 +1005,6 @@ private fun EncodingConfirmDialog(
         },
     )
 }
-
-// ─── Bulk Op dialog ──────────────────────────────────────────────────────────
 
 @Composable
 private fun BulkOpDialog(
@@ -1177,8 +1055,6 @@ private fun BulkOpDialog(
     )
 }
 
-// ─── Rename Column dialog ────────────────────────────────────────────────────
-
 @Composable
 private fun RenameColumnDialog(
     currentName: String,
@@ -1206,8 +1082,6 @@ private fun RenameColumnDialog(
         }
     )
 }
-
-// ─── Server browser ──────────────────────────────────────────────────────────
 
 @Composable
 private fun ServerBrowser(
@@ -1254,15 +1128,13 @@ private fun ServerBrowser(
     }
 }
 
-// ─── Add Column dialog ───────────────────────────────────────────────────────
-
 @Composable
 private fun AddColumnDialog(
     onDismiss: () -> Unit,
     onAdd:     (name: String, type: UInt, length: Int) -> Unit,
 ) {
     var name by remember { mutableStateOf("") }
-    var typeStr by remember { mutableStateOf("3") }   // default: UInt32
+    var typeStr by remember { mutableStateOf("3") }
     var lenStr  by remember { mutableStateOf("4") }
 
     AlertDialog(
@@ -1295,8 +1167,6 @@ private fun AddColumnDialog(
         }
     )
 }
-
-// ─── Table view ──────────────────────────────────────────────────────────────
 
 @Composable
 private fun SHNTableView(
@@ -1351,7 +1221,6 @@ private fun SHNTableView(
             }
         }
 
-        // Column headers with delete + rename + bulk ops
         Row(
             Modifier.fillMaxWidth().horizontalScroll(hScroll)
                 .background(IsyaNight).border(1.dp, IsyaMuted.copy(alpha = 0.2f)),

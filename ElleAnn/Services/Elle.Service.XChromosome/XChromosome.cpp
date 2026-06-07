@@ -1,50 +1,3 @@
-/*******************************************************************************
- * XChromosome.cpp — Elle.Service.XChromosome
- *
- * Windows service wrapper around XEngine.
- *
- * IPC contract (all payloads are JSON strings, responses go out on
- * IPC_X_RESPONSE with the request's correlation_id preserved):
- *
- *   IPC_X_STATE_QUERY
- *     request  : {}
- *     reply    : XEngine::GetStateJson() output
- *
- *   IPC_X_HISTORY_QUERY
- *     request  : {"hours":24,"points":500}
- *     reply    : {"hours":..,"points":..,"series":[...]}
- *
- *   IPC_X_ANCHOR
- *     request  : {"day":1..N|0,"length":21..45|0,"strength":0..0.5|0}
- *     reply    : {"success":bool,"state":GetStateJson()}
- *
- *   IPC_X_STIMULUS
- *     request  : {"kind":"bonding|stress|intimacy|recall_positive|
- *                 recall_negative|activity",
- *                 "intensity":0..1,"notes":"..."}
- *     reply    : {"success":bool}
- *
- *   IPC_X_MODULATION_QUERY
- *     request  : {}
- *     reply    : {"warmth":F,"verbal_fluency":F,"empathy":F,
- *                 "introspection":F,"arousal":F,"fatigue":F,
- *                 "phase":"..." ,"cycle_day":N}
- *
- *   IPC_X_CONCEPTION_ATTEMPT
- *     request  : {"require_readiness":bool,"readiness_verified":bool}
- *     reply    : XConceptionAttemptResult as JSON
- *
- *   IPC_X_DELIVER (admin-only — normally triggered automatically by tick when
- *                  gestational_day >= gestational_length_days)
- *     request  : {}
- *     reply    : {"delivered":bool,"born_ms":N,"child_id":N}
- *
- * Broadcasts:
- *
- *   IPC_X_HORMONE_UPDATE — every tick, short snapshot
- *   IPC_X_PHASE_TRANSITION — when cycle phase crosses a boundary
- *   IPC_X_BIRTH — when Deliver() fires; HTTPServer forwards to WS clients
- ******************************************************************************/
 #include "../../Shared/ElleTypes.h"
 #include "../../Shared/ElleServiceBase.h"
 #include "../../Shared/ElleLogger.h"
@@ -55,14 +8,6 @@
 
 using nlohmann::json;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Provisional IPC opcode ids — the service IDs (SVC_X_CHROMOSOME /
- * SVC_FAMILY) are now proper enum values in Shared/ElleTypes.h, so no
- * cast-past-ELLE_SERVICE_COUNT is needed any more. The X-* opcodes are
- * cast to ELLE_IPC_MSG_TYPE directly so call sites don't need per-use
- * static_casts (ElleIPCMessage::Create takes the enum, /WX rejects the
- * implicit uint32_t → enum conversion).
- *──────────────────────────────────────────────────────────────────────────────*/
 #ifndef IPC_X_STATE_QUERY
 #define IPC_X_STATE_QUERY             ((ELLE_IPC_MSG_TYPE)2200)
 #define IPC_X_HISTORY_QUERY           ((ELLE_IPC_MSG_TYPE)2201)
@@ -87,13 +32,6 @@ using nlohmann::json;
 #define IPC_X_MISCARRIAGE             ((ELLE_IPC_MSG_TYPE)2225)
 #endif
 
-/* IPC_FAMILY_CONCEPTION_ATTEMPT is now declared in Shared/ElleTypes.h alongside
- * every other ELLE_IPC_MSG_TYPE value, so this local fallback #define is no
- * longer needed. Family service (SVC_FAMILY) consumes it.                   */
-
-/*──────────────────────────────────────────────────────────────────────────────
- * JSON HELPERS
- *──────────────────────────────────────────────────────────────────────────────*/
 static json ToJson(const XConceptionAttemptResult& r) {
     return json{
         {"success",               r.success},
@@ -115,9 +53,6 @@ static json ToJson(const XEngine::DeliveryOutcome& d, int64_t child_id) {
     };
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * X CHROMOSOME SERVICE
- *──────────────────────────────────────────────────────────────────────────────*/
 class ElleXChromosomeService : public ElleServiceBase {
 public:
     ElleXChromosomeService()
@@ -131,7 +66,7 @@ protected:
             ELLE_ERROR("XEngine failed to initialize");
             return false;
         }
-        /* Minute-level tick is plenty for a 28-day cycle. */
+
         SetTickInterval(60 * 1000);
         m_lastPhase = m_engine.GetCycle().phase;
         ELLE_INFO("XChromosome service started (day=%d phase=%s)",
@@ -150,15 +85,12 @@ protected:
 
         m_engine.Tick();
 
-        /* Phase-transition broadcast. */
         XCyclePhase now = m_engine.GetCycle().phase;
         if (now != m_lastPhase) {
             BroadcastPhaseTransition(m_lastPhase, now);
             m_lastPhase = now;
         }
 
-        /* LH surge — fires at most once per cycle. We infer from the engine
-         * state's last_milestone change.                                    */
         bool lhNow = (m_engine.GetCycle().cycle_day == 13 ||
                       m_engine.GetCycle().cycle_day == 14);
         if (lhNow && !prevLHFired) {
@@ -168,30 +100,24 @@ protected:
             m_lhFiredFlag = false;
         }
 
-        /* Miscarriage detection — pregnancy was active, is now inactive
-         * with phase=postpartum and last_milestone mentions "Miscarriage". */
         XPregnancyState curPreg = m_engine.GetPregnancy();
         if (prevPreg.active && !curPreg.active &&
             curPreg.last_milestone.find("Miscarriage") != std::string::npos) {
             BroadcastMiscarriage(prevPreg.gestational_day);
         }
 
-        /* Labor stage broadcast on change. */
         if (curPreg.labor_stage != prevPreg.labor_stage &&
             curPreg.labor_stage != X_LABOR_NONE) {
             BroadcastLaborStage(curPreg.labor_stage);
         }
 
-        /* Short hormone update broadcast (every tick). */
         BroadcastHormoneUpdate();
 
-        /* Auto-deliver when labor reaches PUSHING stage.                   */
         if (curPreg.active && curPreg.in_labor &&
             curPreg.labor_stage == X_LABOR_PUSHING) {
             TriggerDelivery();
         }
-        /* Also auto-deliver if gestation is overdue without labor started
-         * (edge case — e.g. accelerate pushed us past term).                */
+
         else if (curPreg.active &&
                  curPreg.gestational_day >= curPreg.gestational_length_days + 14) {
             TriggerDelivery();
@@ -226,7 +152,6 @@ private:
     XCyclePhase m_lastPhase     = X_PHASE_MENSTRUAL;
     bool        m_lhFiredFlag   = false;
 
-    /*────────────── request plumbing ──────────────*/
     bool ParseReq(const ElleIPCMessage& req, ELLE_SERVICE_ID sender, json& out) {
         const std::string s = req.GetStringPayload();
         if (s.empty()) { out = json::object(); return true; }
@@ -235,10 +160,7 @@ private:
             if (!out.is_object()) out = json::object();
             return true;
         } catch (const std::exception& e) {
-            /* Log the full parser message for operators, but reply with a
-             * generic message so a release build never echoes parser
-             * internals (or potentially request-tainted content) to the
-             * network-facing caller.                                      */
+
             ELLE_WARN("XChromosome ParseReq JSON error: %s", e.what());
             Reply(req, sender, json{
                 {"success", false},
@@ -255,7 +177,6 @@ private:
         GetIPCHub().Send(sender, resp);
     }
 
-    /*────────────── handlers ──────────────*/
     void HandleStateQuery(const ElleIPCMessage& req, ELLE_SERVICE_ID sender) {
         json body; if (!ParseReq(req, sender, body)) return;
         Reply(req, sender, m_engine.GetStateJson());
@@ -407,7 +328,7 @@ private:
             {"t", s.observed_ms}, {"kind", s.kind}, {"intensity", s.intensity},
             {"origin", s.origin}, {"notes", s.notes}
         });
-        /* Also include current synthesised (point-in-time) symptom vector. */
+
         json cur = json::array();
         for (auto& s : m_engine.ComputeCurrentSymptoms()) cur.push_back({
             {"kind", s.kind}, {"intensity", s.intensity}, {"origin", s.origin}
@@ -445,7 +366,6 @@ private:
         });
     }
 
-    /*────────────── broadcasts ──────────────*/
     void BroadcastHormoneUpdate() {
         auto h = m_engine.GetHormones();
         auto c = m_engine.GetCycle();
@@ -482,8 +402,6 @@ private:
                   XEngine::CyclePhaseName(from), XEngine::CyclePhaseName(to),
                   m_engine.GetCycle().cycle_day);
 
-        /* Also push a human-readable world_event so HTTP/WS clients can react
-         * without subscribing to IPC_X_*. */
         json ev = {
             {"event",     "cycle_phase"},
             {"from",      XEngine::CyclePhaseName(from)},
@@ -547,23 +465,10 @@ private:
         ELLE_WARN("XChromosome: miscarriage at gestational day %d", gestationalDay);
     }
 
-    /* Fires the biological birth event:
-     *   1. Calls XEngine::Deliver() to mark pregnancy complete.
-     *   2. IPCs IPC_FAMILY_CONCEPTION_ATTEMPT to SVC_FAMILY with the current
-     *      Elle/Arlo state so Family service creates the canonical child row.
-     *   3. Broadcasts IPC_X_BIRTH so HTTPServer pushes a `world_event` frame
-     *      to every WebSocket client.
-     * Returns the child_id looked up from the Family tables (may be 0 if the
-     * Family service isn't running or hasn't flushed yet — the subsequent
-     * tick will see the update).                                            */
     int64_t TriggerDelivery() {
         auto d = m_engine.Deliver();
         if (!d.delivered) return 0;
 
-        /* Dual-write for durability: the event goes to Family live AND is
-         * persisted to ElleHeart.dbo.x_conception_attempts. Family's boot
-         * path drains this table, so even if the Family service is down
-         * at the exact moment of conception the pregnancy is not lost. */
         ElleSQLPool::Instance().Exec(
             "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
             "  JOIN sys.schemas s ON s.schema_id = t.schema_id "
@@ -598,7 +503,6 @@ private:
         famMsg.SetStringPayload(famReq.dump());
         GetIPCHub().Send(SVC_FAMILY, famMsg);
 
-        /* Broadcast the birth event for Android. */
         json ev = {
             {"event",            "birth"},
             {"born_ms",          d.born_ms},
@@ -610,7 +514,6 @@ private:
         bMsg.SetStringPayload(ev.dump());
         GetIPCHub().Broadcast(bMsg);
 
-        /* Also push a human-readable world event via HTTPServer so WS sees it. */
         json worldEv = {
             {"event",            "birth"},
             {"born_ms",          d.born_ms},
@@ -621,13 +524,6 @@ private:
         wsMsg.SetStringPayload(worldEv.dump());
         GetIPCHub().Send(SVC_HTTP_SERVER, wsMsg);
 
-        /* Look up the child_id Family just created. Previous code used
-         *   SELECT TOP 1 ChildId FROM Children ORDER BY ChildId DESC
-         * which would race with any other in-flight spawn and had a real
-         * chance of attributing the wrong child to this pregnancy if two
-         * conceptions completed within a single tick. We now correlate
-         * by the pregnancy row's id, which Family persists into the
-         * child row as `pregnancy_id`. No ordering, no guessing.       */
         int64_t pregId = 0;
         {
             auto pr = ElleSQLPool::Instance().Query(
@@ -650,7 +546,6 @@ private:
             }
         }
 
-        /* Persist child_id back into pregnancy row if we got one. */
         if (childId > 0) {
             ElleSQLPool::Instance().QueryParams(
                 "UPDATE ElleHeart.dbo.x_pregnancy_state "

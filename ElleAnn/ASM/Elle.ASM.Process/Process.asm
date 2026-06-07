@@ -1,10 +1,3 @@
-;******************************************************************************
-; Process.asm — ELLE-ANN ESI v3.0 Process Management DLL (MASM x64)
-;
-; Process launch, kill, enumeration, suspend/resume, DLL injection.
-; Real Win32 implementation via MASM EXTERN imports from kernel32 / psapi.
-;******************************************************************************
-
 EXTERN  CreateProcessA:PROC
 EXTERN  OpenProcess:PROC
 EXTERN  TerminateProcess:PROC
@@ -52,71 +45,51 @@ INFINITE_WAIT              EQU 0FFFFFFFFh
 CREATE_NO_WINDOW           EQU 08000000h
 INVALID_HANDLE_VALUE       EQU -1
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_LaunchProcess — CreateProcessA(cmdLine)
-; Parameters: rcx = command line string
-;             rdx = ptr to DWORD (output PID)
-; Returns:    eax = 1 success, 0 failure
-;──────────────────────────────────────────────────────────────────────────────
 ASM_LaunchProcess PROC
     push    rbp
     mov     rbp, rsp
-    ; STARTUPINFOA = 104 bytes, PROCESS_INFORMATION = 24 bytes
-    ; + 48 shadow + 7 stack args for CreateProcessA = plenty
+
     sub     rsp, 0E0h
     push    rbx
     push    rdi
     push    rsi
 
-    mov     rbx, rcx                    ; cmd line
-    mov     rsi, rdx                    ; pid out ptr
+    mov     rbx, rcx
+    mov     rsi, rdx
 
-    ; Zero STARTUPINFOA at [rbp-70h] (104 bytes)
     lea     rdi, [rbp-70h]
     xor     eax, eax
-    mov     ecx, 26                     ; 104/4
+    mov     ecx, 26
     rep     stosd
-    mov     DWORD PTR [rbp-70h], 68h   ; cb = 104
+    mov     DWORD PTR [rbp-70h], 68h
 
-    ; Zero PROCESS_INFORMATION at [rbp-88h] (24 bytes)
     lea     rdi, [rbp-88h]
     xor     eax, eax
     mov     ecx, 6
     rep     stosd
 
-    ; CreateProcessA(
-    ;   NULL,                 // lpApplicationName
-    ;   cmdLine,              // lpCommandLine
-    ;   NULL, NULL,           // proc/thread attrs
-    ;   FALSE,                // bInheritHandles
-    ;   CREATE_NO_WINDOW,     // dwCreationFlags
-    ;   NULL,                 // lpEnvironment
-    ;   NULL,                 // lpCurrentDirectory
-    ;   &si, &pi )
-    xor     rcx, rcx                    ; lpApplicationName
-    mov     rdx, rbx                    ; lpCommandLine
+    xor     rcx, rcx
+    mov     rdx, rbx
     xor     r8, r8
     xor     r9, r9
-    mov     DWORD PTR [rsp+20h], 0      ; bInheritHandles
+    mov     DWORD PTR [rsp+20h], 0
     mov     DWORD PTR [rsp+28h], CREATE_NO_WINDOW
-    mov     QWORD PTR [rsp+30h], 0      ; lpEnvironment
-    mov     QWORD PTR [rsp+38h], 0      ; lpCurrentDirectory
+    mov     QWORD PTR [rsp+30h], 0
+    mov     QWORD PTR [rsp+38h], 0
     lea     rax, [rbp-70h]
-    mov     QWORD PTR [rsp+40h], rax    ; &si
+    mov     QWORD PTR [rsp+40h], rax
     lea     rax, [rbp-88h]
-    mov     QWORD PTR [rsp+48h], rax    ; &pi
+    mov     QWORD PTR [rsp+48h], rax
     call    CreateProcessA
     test    eax, eax
     jz      launch_fail
 
-    ; pi.dwProcessId @ offset 8 in PROCESS_INFORMATION
     mov     ecx, DWORD PTR [rbp-80h]
     mov     [rsi], ecx
 
-    ; Close handles
-    mov     rcx, [rbp-88h]              ; hProcess
+    mov     rcx, [rbp-88h]
     call    CloseHandle
-    mov     rcx, [rbp-88h+8h]           ; hThread
+    mov     rcx, [rbp-88h+8h]
     call    CloseHandle
 
     mov     eax, 1
@@ -132,17 +105,13 @@ launch_done:
     ret
 ASM_LaunchProcess ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_KillProcess — TerminateProcess by PID
-; Parameters: ecx = PID
-;──────────────────────────────────────────────────────────────────────────────
 ASM_KillProcess PROC
     push    rbp
     mov     rbp, rsp
     sub     rsp, 30h
     push    rbx
 
-    mov     ebx, ecx                    ; save pid
+    mov     ebx, ecx
 
     mov     ecx, PROCESS_TERMINATE
     xor     edx, edx
@@ -170,14 +139,10 @@ kill_done:
     ret
 ASM_KillProcess ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_EnumProcesses — Enumerate running PIDs
-; Parameters: rcx = PID array, edx = max count, r8 = ptr actual count
-;──────────────────────────────────────────────────────────────────────────────
 ASM_EnumProcesses PROC
     push    rbp
     mov     rbp, rsp
-    ; PROCESSENTRY32W = 568 bytes → 0x238 (must be 8-byte aligned)
+
     sub     rsp, 0260h
     push    rbx
     push    rdi
@@ -186,12 +151,11 @@ ASM_EnumProcesses PROC
     push    r13
     push    r14
 
-    mov     rdi, rcx                    ; pid array
-    mov     r12d, edx                   ; max count
-    mov     r13, r8                     ; actual count ptr
-    xor     r14d, r14d                  ; counter
+    mov     rdi, rcx
+    mov     r12d, edx
+    mov     r13, r8
+    xor     r14d, r14d
 
-    ; CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
     mov     ecx, TH32CS_SNAPPROCESS
     xor     edx, edx
     call    CreateToolhelp32Snapshot
@@ -199,10 +163,8 @@ ASM_EnumProcesses PROC
     je      enum_fail
     mov     rbx, rax
 
-    ; pe32.dwSize = sizeof(PROCESSENTRY32W)
     mov     DWORD PTR [rbp-240h], 568
 
-    ; Process32FirstW(hSnapshot, &pe)
     mov     rcx, rbx
     lea     rdx, [rbp-240h]
     call    Process32FirstW
@@ -211,7 +173,7 @@ ASM_EnumProcesses PROC
 enum_loop:
     cmp     r14d, r12d
     jae     enum_end_loop
-    ; pe32.th32ProcessID @ offset 8
+
     mov     ecx, DWORD PTR [rbp-240h+8]
     mov     [rdi + r14*4], ecx
     inc     r14d
@@ -247,10 +209,6 @@ enum_exit:
     ret
 ASM_EnumProcesses ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_GetProcessName — QueryFullProcessImageNameA
-; Parameters: ecx = PID, rdx = out buf, r8d = max len
-;──────────────────────────────────────────────────────────────────────────────
 ASM_GetProcessName PROC
     push    rbp
     mov     rbp, rsp
@@ -258,10 +216,10 @@ ASM_GetProcessName PROC
     push    rbx
     push    rdi
 
-    mov     ebx, ecx                    ; pid
-    mov     rdi, rdx                    ; buf
-    mov     r12d, r8d                   ; maxlen
-    mov     DWORD PTR [rbp-8], r8d      ; size var
+    mov     ebx, ecx
+    mov     rdi, rdx
+    mov     r12d, r8d
+    mov     DWORD PTR [rbp-8], r8d
 
     mov     ecx, PROCESS_QUERY_LIMITED
     xor     edx, edx
@@ -269,9 +227,8 @@ ASM_GetProcessName PROC
     call    OpenProcess
     test    rax, rax
     jz      name_fail
-    mov     rbx, rax                    ; hProc
+    mov     rbx, rax
 
-    ; QueryFullProcessImageNameA(hProc, 0, buf, &size)
     mov     rcx, rbx
     xor     edx, edx
     mov     r8, rdi
@@ -294,9 +251,6 @@ name_done:
     ret
 ASM_GetProcessName ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_IsProcessRunning — OpenProcess with minimum rights, check handle
-;──────────────────────────────────────────────────────────────────────────────
 ASM_IsProcessRunning PROC
     push    rbp
     mov     rbp, rsp
@@ -324,9 +278,6 @@ run_done:
     ret
 ASM_IsProcessRunning ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_SuspendProcess / ASM_ResumeProcess — iterate threads via toolhelp
-;──────────────────────────────────────────────────────────────────────────────
 ASM_SuspendProcess PROC
     push    rbp
     mov     rbp, rsp
@@ -335,9 +286,8 @@ ASM_SuspendProcess PROC
     push    rdi
     push    r12
 
-    mov     ebx, ecx                    ; pid
+    mov     ebx, ecx
 
-    ; snapshot
     mov     ecx, TH32CS_SNAPTHREAD
     xor     edx, edx
     call    CreateToolhelp32Snapshot
@@ -345,14 +295,14 @@ ASM_SuspendProcess PROC
     je      sus_fail
     mov     r12, rax
 
-    mov     DWORD PTR [rbp-38h], 28     ; THREADENTRY32.dwSize = 28
+    mov     DWORD PTR [rbp-38h], 28
     mov     rcx, r12
     lea     rdx, [rbp-38h]
     call    Thread32First
     test    eax, eax
     jz      sus_close
 sus_loop:
-    ; THREADENTRY32.th32OwnerProcessID at offset 12, .th32ThreadID at 8
+
     mov     eax, DWORD PTR [rbp-38h+12]
     cmp     eax, ebx
     jne     sus_next
@@ -448,12 +398,6 @@ res_done:
     ret
 ASM_ResumeProcess ENDP
 
-;──────────────────────────────────────────────────────────────────────────────
-; ASM_InjectDLL — Classic LoadLibrary remote-thread injection
-; Parameters: ecx = target PID, rdx = DLL path
-; Returns:    eax = 1 success, 0 failure
-; NOTE: caller MUST verify trust_score >= TRUST_THRESHOLD_AUTONOMOUS.
-;──────────────────────────────────────────────────────────────────────────────
 ASM_InjectDLL PROC
     push    rbp
     mov     rbp, rsp
@@ -465,25 +409,22 @@ ASM_InjectDLL PROC
     push    r13
     push    r14
 
-    mov     ebx, ecx                    ; pid
-    mov     rsi, rdx                    ; dll path
+    mov     ebx, ecx
+    mov     rsi, rdx
 
-    ; pathLen = lstrlenA(path) + 1
     mov     rcx, rsi
     call    lstrlenA
     inc     eax
     mov     r14d, eax
 
-    ; 1. OpenProcess(ALL_ACCESS)
     mov     ecx, PROCESS_ALL_ACCESS
     xor     edx, edx
     mov     r8d, ebx
     call    OpenProcess
     test    rax, rax
     jz      inj_fail
-    mov     r12, rax                    ; hProc
+    mov     r12, rax
 
-    ; 2. VirtualAllocEx
     mov     rcx, r12
     xor     rdx, rdx
     mov     r8d, r14d
@@ -492,53 +433,48 @@ ASM_InjectDLL PROC
     call    VirtualAllocEx
     test    rax, rax
     jz      inj_close_proc
-    mov     r13, rax                    ; remote addr
+    mov     r13, rax
 
-    ; 3. WriteProcessMemory
     mov     rcx, r12
     mov     rdx, r13
     mov     r8, rsi
     mov     r9d, r14d
-    mov     QWORD PTR [rsp+20h], 0      ; lpNumberOfBytesWritten
+    mov     QWORD PTR [rsp+20h], 0
     call    WriteProcessMemory
     test    eax, eax
     jz      inj_free
 
-    ; 4. LoadLibraryA address via GetModuleHandle/GetProcAddress
     lea     rcx, szKernel32
     call    GetModuleHandleA
     test    rax, rax
     jz      inj_free
-    mov     rdi, rax                    ; hK32
+    mov     rdi, rax
 
     mov     rcx, rdi
     lea     rdx, szLoadLibraryA
     call    GetProcAddress
     test    rax, rax
     jz      inj_free
-    mov     r15, rax                    ; LoadLibraryA addr
+    mov     r15, rax
 
-    ; 5. CreateRemoteThread(hProc, NULL, 0, LoadLibraryA, remoteAddr, 0, NULL)
     mov     rcx, r12
     xor     rdx, rdx
     xor     r8, r8
     mov     r9, r15
-    mov     QWORD PTR [rsp+20h], r13    ; lpParameter
-    mov     DWORD PTR [rsp+28h], 0      ; dwCreationFlags
-    mov     QWORD PTR [rsp+30h], 0      ; lpThreadId
+    mov     QWORD PTR [rsp+20h], r13
+    mov     DWORD PTR [rsp+28h], 0
+    mov     QWORD PTR [rsp+30h], 0
     call    CreateRemoteThread
     test    rax, rax
     jz      inj_free
-    mov     rbx, rax                    ; hThread
+    mov     rbx, rax
 
-    ; 6. WaitForSingleObject + CloseHandle
     mov     rcx, rbx
     mov     edx, INFINITE_WAIT
     call    WaitForSingleObject
     mov     rcx, rbx
     call    CloseHandle
 
-    ; Free remote mem + close proc handle
     mov     rcx, r12
     mov     rdx, r13
     xor     r8, r8

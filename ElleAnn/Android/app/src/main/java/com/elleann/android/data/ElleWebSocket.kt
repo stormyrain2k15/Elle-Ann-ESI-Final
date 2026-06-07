@@ -24,83 +24,50 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.util.concurrent.TimeUnit
 
-// ─── WebSocket event sealed hierarchy ─────────────────────────────────────────
-
-/** All possible events received from the Elle WebSocket at /command */
 sealed class WsEvent {
 
-    /** Server confirmed connection: {type:"connected", client_id, server, version} */
     data class Connected(
         val clientId: String,
         val server: String,
         val version: String,
     ) : WsEvent()
 
-    /** Ping response from server */
     data object Pong : WsEvent()
 
-    /** Streaming chat response: {type:"chat_response", request_id, response} */
     data class ChatResponse(
         val requestId: String,
         val response: String,
     ) : WsEvent()
 
-    /** Live emotion broadcast: {type:"ipc_broadcast", msg_type:1, emotion:{...}} */
     data class EmotionUpdate(
         val emotion: EmotionsResponse,
     ) : WsEvent()
 
-    /** X-Chromosome hormone tick: {type:"hormone_tick", ...} */
     data class HormoneTick(
         val hormones: XHormones,
         val phase: String,
     ) : WsEvent()
 
-    /** Cycle phase transition: {type:"phase_transition", from, to} */
     data class PhaseTransition(
         val from: String,
         val to: String,
     ) : WsEvent()
 
-    /** Birth event: {type:"birth"} */
     data object Birth : WsEvent()
 
-    /** LH surge detected: {type:"lh_surge"} */
     data object LhSurge : WsEvent()
 
-    /** Labor stage update: {type:"labor_stage", stage} */
     data class LaborStage(val stage: String) : WsEvent()
 
-    /** Miscarriage event: {type:"miscarriage"} */
     data object Miscarriage : WsEvent()
 
-    /** Connection dropped or error */
     data class Disconnected(val reason: String) : WsEvent()
 
-    /** Soft transport-level failure that doesn't necessarily mean the
-     *  socket dropped — e.g. "no host paired yet, refusing to open."
-     *  Named `Failure` (NOT `Error`) because the latter collides with
-     *  `kotlin.Error` and `java.lang.Error` in nested-class name
-     *  resolution for sealed hierarchies, producing an Unresolved
-     *  reference at every usage site. */
     data class Failure(val reason: String) : WsEvent()
 
-    /** Unknown event type — raw JSON preserved for debugging */
     data class Unknown(val type: String, val raw: String) : WsEvent()
 }
 
-/**
- * ElleWebSocket — manages the persistent WebSocket connection to Elle's
- * /command endpoint. Parses incoming frames and emits [WsEvent]s via
- * a [SharedFlow] that UI layers can collect.
- *
- * Auto-reconnect: on unexpected disconnect, waits [RECONNECT_DELAY_MS]
- * before attempting to re-establish the connection.
- *
- * Usage:
- *   val event = webSocket.events.collectAsState()
- *   webSocket.sendChat("Hello Elle", requestId = "req-001")
- */
 class ElleWebSocket(
     private val host: String,
     private val port: Int,
@@ -110,21 +77,18 @@ class ElleWebSocket(
     companion object {
         private const val TAG = "ElleWebSocket"
         private const val WS_PATH = "/command"
-        // Backoff: starts at 2s, doubles each attempt, caps at 60s
+
         private const val BACKOFF_INITIAL_MS  = 2_000L
         private const val BACKOFF_MAX_MS      = 60_000L
         private const val BACKOFF_MULTIPLIER  = 2.0
         private const val PING_INTERVAL_SECONDS = 30L
     }
 
-    // ── Event stream ──────────────────────────────────────────────────────────
     private val _events = MutableSharedFlow<WsEvent>(replay = 0, extraBufferCapacity = 64)
     val events: SharedFlow<WsEvent> = _events.asSharedFlow()
 
-    // ── Lifecycle scope — tied to ElleWebSocket instance, not any Activity ────
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    // ── Connection state ──────────────────────────────────────────────────────
     private var webSocket: WebSocket? = null
     @Volatile private var isConnected  = false
     @Volatile private var isConnecting = false
@@ -133,30 +97,16 @@ class ElleWebSocket(
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    // ── OkHttp client for WS (separate from REST — needs ping interval) ───────
     private val wsClient = client.newBuilder()
         .pingInterval(PING_INTERVAL_SECONDS, TimeUnit.SECONDS)
         .build()
 
-    /**
-     * Open the WebSocket connection.
-     *
-     * Idempotent: returns immediately if a socket is already connected
-     * OR currently mid-handshake. Without the `isConnecting` guard, a
-     * caller hitting `reconnectWebSocketIfNeeded()` repeatedly during a
-     * slow connect could spawn multiple sockets that race to onOpen().
-     */
     fun connect() {
         if (isConnected || isConnecting || webSocket != null) return
         shouldReconnect = true
         openConnection()
     }
 
-    /**
-     * Close the connection cleanly and cancel all coroutines.
-     * AppContainerExtended always creates a fresh ElleWebSocket via initWebSocket()
-     * rather than reusing a disconnected instance, so cancelling the scope here is safe.
-     */
     fun disconnect() {
         shouldReconnect = false
         reconnectJob?.cancel()
@@ -168,13 +118,11 @@ class ElleWebSocket(
         scope.cancel()
     }
 
-    /** True if the socket is currently connected */
     fun isConnected(): Boolean = isConnected
 
     private fun openConnection(attempt: Int = 0) {
         isConnecting = true
-        /* Guard against ws://: + bad host — would crash the OkHttp client.
-         * If the operator hasn't paired yet, bail without throwing.      */
+
         if (host.isBlank() || port <= 0) {
             isConnecting = false
             shouldReconnect = false
@@ -187,10 +135,7 @@ class ElleWebSocket(
         }
         val url = "ws://$host:$port$WS_PATH"
         val builder = Request.Builder().url(url)
-        /* Only attach Authorization when a non-empty token is configured.
-         * In no_auth=1 testing mode the server accepts everything; sending
-         * `Bearer ` with a blank value tripped some proxies into a 401
-         * before the WS upgrade reached our handler.                      */
+
         if (jwt.isNotBlank()) {
             builder.addHeader("Authorization", "Bearer $jwt")
         }
@@ -209,9 +154,7 @@ class ElleWebSocket(
             }
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                /* Drop the dead reference so connect() guards see "no
-                 * pending socket" and the next reconnect cycle can
-                 * actually open a fresh one.                          */
+
                 if (webSocket == ws) webSocket = null
                 isConnecting = false
                 isConnected  = false
@@ -226,19 +169,12 @@ class ElleWebSocket(
                 isConnected  = false
                 Log.i(TAG, "WebSocket closed: $code $reason")
                 _events.tryEmit(WsEvent.Disconnected(reason))
-                // Normal close (1000) = intentional; all others schedule reconnect
+
                 if (shouldReconnect && code != 1000) scheduleReconnect(attempt)
             }
         })
     }
 
-    /**
-     * Schedule a reconnect attempt using coroutine delay with exponential backoff.
-     * No threads are blocked. Backoff doubles each attempt from [BACKOFF_INITIAL_MS]
-     * up to [BACKOFF_MAX_MS].
-     *
-     * @param attemptNumber used to compute backoff: delay = min(initial * 2^attempt, max)
-     */
     private fun scheduleReconnect(attemptNumber: Int = 0) {
         if (!shouldReconnect) return
         reconnectJob?.cancel()
@@ -253,7 +189,6 @@ class ElleWebSocket(
         }
     }
 
-    // ── Message parsing ───────────────────────────────────────────────────────
     private fun parseAndEmit(text: String) {
         runCatching {
             val obj: JsonObject = json.parseToJsonElement(text).jsonObject
@@ -326,19 +261,10 @@ class ElleWebSocket(
         )
     }
 
-    // ── Outgoing messages ─────────────────────────────────────────────────────
-
-    /** Send a ping to the server */
     fun sendPing() {
         webSocket?.send("""{"type":"ping"}""")
     }
 
-    /**
-     * Send a chat message over WebSocket for streaming response.
-     * Returns true if the message was accepted by the OkHttp send buffer,
-     * false if the socket is null, closed, or the message was too large.
-     * The server emits [WsEvent.ChatResponse] events back with the matching [requestId].
-     */
     fun sendChat(message: String, requestId: String, conversationId: Long = 1L): Boolean {
         val ws = webSocket ?: return false
         val encoded = kotlinx.serialization.json.Json.encodeToString(
@@ -349,7 +275,6 @@ class ElleWebSocket(
         return ws.send(payload)
     }
 
-    /** Subscribe to a topic for server-push updates */
     fun subscribe(topic: String) {
         webSocket?.send("""{"type":"subscribe","topic":"$topic"}""")
     }

@@ -13,14 +13,12 @@ import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import java.util.concurrent.TimeUnit
 
-// ─── Pairing payload — parsed from ellepair:// URI ────────────────────────────
 data class PairingPayload(
     val host: String,
     val port: Int,
     val code: String,
 )
 
-// ─── Stored token + server coords ─────────────────────────────────────────────
 @Serializable
 data class StoredToken(
     val jwt: String,
@@ -29,7 +27,6 @@ data class StoredToken(
     val expiresMs: Long = Long.MAX_VALUE,
 )
 
-// ─── EmotionsResponse — canonical definition, one place only ──────────────────
 @Serializable
 data class EmotionsResponse(
     val valence: Float? = null,
@@ -46,7 +43,6 @@ data class EmotionsResponse(
     val anticipation: Float? = null,
 )
 
-// ─── PairResponse ─────────────────────────────────────────────────────────────
 @Serializable
 data class PairResponse(
     @kotlinx.serialization.SerialName("token") val jwt: String,
@@ -58,7 +54,6 @@ data class PairResponse(
     @kotlinx.serialization.SerialName("nAuthID")     val nAuthID:    Int? = null,
 )
 
-// ─── TokenStore ───────────────────────────────────────────────────────────────
 class TokenStore(context: Context) {
     companion object {
         private const val PREFS_NAME = "elle_secure_prefs"
@@ -89,7 +84,6 @@ class TokenStore(context: Context) {
     fun clear() = prefs.edit().remove(KEY_TOKEN).apply()
 }
 
-// ─── Locked ElleApi interface (pair + health + emotions only) ─────────────────
 interface ElleApi {
     @retrofit2.http.GET("/api/health")
     suspend fun health(): Map<String, String>
@@ -104,7 +98,6 @@ interface ElleApi {
     suspend fun login(@retrofit2.http.Body body: com.elleann.android.data.models.LoginRequest): PairResponse
 }
 
-// ─── AppContainer — locked base container ─────────────────────────────────────
 class AppContainer(context: Context) {
     val tokenStore = TokenStore(context)
 
@@ -120,7 +113,7 @@ class AppContainer(context: Context) {
         .build()
 
     fun apiFor(host: String, port: Int): ElleApi {
-        // No-auth mode: we do not add ANY Authorization header here.
+
         return Retrofit.Builder()
             .baseUrl("http://$host:$port/")
             .client(baseOkHttpClient)
@@ -133,7 +126,6 @@ class AppContainer(context: Context) {
         get() = tokenStore.load()?.let { apiFor(it.host, it.port) }
 }
 
-// ─── ElleApp ──────────────────────────────────────────────────────────────────
 class ElleApp : Application() {
     lateinit var container: AppContainer
         private set

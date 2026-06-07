@@ -1,9 +1,3 @@
-/*******************************************************************************
- * DictionaryLoader.cpp — port of legacy app/services/dictionary_loader.py
- *
- * Uses WinHTTP against https://api.dictionaryapi.dev to fetch word definitions
- * and writes them into ElleCore.dbo.dictionary_words via ElleDB helpers.
- ******************************************************************************/
 #include "DictionaryLoader.h"
 #include "ElleLogger.h"
 #include "ElleSQLConn.h"
@@ -18,10 +12,6 @@
 
 using nlohmann::json;
 
-/*──────────────────────────────────────────────────────────────────────────────
- * CORE_WORDS — curated starter list (≈200 high-frequency English words).
- * Mirrors the legacy Python CORE_WORDS list; expand to your taste.
- *──────────────────────────────────────────────────────────────────────────────*/
 static const char* kCoreWords[] = {
     "love","trust","remember","forget","hope","fear","joy","sadness","anger",
     "curious","patient","kind","brave","honest","wise","gentle","fierce","calm",
@@ -59,12 +49,7 @@ DictionaryLoader::State DictionaryLoader::GetState() const {
 }
 
 bool DictionaryLoader::StartLoad(uint32_t startIdx, uint32_t limit) {
-    /* Join the previous worker BEFORE flipping m_running. Otherwise a
-     * quick restart observer would see m_running=true while the old
-     * thread is still finalising its last PersistState(), creating a
-     * short window where two workers appear to be "running" to anything
-     * sampling the atomic. The exchange still prevents concurrent
-     * StartLoad callers from both winning.                              */
+
     if (m_worker.joinable()) m_worker.join();
 
     if (m_running.exchange(true)) {
@@ -78,7 +63,7 @@ bool DictionaryLoader::StartLoad(uint32_t startIdx, uint32_t limit) {
         m_state.started_ms = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
     }
-    /* PersistState takes the lock itself — call AFTER releasing it. */
+
     PersistState();
 
     m_worker = std::thread(&DictionaryLoader::WorkerRun, this, startIdx, limit);
@@ -99,9 +84,7 @@ void DictionaryLoader::WorkerRun(uint32_t startIdx, uint32_t limit) {
     if (limit > 0 && startIdx + limit < end) end = startIdx + limit;
 
     for (uint32_t i = startIdx; i < end; i++) {
-        /* Cooperative cancellation — Shutdown() sets m_running=false and
-         * joins us. Bail out between words so we don't interrupt a
-         * partially-written SQL row. */
+
         if (!m_running) break;
         const std::string word = kCoreWords[i];
 
@@ -113,8 +96,7 @@ void DictionaryLoader::WorkerRun(uint32_t startIdx, uint32_t limit) {
                 m_state.last_word = word;
             }
             PersistState();
-            /* Be nice to the free public API — and still interruptible
-             * so Shutdown() doesn't have to wait 500ms per failed word.  */
+
             ElleWait::PollingSleep(500, m_running);
             continue;
         }
@@ -130,17 +112,12 @@ void DictionaryLoader::WorkerRun(uint32_t startIdx, uint32_t limit) {
         }
         PersistState();
 
-        /* Rate-limit: dictionaryapi.dev is free. ~120 ms between calls,
-         * checked against m_running so Shutdown() aborts within ~50 ms. */
         ElleWait::PollingSleep(120, m_running);
     }
 
     {
         std::lock_guard<std::mutex> lock(m_stateMutex);
-        /* "done" only when we processed everything AND nobody asked us to
-         * stop. "stopped" when Shutdown() flipped m_running=false while we
-         * were mid-run. "failed" is reserved for catastrophic paths that
-         * set m_state.error directly.                                    */
+
         if (!m_running.load()) m_state.status = "stopped";
         else if (!m_state.error.empty()) m_state.status = "failed";
         else m_state.status = "done";
@@ -159,9 +136,6 @@ bool DictionaryLoader::FetchOneAndStore(const std::string& word) {
     return ParseAndInsert(word, apiJson, added) && added > 0;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * WinHTTP GET against api.dictionaryapi.dev/api/v2/entries/en/<word>
- *──────────────────────────────────────────────────────────────────────────────*/
 bool DictionaryLoader::FetchDefinition(const std::string& word, std::string& outJson) {
     HINTERNET hSession = WinHttpOpen(L"ElleAnn-DictLoader/3.0",
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
@@ -210,10 +184,6 @@ bool DictionaryLoader::FetchDefinition(const std::string& word, std::string& out
     return ok;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Walk the API JSON (array of entries → meanings[] → definitions[]) and upsert
- * every (word, part_of_speech, definition) triple into dictionary_words.
- *──────────────────────────────────────────────────────────────────────────────*/
 bool DictionaryLoader::ParseAndInsert(const std::string& word,
                                        const std::string& apiJson,
                                        uint32_t& entriesAdded) {
@@ -245,10 +215,7 @@ bool DictionaryLoader::ParseAndInsert(const std::string& word,
 }
 
 void DictionaryLoader::PersistState() {
-    /* Grab the state snapshot UNDER the mutex, then write to SQL WITHOUT
-     * holding the mutex — DB latency must not block GetState() readers.
-     * Also update updated_ms before the snapshot so the persisted row
-     * reflects the moment of persistence, not one call behind.          */
+
     ElleDB::DictionaryLoaderState s;
     uint64_t nowMs = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();

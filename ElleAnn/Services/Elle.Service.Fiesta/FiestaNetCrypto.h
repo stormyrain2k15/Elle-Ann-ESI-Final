@@ -1,34 +1,3 @@
-/*══════════════════════════════════════════════════════════════════════════════
- * FiestaNetCrypto.h — DragonFiesta-Rewrite 499-byte XOR table cipher.
- *
- *   Source: zepheus_fiesta (2012) → DragonFiesta-Rewrite, ported to C++
- *   from the canonical reference reproduced verbatim by operator (Feb-2026).
- *
- *   ────────────────────────────────────────────────────────────────────
- *   ALGORITHM
- *   ────────────────────────────────────────────────────────────────────
- *   Rolling XOR over a fixed 499-byte table.  Both client and server
- *   maintain their own `XorPos` per connection; on connect, the server
- *   sends an initial offset (in CH3::FILE_HASH or the seed-ack handshake
- *   for the version that uses it) and the client mirrors it.  The
- *   position advances by `len` bytes for each cipher-bounded operation
- *   and wraps at 499.  XOR is involutive — same routine encrypts and
- *   decrypts.
- *
- *   ────────────────────────────────────────────────────────────────────
- *   COEXISTENCE WITH `FiestaCipher.h`
- *   ────────────────────────────────────────────────────────────────────
- *   The other cipher in this directory (`FiestaCipher.h`, the LCG
- *   variant) was derived from CN2012's `5ZoneServer2.exe`.  Different
- *   Fiesta forks use different ciphers; this header exists alongside
- *   it so the operator can switch via:
- *
- *       elle_master_config.json:
- *         "fiesta": { "cipher_kind": "xor499" | "lcg" }
- *
- *   The default is `"xor499"` (DragonFiesta-Rewrite — the public source
- *   most modern Fiesta deploys derive from).
- *══════════════════════════════════════════════════════════════════════════════*/
 #pragma once
 #ifndef ELLE_FIESTA_NET_CRYPTO_H
 #define ELLE_FIESTA_NET_CRYPTO_H
@@ -45,15 +14,12 @@ public:
 
     NetCryptoXor499() = default;
 
-    /** Construct with explicit initial offset.  Throws if offset >= 499. */
     explicit NetCryptoXor499(int16_t offset) {
         if (offset < 0 || offset >= kTableSize)
             throw std::out_of_range("XOR offset out of range [0,499)");
         m_pos = offset;
     }
 
-    /** XOR-cipher `len` bytes starting at `buf+offset`. Symmetric:
-     *  same call decrypts what the same key-stream encrypted.  */
     void Crypt(uint8_t* buf, int offset, int len) {
         if (!buf || len <= 0) return;
         for (int i = 0; i < len; ++i) {
@@ -73,9 +39,6 @@ private:
     static const uint8_t s_table[kTableSize];
 };
 
-/* The 499-byte table — confirmed against DragonFiesta-Rewrite reference
- * source AND the live retail Fiesta client.  DO NOT REORDER OR REWRAP —
- * any bit-level change here breaks every byte after position 0.        */
 inline const uint8_t NetCryptoXor499::s_table[NetCryptoXor499::kTableSize] = {
     0x07,0x59,0x69,0x4A,0x94,0x11,0x94,0x85,0x8C,0x88,0x05,0xCB,0xA0,0x9E,0xCD,0x58,
     0x3A,0x36,0x5B,0x1A,0x6A,0x16,0xFE,0xBD,0xDF,0x94,0x02,0xF8,0x21,0x96,0xC8,0xE9,
@@ -111,13 +74,6 @@ inline const uint8_t NetCryptoXor499::s_table[NetCryptoXor499::kTableSize] = {
     0xEE,0x8D,0xEB
 };
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Wire-format helpers — opcode = (header << 10) | (type & 0x3FF)
- *
- *   Length prefix:
- *     payload < 0x100  : [u8 length][u16 opcode][data...]
- *     payload >= 0x100 : [u8 0x00][u16 length][u16 opcode][data...]
- *──────────────────────────────────────────────────────────────────────────────*/
 namespace Packet {
 
 inline uint16_t MakeOpcode(uint8_t header, uint8_t type) {
@@ -133,12 +89,8 @@ inline uint8_t  GetType(uint16_t opcode) {
     return static_cast<uint8_t>(opcode & 0xFF);
 }
 
-} // namespace Packet
+}
 
-/*──────────────────────────────────────────────────────────────────────────────
- * Department / command constants — DragonFiesta-Rewrite canonical.
- *   CH = Client → Server   |   SH = Server → Client
- *──────────────────────────────────────────────────────────────────────────────*/
 namespace CH3 {
     constexpr uint8_t HEADER             =  3;
     constexpr uint8_t VERSION            =  1;
@@ -193,13 +145,6 @@ namespace SH4 {
     constexpr uint8_t CHAR_ACADEMY_INFO       = 151;
 }
 
-/*──────────────────────────────────────────────────────────────────────────────
- * FileCrypto — SHN body cipher (skip first 36 bytes of file).
- *   Same algorithm as ElleAnn/Android/SHNScreen.kt::shnCrypt — kept here
- *   for parity with FiestaCrypto.h reference and so server-side SHN ops
- *   (NPC dialog encrypt, etc) don't have to round-trip through the
- *   Android editor.
- *──────────────────────────────────────────────────────────────────────────────*/
 namespace FileCrypto {
 
 inline void Crypt(uint8_t* data, int index, int length) {
@@ -218,8 +163,8 @@ inline void Crypt(uint8_t* data, int index, int length) {
 
 inline void Crypt(uint8_t* data, int length) { Crypt(data, 0, length); }
 
-} // namespace FileCrypto
+}
 
-} // namespace Fiesta
+}
 
-#endif /* ELLE_FIESTA_NET_CRYPTO_H */
+#endif
