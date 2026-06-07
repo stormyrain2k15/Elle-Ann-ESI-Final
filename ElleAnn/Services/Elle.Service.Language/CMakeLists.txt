@@ -4,9 +4,6 @@ project(elle_engine
     DESCRIPTION "Elle's integer-indexed semantic language engine (non-LLM)"
     LANGUAGES CXX)
 
-# -------------------------------------------------------------------------
-# Compiler standards
-# -------------------------------------------------------------------------
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -18,16 +15,10 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor)
 endif()
 
-# -------------------------------------------------------------------------
-# Options
-# -------------------------------------------------------------------------
 option(ELLE_BUILD_TESTS    "Build unit tests"                ON)
 option(ELLE_BUILD_DEMOS    "Build heartbeat + smoke demos"   ON)
 option(ELLE_WITH_ODBC      "Build the SQL Server ODBC layer" ON)
 
-# -------------------------------------------------------------------------
-# Third-party (header-only, fetched at configure time)
-# -------------------------------------------------------------------------
 include(FetchContent)
 
 FetchContent_Declare(json
@@ -42,9 +33,6 @@ if(ELLE_BUILD_TESTS)
     FetchContent_MakeAvailable(doctest)
 endif()
 
-# -------------------------------------------------------------------------
-# Core engine library
-# -------------------------------------------------------------------------
 set(ELLE_CORE_SOURCES
     src/StringUtil.cpp
     src/Config.cpp
@@ -66,15 +54,12 @@ add_library(elle_core STATIC ${ELLE_CORE_SOURCES})
 target_include_directories(elle_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(elle_core PUBLIC nlohmann_json::nlohmann_json)
 
-# -------------------------------------------------------------------------
-# Optional ODBC / SQL Server layer
-# -------------------------------------------------------------------------
 if(ELLE_WITH_ODBC)
     if(WIN32)
-        # SQL Server's preferred client lib on Windows. odbc32 ships in the SDK.
+
         set(ELLE_ODBC_LIBS odbc32)
     else()
-        # unixODBC for Linux/macOS development builds. Production target is MSVC + odbc32.
+
         find_library(UNIXODBC_LIB NAMES odbc)
         if(UNIXODBC_LIB)
             set(ELLE_ODBC_LIBS ${UNIXODBC_LIB})
@@ -93,9 +78,6 @@ if(ELLE_WITH_ODBC)
     target_compile_definitions(elle_odbc PUBLIC ELLE_HAVE_ODBC=1)
 endif()
 
-# -------------------------------------------------------------------------
-# Demo executables
-# -------------------------------------------------------------------------
 if(ELLE_BUILD_DEMOS)
     add_executable(heartbeat_demo apps/heartbeat_demo.cpp)
     target_link_libraries(heartbeat_demo PRIVATE elle_core)
@@ -104,9 +86,6 @@ if(ELLE_BUILD_DEMOS)
     target_link_libraries(smoke_test PRIVATE elle_core)
 endif()
 
-# -------------------------------------------------------------------------
-# Tests
-# -------------------------------------------------------------------------
 if(ELLE_BUILD_TESTS)
     enable_testing()
     add_executable(elle_tests

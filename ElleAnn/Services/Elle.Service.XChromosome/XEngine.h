@@ -2,8 +2,8 @@
 #ifndef ELLE_X_ENGINE_H
 #define ELLE_X_ENGINE_H
 
-#include "../../Shared/ElleTypes.h"
-#include "../../Shared/json.hpp"
+#include "../_Shared/ElleTypes.h"
+#include "../_Shared/json.hpp"
 #include <string>
 #include <vector>
 #include <cstdint>

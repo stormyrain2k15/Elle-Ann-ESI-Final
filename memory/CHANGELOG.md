@@ -1,3 +1,46 @@
+## 2026-02 — Elle.Service.Probability (Windows Service wrapper) + Cognitive/XChromosome wiring
+
+- Added `SVC_PROBABILITY` to `ELLE_SERVICE_ID` (bumped `ELLE_SERVICE_COUNT` 21 → 22) and
+  registered `"Probability"` in `g_serviceNames` so the pipe `\\.\pipe\ElleAnn_Probability` resolves.
+- Added IPC message types: `IPC_PROB_ANALYZE`, `IPC_PROB_SCORE`, `IPC_PROB_FEEDBACK`,
+  `IPC_PROB_TRUST`, `IPC_PROB_INJECT_HORMONAL`, `IPC_PROB_RELOAD`,
+  `IPC_PROB_QUERY_WEIGHTS`, `IPC_PROB_SEED_WEIGHTS`, `IPC_PROB_RESET`, `IPC_PROB_RESPONSE`.
+- Created `Elle.Service.Probability/service/`:
+  - `ProbabilityHost.{h,cpp}` — thread-safe lifecycle owner of `elle::Engine`
+    (language) + `elle::prob::Bridge` (probability). Auto-loads on start, supports
+    explicit `reload()`. Works on both SQL Server (ODBC) and in-memory access layer.
+  - `ProbabilityProto.{h,cpp}` — pure JSON ↔ engine-type marshalling
+    (request / result / weights / convo / trust signal / hormonal state).
+  - `ProbabilityService.cpp` — `ElleServiceBase` skeleton with full Bridge API surface
+    over IPC.
+- Created `Elle.Service.Probability.vcxproj` (MSBuild), updated `ElleAnn.sln`
+  (project `{B1000000-0000-0000-0000-000000000015}` registered + grouped under `Services`).
+- Updated `Elle.Service.Probability/CMakeLists.txt` to also build:
+  - `elle_probability_host` static lib (Linux/CI compatible)
+  - `prob_host_smoke` (lifecycle + analyze + reload smoke test)
+  - `prob_proto_smoke` (IPC envelope JSON round-trip test, 34 checks)
+- Wired Cognitive (`CognitiveEngine.cpp`):
+  - Added `ProbCorrelator` (mirroring `WorldCorrelator`).
+  - `IPC_PROB_RESPONSE` is now routed back to the originating request.
+  - `HandleChatRequest` now fires `IPC_PROB_ANALYZE` after `QuickSentiment`,
+    formats the probabilistic read into the LLM system prompt, and emits a
+    `CONSISTENT_WITH_HISTORY` trust signal after a successful reply.
+  - Probability output now included in the chat response under `probabilistic_read`.
+  - Added `SVC_PROBABILITY` to Cognitive's `GetDependencies()`.
+- Wired XChromosome (`XChromosome.cpp`):
+  - `BroadcastHormoneUpdate()` also pushes `IPC_PROB_INJECT_HORMONAL` with hormone
+    levels mapped onto Elle's emotion-ID space.
+  - Added `SVC_PROBABILITY` to XChromosome's `GetDependencies()`.
+- Local verification (Linux container, CMake):
+  - `ctest`: **52 / 52** probability engine tests still pass.
+  - `./prob_host_smoke`: full lifecycle (start → analyze → feedback → trust →
+    inject hormonal → query weights → reload → analyze) **PASS**.
+  - `./prob_proto_smoke`: **34 / 34** IPC envelope checks pass.
+- Documented in `Docs/PROBABILITY_SERVICE.md` (IPC contract, config keys,
+  build & test instructions).
+- Nude-code policy preserved across all new source files.
+
+
 # Elle-Ann ESI v3.0 — CHANGELOG
 
 (PRD.md is the static source of truth; this file is the running log of

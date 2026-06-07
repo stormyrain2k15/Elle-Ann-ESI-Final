@@ -1,8 +1,8 @@
-#include "../../Shared/ElleTypes.h"
-#include "../../Shared/ElleServiceBase.h"
-#include "../../Shared/ElleLogger.h"
-#include "../../Shared/ElleConfig.h"
-#include "../../Shared/ElleSQLConn.h"
+#include "../_Shared/ElleTypes.h"
+#include "../_Shared/ElleServiceBase.h"
+#include "../_Shared/ElleLogger.h"
+#include "../_Shared/ElleConfig.h"
+#include "../_Shared/ElleSQLConn.h"
 #include <mutex>
 #include <vector>
 

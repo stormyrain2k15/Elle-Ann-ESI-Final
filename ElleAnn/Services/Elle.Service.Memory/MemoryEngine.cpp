@@ -1,9 +1,9 @@
 #include "MemoryEngine.h"
-#include "../../Shared/ElleLogger.h"
-#include "../../Shared/ElleConfig.h"
-#include "../../Shared/ElleSQLConn.h"
-#include "../../Shared/ElleLLM.h"
-#include "../../Shared/ElleWait.h"
+#include "../_Shared/ElleLogger.h"
+#include "../_Shared/ElleConfig.h"
+#include "../_Shared/ElleSQLConn.h"
+#include "../_Shared/ElleLLM.h"
+#include "../_Shared/ElleWait.h"
 #include <algorithm>
 #include <cmath>
 #include <sstream>

@@ -17,19 +17,19 @@ MinimumVisualStudioVersion = 10.0.40219.1
 # ============================================================================
 
 # --- Shared Static Library ---
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ElleCore.Shared", "Shared\ElleCore.Shared.vcxproj", "{A1000000-0000-0000-0000-000000000001}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ElleCore.Shared", "Services\_Shared\ElleCore.Shared.vcxproj", "{A1000000-0000-0000-0000-000000000001}"
 EndProject
 
 # --- ASM DLLs ---
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Elle.ASM.Hardware", "ASM\Elle.ASM.Hardware\Elle.ASM.Hardware.vcxproj", "{A2000000-0000-0000-0000-000000000001}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Elle.ASM.Hardware", "Services\Elle.ASM.Hardware\Elle.ASM.Hardware.vcxproj", "{A2000000-0000-0000-0000-000000000001}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Elle.ASM.Process", "ASM\Elle.ASM.Process\Elle.ASM.Process.vcxproj", "{A2000000-0000-0000-0000-000000000002}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Elle.ASM.Process", "Services\Elle.ASM.Process\Elle.ASM.Process.vcxproj", "{A2000000-0000-0000-0000-000000000002}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Elle.ASM.FileIO", "ASM\Elle.ASM.FileIO\Elle.ASM.FileIO.vcxproj", "{A2000000-0000-0000-0000-000000000003}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Elle.ASM.FileIO", "Services\Elle.ASM.FileIO\Elle.ASM.FileIO.vcxproj", "{A2000000-0000-0000-0000-000000000003}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Elle.ASM.Memory", "ASM\Elle.ASM.Memory\Elle.ASM.Memory.vcxproj", "{A2000000-0000-0000-0000-000000000004}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Elle.ASM.Memory", "Services\Elle.ASM.Memory\Elle.ASM.Memory.vcxproj", "{A2000000-0000-0000-0000-000000000004}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Elle.ASM.Crypto", "ASM\Elle.ASM.Crypto\Elle.ASM.Crypto.vcxproj", "{A2000000-0000-0000-0000-000000000005}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Elle.ASM.Crypto", "Services\Elle.ASM.Crypto\Elle.ASM.Crypto.vcxproj", "{A2000000-0000-0000-0000-000000000005}"
 EndProject
 
 # --- Services ---
@@ -72,6 +72,8 @@ EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Elle.Service.Family", "Services\Elle.Service.Family\Elle.Service.Family.vcxproj", "{B1000000-0000-0000-0000-000000000013}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Elle.Service.Fiesta", "Services\Elle.Service.Fiesta\Elle.Service.Fiesta.vcxproj", "{B1000000-0000-0000-0000-000000000014}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Elle.Service.Probability", "Services\Elle.Service.Probability\Elle.Service.Probability.vcxproj", "{B1000000-0000-0000-0000-000000000015}"
 EndProject
 
 # --- Lua Behavioral ---
@@ -202,6 +204,10 @@ Global
 		{B1000000-0000-0000-0000-000000000014}.Debug|x64.Build.0 = Debug|x64
 		{B1000000-0000-0000-0000-000000000014}.Release|x64.ActiveCfg = Release|x64
 		{B1000000-0000-0000-0000-000000000014}.Release|x64.Build.0 = Release|x64
+		{B1000000-0000-0000-0000-000000000015}.Debug|x64.ActiveCfg = Debug|x64
+		{B1000000-0000-0000-0000-000000000015}.Debug|x64.Build.0 = Debug|x64
+		{B1000000-0000-0000-0000-000000000015}.Release|x64.ActiveCfg = Release|x64
+		{B1000000-0000-0000-0000-000000000015}.Release|x64.Build.0 = Release|x64
 		{C1000000-0000-0000-0000-000000000001}.Debug|x64.ActiveCfg = Debug|x64
 		{C1000000-0000-0000-0000-000000000001}.Debug|x64.Build.0 = Debug|x64
 		{C1000000-0000-0000-0000-000000000001}.Release|x64.ActiveCfg = Release|x64
@@ -237,6 +243,7 @@ Global
 		{B1000000-0000-0000-0000-000000000012} = {D0000000-0000-0000-0000-000000000003}
 		{B1000000-0000-0000-0000-000000000013} = {D0000000-0000-0000-0000-000000000003}
 		{B1000000-0000-0000-0000-000000000014} = {D0000000-0000-0000-0000-000000000003}
+		{B1000000-0000-0000-0000-000000000015} = {D0000000-0000-0000-0000-000000000003}
 		{C1000000-0000-0000-0000-000000000001} = {D0000000-0000-0000-0000-000000000004}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution

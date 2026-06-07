@@ -1,6 +1,6 @@
 #include "XEngine.h"
-#include "../../Shared/ElleSQLConn.h"
-#include "../../Shared/ElleLogger.h"
+#include "../_Shared/ElleSQLConn.h"
+#include "../_Shared/ElleLogger.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>

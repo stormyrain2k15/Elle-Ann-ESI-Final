@@ -1,11 +1,11 @@
-#include "../../Shared/ElleTypes.h"
-#include "../../Shared/ElleServiceBase.h"
-#include "../../Shared/ElleLLM.h"
-#include "../../Shared/ElleLogger.h"
-#include "../../Shared/ElleConfig.h"
-#include "../../Shared/ElleSQLConn.h"
-#include "../../Shared/json.hpp"
-#include "../../Shared/ElleJsonExtract.h"
+#include "../_Shared/ElleTypes.h"
+#include "../_Shared/ElleServiceBase.h"
+#include "../_Shared/ElleLLM.h"
+#include "../_Shared/ElleLogger.h"
+#include "../_Shared/ElleConfig.h"
+#include "../_Shared/ElleSQLConn.h"
+#include "../_Shared/json.hpp"
+#include "../_Shared/ElleJsonExtract.h"
 #include <vector>
 #include <string>
 #include <queue>
@@ -219,6 +219,45 @@ private:
     std::unordered_map<std::string, std::shared_ptr<PendingWorld>> m_map;
 };
 
+struct PendingProb {
+    std::mutex               m;
+    std::condition_variable  cv;
+    bool                     done = false;
+    nlohmann::json           result;
+};
+
+class ProbCorrelator {
+public:
+    std::shared_ptr<PendingProb> Register(const std::string& requestId) {
+        auto p = std::make_shared<PendingProb>();
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m_map[requestId] = p;
+        return p;
+    }
+    void Release(const std::string& requestId) {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m_map.erase(requestId);
+    }
+    void Deliver(const std::string& requestId, nlohmann::json result) {
+        std::shared_ptr<PendingProb> p;
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            auto it = m_map.find(requestId);
+            if (it == m_map.end()) return;
+            p = it->second;
+        }
+        {
+            std::lock_guard<std::mutex> lk(p->m);
+            p->result = std::move(result);
+            p->done = true;
+        }
+        p->cv.notify_one();
+    }
+private:
+    std::mutex m_mutex;
+    std::unordered_map<std::string, std::shared_ptr<PendingProb>> m_map;
+};
+
 class ElleCognitiveService : public ElleServiceBase {
 public:
     ElleCognitiveService()
@@ -331,6 +370,114 @@ protected:
                << ", sentiment " << sent
                << ", seen " << count << "x";
             if (!model.empty()) ss << "\n    " << model;
+            ss << "\n";
+        }
+        ss << "\n";
+        return ss.str();
+    }
+
+    nlohmann::json FetchProbabilityRead(const std::string& userText,
+                                        const std::string& speakerId,
+                                        const std::vector<std::string>& entities,
+                                        const SentimentRead& sent) {
+        char rid[48];
+        snprintf(rid, sizeof(rid), "prob-%llu-%u",
+                 (unsigned long long)ELLE_MS_NOW(),
+                 (unsigned)(size_t)std::hash<std::thread::id>{}(std::this_thread::get_id()));
+
+        nlohmann::json convo;
+        convo["speakerRelationship"] = speakerId.empty() ? std::string("intimate") : speakerId;
+        nlohmann::json req;
+        req["request_id"] = rid;
+        req["text"]       = userText;
+        req["speaker_id"] = speakerId.empty() ? std::string("default") : speakerId;
+        req["convo"]      = std::move(convo);
+
+        uint32_t timeoutMs = (uint32_t)ElleConfig::Instance().GetInt(
+            "cognitive.probability_timeout_ms", 300);
+
+        auto pending = m_probCorrelator.Register(rid);
+        auto out = ElleIPCMessage::Create(IPC_PROB_ANALYZE, SVC_COGNITIVE, SVC_PROBABILITY);
+        out.SetStringPayload(req.dump());
+        if (!GetIPCHub().Send(SVC_PROBABILITY, out)) {
+            m_probCorrelator.Release(rid);
+            ELLE_DEBUG("IPC_PROB_ANALYZE send failed — degrading to no probabilistic read");
+            return nlohmann::json::object();
+        }
+
+        std::unique_lock<std::mutex> lk(pending->m);
+        bool got = pending->cv.wait_for(lk, std::chrono::milliseconds(timeoutMs),
+                                         [&]{ return pending->done; });
+        nlohmann::json result = got ? std::move(pending->result)
+                                    : nlohmann::json::object();
+        lk.unlock();
+        m_probCorrelator.Release(rid);
+
+        if (!got) {
+            ELLE_DEBUG("IPC_PROB_ANALYZE timed out after %ums (entities=%zu)",
+                       timeoutMs, entities.size());
+            return nlohmann::json::object();
+        }
+        if (!result.value("success", false)) {
+            ELLE_DEBUG("IPC_PROB_ANALYZE returned failure: %s",
+                       result.value("error", std::string("?")).c_str());
+            return nlohmann::json::object();
+        }
+        (void)sent;
+        return result;
+    }
+
+    std::string FormatProbabilityContext(const nlohmann::json& probJson) {
+        if (probJson.is_null() || probJson.empty()) return std::string();
+        if (!probJson.value("success", false))     return std::string();
+        if (!probJson.contains("result"))           return std::string();
+        const auto& r = probJson["result"];
+
+        std::ostringstream ss;
+        ss << "Probabilistic read of the user's message (deterministic, not an LLM guess):\n";
+
+        std::string act = r.value("likelyAct", std::string("UNKNOWN"));
+        double trust    = r.value("speakerTrust",      0.5);
+        double conf     = r.value("overallConfidence", 0.0);
+        ss << "  • Likely pragmatic act: " << act
+           << "  (speaker trust=" << std::fixed << std::setprecision(2) << trust
+           << ", overall confidence=" << conf << ")\n";
+
+        if (probJson.contains("likely_intent")) {
+            std::string li = probJson.value("likely_intent", std::string());
+            if (!li.empty()) ss << "  • Lexical intent label: " << li << "\n";
+        }
+
+        if (r.contains("emotionalPosterior") && r["emotionalPosterior"].is_object()) {
+            std::vector<std::pair<std::string, double>> top;
+            for (auto it = r["emotionalPosterior"].begin();
+                 it != r["emotionalPosterior"].end(); ++it) {
+                if (it.value().is_number()) {
+                    top.emplace_back(it.key(), it.value().get<double>());
+                }
+            }
+            std::sort(top.begin(), top.end(),
+                      [](const auto& a, const auto& b){ return a.second > b.second; });
+            if (!top.empty()) {
+                ss << "  • Top emotional posterior: ";
+                for (size_t i = 0; i < top.size() && i < 3; ++i) {
+                    if (i) ss << ", ";
+                    ss << "e" << top[i].first << "=" << std::setprecision(2) << top[i].second;
+                }
+                ss << "\n";
+            }
+        }
+
+        if (probJson.contains("unresolved_words") &&
+            probJson["unresolved_words"].is_array() &&
+            !probJson["unresolved_words"].empty()) {
+            ss << "  • Unresolved words: ";
+            bool first = true;
+            for (const auto& w : probJson["unresolved_words"]) {
+                if (!first) ss << ", ";
+                ss << w.get<std::string>();
+                first = false;
+            }
             ss << "\n";
         }
         ss << "\n";
@@ -459,6 +606,16 @@ protected:
                 }
                 break;
             }
+            case IPC_PROB_RESPONSE: {
+                try {
+                    auto j = nlohmann::json::parse(msg.GetStringPayload());
+                    std::string rid = j.value("request_id", "");
+                    if (!rid.empty()) m_probCorrelator.Deliver(rid, std::move(j));
+                } catch (const std::exception& e) {
+                    ELLE_DEBUG("IPC_PROB_RESPONSE malformed JSON: %s", e.what());
+                }
+                break;
+            }
             case IPC_CHAT_REQUEST: {
 
                 uint32_t maxQueue = (uint32_t)ElleConfig::Instance().GetInt(
@@ -495,13 +652,14 @@ protected:
     }
 
     std::vector<ELLE_SERVICE_ID> GetDependencies() override {
-        return { SVC_HEARTBEAT, SVC_EMOTIONAL, SVC_MEMORY, SVC_ACTION };
+        return { SVC_HEARTBEAT, SVC_EMOTIONAL, SVC_MEMORY, SVC_ACTION, SVC_PROBABILITY };
     }
 
 private:
     CognitiveEngine m_engine;
     ELLE_EMOTION_STATE m_cachedEmotions = {};
     WorldCorrelator m_worldCorrelator;
+    ProbCorrelator  m_probCorrelator;
 
     struct ChatItem {
         std::string      payload;
@@ -745,6 +903,9 @@ private:
         SentimentRead sent = QuickSentiment(userText);
         BroadcastEmotionDelta(sent);
 
+        nlohmann::json probJson = FetchProbabilityRead(userText, userId, entities, sent);
+        std::string    probCtx  = FormatProbabilityContext(probJson);
+
         std::vector<ELLE_MEMORY_RECORD> memories =
             CrossReferenceByEntities(entities, userText, mode);
 
@@ -876,6 +1037,8 @@ private:
             std::string worldCtx = FetchWorldContext(entities);
             if (!worldCtx.empty()) ctx << worldCtx;
         }
+
+        if (!probCtx.empty()) ctx << probCtx;
 
         {
             char buf[384];
@@ -1110,9 +1273,23 @@ private:
             {"latency_ms", (uint64_t)elapsed},
             {"provider_used", providerName},
             {"model_used",    llmResp.model_used},
-            {"system_prompt_bytes", (uint64_t)sysBytes}
+            {"system_prompt_bytes", (uint64_t)sysBytes},
+            {"probabilistic_read", probJson}
         };
         SendChatReply(reply_to, out);
+
+        if (probJson.value("success", false)) {
+            json trustReq = {
+                {"request_id", requestId + "-trust"},
+                {"speaker_id", userId.empty() ? std::string("default") : userId},
+                {"signal",     "CONSISTENT_WITH_HISTORY"},
+                {"strength",   0.5}
+            };
+            auto tMsg = ElleIPCMessage::Create(IPC_PROB_TRUST,
+                                               SVC_COGNITIVE, SVC_PROBABILITY);
+            tMsg.SetStringPayload(trustReq.dump());
+            GetIPCHub().Send(SVC_PROBABILITY, tMsg);
+        }
 
         try {
             json bondPayload = {

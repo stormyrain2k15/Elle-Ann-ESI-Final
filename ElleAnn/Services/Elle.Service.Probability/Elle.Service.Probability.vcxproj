@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <ProjectGuid>{B1000000-0000-0000-0000-000000000015}</ProjectGuid>
+    <RootNamespace>ElleServiceProbability</RootNamespace>
+    <ProjectName>Elle.Service.Probability</ProjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries Condition="'$(Configuration)'=='Debug'">true</UseDebugLibraries>
+    <UseDebugLibraries Condition="'$(Configuration)'=='Release'">false</UseDebugLibraries>
+  </PropertyGroup>
+  <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)include;$(ProjectDir)..\Elle.Service.Language\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>ELLE_PROB_HAS_LANGUAGE_BRIDGE=1;ELLE_HAVE_ODBC=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="service\ProbabilityHost.cpp" />
+    <ClCompile Include="service\ProbabilityProto.cpp" />
+    <ClCompile Include="service\ProbabilityService.cpp" />
+    <ClCompile Include="src\AuditTrace.cpp" />
+    <ClCompile Include="src\BayesianUpdater.cpp" />
+    <ClCompile Include="src\BeliefStore.cpp" />
+    <ClCompile Include="src\Bridge.cpp" />
+    <ClCompile Include="src\EmotionalPosteriorBuilder.cpp" />
+    <ClCompile Include="src\IntentAnalyzer.cpp" />
+    <ClCompile Include="src\ProbabilityEngine.cpp" />
+    <ClCompile Include="src\SenseProbabilityResolver.cpp" />
+    <ClCompile Include="src\SpeakerTrustModel.cpp" />
+    <ClCompile Include="src\Types.cpp" />
+    <ClCompile Include="..\Elle.Service.Language\src\Config.cpp" />
+    <ClCompile Include="..\Elle.Service.Language\src\ContextComparator.cpp" />
+    <ClCompile Include="..\Elle.Service.Language\src\DebugTrace.cpp" />
+    <ClCompile Include="..\Elle.Service.Language\src\EmotionalWeightProcessor.cpp" />
+    <ClCompile Include="..\Elle.Service.Language\src\Engine.cpp" />
+    <ClCompile Include="..\Elle.Service.Language\src\InMemoryAccessLayer.cpp" />
+    <ClCompile Include="..\Elle.Service.Language\src\InputNormalizer.cpp" />
+    <ClCompile Include="..\Elle.Service.Language\src\IntegerSequenceBuilder.cpp" />
+    <ClCompile Include="..\Elle.Service.Language\src\MeaningObjectBuilder.cpp" />
+    <ClCompile Include="..\Elle.Service.Language\src\OdbcConnection.cpp" />
+    <ClCompile Include="..\Elle.Service.Language\src\PhraseScanner.cpp" />
+    <ClCompile Include="..\Elle.Service.Language\src\SemanticGraphWalker.cpp" />
+    <ClCompile Include="..\Elle.Service.Language\src\SenseCandidateResolver.cpp" />
+    <ClCompile Include="..\Elle.Service.Language\src\SqlServerAccessLayer.cpp" />
+    <ClCompile Include="..\Elle.Service.Language\src\StringUtil.cpp" />
+    <ClCompile Include="..\Elle.Service.Language\src\WordFormResolver.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="service\ProbabilityHost.h" />
+    <ClInclude Include="service\ProbabilityProto.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\_Shared\ElleCore.Shared.vcxproj">
+      <Project>{a1000000-0000-0000-0000-000000000001}</Project>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

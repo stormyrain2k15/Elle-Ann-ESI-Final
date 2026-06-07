@@ -1,8 +1,8 @@
-#include "../../Shared/ElleTypes.h"
-#include "../../Shared/ElleServiceBase.h"
-#include "../../Shared/ElleLogger.h"
-#include "../../Shared/ElleQueueIPC.h"
-#include "../../Shared/json.hpp"
+#include "../_Shared/ElleTypes.h"
+#include "../_Shared/ElleServiceBase.h"
+#include "../_Shared/ElleLogger.h"
+#include "../_Shared/ElleQueueIPC.h"
+#include "../_Shared/json.hpp"
 #include "XEngine.h"
 #include <string>
 
@@ -125,7 +125,7 @@ protected:
     }
 
     std::vector<ELLE_SERVICE_ID> GetDependencies() override {
-        return { SVC_HEARTBEAT };
+        return { SVC_HEARTBEAT, SVC_PROBABILITY };
     }
 
     void OnMessage(const ElleIPCMessage& msg, ELLE_SERVICE_ID sender) override {
@@ -385,6 +385,29 @@ private:
         msg.header.flags |= ELLE_IPC_FLAG_BROADCAST;
         msg.SetStringPayload(payload.dump());
         GetIPCHub().Broadcast(msg);
+
+        json probState = {
+            {"1", (double)h.estrogen     - (double)h.cortisol},
+            {"2", (double)h.cortisol},
+            {"3", (double)h.cortisol     * 0.7},
+            {"4", (double)h.progesterone * 0.5},
+            {"5", (double)h.dopamine     + (double)h.serotonin * 0.5},
+            {"6", (double)h.oxytocin},
+            {"7", (double)h.oxytocin     * 0.8},
+            {"8", (double)h.serotonin},
+            {"10", (double)h.dopamine     * 0.6},
+            {"11", (double)h.dopamine     * 0.5},
+            {"12", (double)h.cortisol     * 0.4}
+        };
+        json probReq = {
+            {"request_id", std::string("xprob-") +
+                              std::to_string((unsigned long long)ELLE_MS_NOW())},
+            {"state",      probState}
+        };
+        auto probMsg = ElleIPCMessage::Create(IPC_PROB_INJECT_HORMONAL,
+                                              SVC_X_CHROMOSOME, SVC_PROBABILITY);
+        probMsg.SetStringPayload(probReq.dump());
+        GetIPCHub().Send(SVC_PROBABILITY, probMsg);
     }
 
     void BroadcastPhaseTransition(XCyclePhase from, XCyclePhase to) {

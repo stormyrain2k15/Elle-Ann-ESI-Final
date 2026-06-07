@@ -1,6 +1,6 @@
 #pragma once
-#include "../../Shared/ElleTypes.h"
-#include "../../Shared/ElleServiceBase.h"
+#include "../_Shared/ElleTypes.h"
+#include "../_Shared/ElleServiceBase.h"
 #include <vector>
 #include <string>
 #include <deque>

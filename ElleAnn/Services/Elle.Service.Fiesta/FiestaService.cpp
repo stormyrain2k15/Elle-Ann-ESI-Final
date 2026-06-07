@@ -4,13 +4,13 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
-#include "../../Shared/ElleTypes.h"
-#include "../../Shared/ElleServiceBase.h"
-#include "../../Shared/ElleConfig.h"
-#include "../../Shared/ElleLogger.h"
-#include "../../Shared/ElleLuaScalarReader.h"
-#include "../../Shared/ElleUserContinuity.h"
-#include "../../Shared/json.hpp"
+#include "../_Shared/ElleTypes.h"
+#include "../_Shared/ElleServiceBase.h"
+#include "../_Shared/ElleConfig.h"
+#include "../_Shared/ElleLogger.h"
+#include "../_Shared/ElleLuaScalarReader.h"
+#include "../_Shared/ElleUserContinuity.h"
+#include "../_Shared/json.hpp"
 
 #include "FiestaClient.h"
 #include "FiestaConsoleTrace.h"

@@ -44,7 +44,7 @@
     <ClInclude Include="EmotionalEngine.h" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\Shared\ElleCore.Shared.vcxproj">
+    <ProjectReference Include="..\_Shared\ElleCore.Shared.vcxproj">
       <Project>{a1000000-0000-0000-0000-000000000001}</Project>
     </ProjectReference>
   </ItemGroup>

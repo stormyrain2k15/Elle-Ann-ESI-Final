@@ -1,7 +1,7 @@
 #include "EmotionalEngine.h"
-#include "../../Shared/ElleLogger.h"
-#include "../../Shared/ElleConfig.h"
-#include "../../Shared/ElleSQLConn.h"
+#include "../_Shared/ElleLogger.h"
+#include "../_Shared/ElleConfig.h"
+#include "../_Shared/ElleSQLConn.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -9,7 +9,7 @@
 #include <iomanip>
 #include <mutex>
 #include <unordered_map>
-#include "../../Shared/ElleWait.h"
+#include "../_Shared/ElleWait.h"
 
 const char* EmotionalEngine::s_emotionNames[ELLE_MAX_EMOTIONS] = {
 
