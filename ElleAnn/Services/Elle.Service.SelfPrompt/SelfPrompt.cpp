@@ -4,6 +4,8 @@
 #include "../_Shared/ElleLogger.h"
 #include "../_Shared/ElleConfig.h"
 #include "../_Shared/ElleSQLConn.h"
+#include "../_Shared/ElleJsonExtract.h"
+#include "../_Shared/json.hpp"
 #include <random>
 #include <chrono>
 
@@ -84,13 +86,17 @@ protected:
             m_lastPromptMs = now;
         }
 
+        if (msg.header.msg_type == IPC_IMAGINATION_RESULT) {
+            HandleImaginationResult(msg);
+        }
+
         if (sender == SVC_HTTP_SERVER || sender == SVC_COGNITIVE) {
             m_lastUserInteraction = ELLE_MS_NOW();
         }
     }
 
     std::vector<ELLE_SERVICE_ID> GetDependencies() override {
-        return { SVC_HEARTBEAT, SVC_EMOTIONAL, SVC_MEMORY, SVC_COGNITIVE };
+        return { SVC_HEARTBEAT, SVC_EMOTIONAL, SVC_MEMORY, SVC_COGNITIVE, SVC_IMAGINATION };
     }
 
 private:
@@ -156,7 +162,67 @@ private:
             strncpy_s(newIntent.description, resp.content, ELLE_MAX_MSG - 1);
             strncpy_s(newIntent.parameters, "origin=selfprompt", ELLE_MAX_MSG - 1);
             ElleDB::SubmitIntent(newIntent);
+
+            MaybeRequestImagination(prompt, resp.content);
         }
+    }
+
+    void MaybeRequestImagination(const std::string& topic, const std::string& thought) {
+        auto& cfg = ElleConfig::Instance();
+        if (!cfg.GetBool("self_prompt.request_imagination", true)) return;
+
+        float prob = (float)cfg.GetFloat("self_prompt.imagination_probability", 0.35);
+        std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+        const bool curiosityHigh =
+            m_drives.intensity[DRIVE_CURIOSITY] > m_drives.threshold[DRIVE_CURIOSITY];
+        const bool boredomHigh =
+            m_drives.intensity[DRIVE_BOREDOM]   > m_drives.threshold[DRIVE_BOREDOM];
+        if (!(curiosityHigh || boredomHigh) && dist(m_rng) > prob) return;
+
+        char rid[64];
+        snprintf(rid, sizeof(rid), "self-imag-%llu",
+                 (unsigned long long)ELLE_MS_NOW());
+
+        nlohmann::json req;
+        req["request_id"]     = rid;
+        req["goal"]           = std::string("From this self-prompt, imagine what could "
+                                            "happen next: ") + topic;
+        req["sample_k"]       = (int)cfg.GetInt("self_prompt.imagination_sample_k", 5);
+        req["max_iterations"] = (int)cfg.GetInt("self_prompt.imagination_iterations", 2);
+        req["constraints"]    = nlohmann::json::array(
+                                { "must respect consent",
+                                  "must be honest",
+                                  std::string("must connect to: ") +
+                                      thought.substr(0, std::min<size_t>(thought.size(), 120)) });
+
+        auto imag = ElleIPCMessage::Create(IPC_IMAGINATION_REQUEST,
+                                           SVC_SELF_PROMPT, SVC_IMAGINATION);
+        imag.SetStringPayload(req.dump());
+        GetIPCHub().Send(SVC_IMAGINATION, imag);
+        ELLE_INFO("SelfPrompt → SVC_IMAGINATION dispatched (rid=%s)", rid);
+    }
+
+    void HandleImaginationResult(const ElleIPCMessage& msg) {
+        nlohmann::json j;
+        if (!Elle::ExtractJsonObject(msg.GetStringPayload(), j)) return;
+
+        std::string summary = j.value("refined", j.value("summary", std::string()));
+        if (summary.empty()) return;
+
+        double overall = 0.0;
+        if (j.contains("scores") && j["scores"].is_object()) {
+            overall = j["scores"].value("overall", 0.0);
+        }
+        if (overall < 0.35) {
+            ELLE_DEBUG("SelfPrompt: discarding imagined scenario (overall=%.2f)", overall);
+            return;
+        }
+
+        auto storeMsg = ElleIPCMessage::Create(IPC_MEMORY_STORE,
+                                               SVC_SELF_PROMPT, SVC_MEMORY);
+        storeMsg.SetStringPayload(std::string("[Imagined-while-thinking] ") + summary);
+        GetIPCHub().Send(SVC_MEMORY, storeMsg);
+        ELLE_INFO("SelfPrompt: imagined scenario stored (overall=%.2f)", overall);
     }
 
     std::string ChooseTopic() {

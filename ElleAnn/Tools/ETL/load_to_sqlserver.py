@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--batch-size", type=int, default=5000)
     ap.add_argument("--skip", default="", help="Comma-sep list of stages to skip "
                     "(words, phrases, senses, examples, emotions, relations, "
-                    "concepts, phrase_senses).")
+                    "concepts, phrase_senses, augmentations).")
     return ap.parse_args()
 
 def connect(args: argparse.Namespace) -> pyodbc.Connection:
@@ -93,7 +93,7 @@ def load_words(conn: pyodbc.Connection, csv_path: Path, batch_size: int) -> None
     print(f"[stage:words]   staged {n:,} rows; calling usp_LoadStagingWords ...")
     cur.execute("EXEC dbo.usp_LoadStagingWords")
     conn.commit()
-    print(f"[stage:words]   done.")
+    print("[stage:words]   done.")
 
 def load_phrases(conn: pyodbc.Connection, dir_: Path, batch_size: int) -> None:
     print("[stage:phrases] loading phrases.csv + phrase_words.csv")
@@ -382,6 +382,224 @@ def load_concepts(conn: pyodbc.Connection, dir_: Path,
     conn.commit()
     print(f"[stage:concepts]   staged {n:,} member rows; merged.")
 
+def load_augmentations(conn: pyodbc.Connection, dir_: Path,
+                       sense_map: Dict[str, int], batch_size: int) -> None:
+    cur = cursor(conn)
+
+    nrc_csv = dir_ / "sense_emotions_nrc.csv"
+    if nrc_csv.exists():
+        print("[aug:nrc_emolex] sense_emotions_nrc ...")
+        cur.execute("""
+            IF OBJECT_ID('tempdb..#StagingEmoNRC') IS NOT NULL DROP TABLE #StagingEmoNRC;
+            CREATE TABLE #StagingEmoNRC (
+                SenseID     BIGINT       NOT NULL,
+                EmotionCode NVARCHAR(32) NOT NULL,
+                Weight      DECIMAL(6,4) NOT NULL
+            );
+        """)
+        n = 0
+        for batch in in_batches(iter_csv(nrc_csv), batch_size):
+            rows = []
+            for r in batch:
+                sid = sense_map.get(r["SourceTag"])
+                if sid is None:
+                    continue
+                rows.append((sid, r["EmotionCode"], float(r["Weight"])))
+            if rows:
+                cur.executemany(
+                    "INSERT INTO #StagingEmoNRC (SenseID, EmotionCode, Weight) "
+                    "VALUES (?, ?, ?)", rows)
+                n += len(rows)
+        cur.execute("""
+            INSERT INTO dbo.SenseEmotion (SenseID, EmotionID, Weight)
+            SELECT se.SenseID, e.EmotionID, se.Weight
+            FROM #StagingEmoNRC se
+            JOIN dbo.Emotion e ON e.Code = se.EmotionCode
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dbo.SenseEmotion x
+                WHERE x.SenseID = se.SenseID AND x.EmotionID = e.EmotionID
+            );
+        """)
+        conn.commit()
+        print(f"[aug:nrc_emolex]  staged {n:,} rows; merged into SenseEmotion.")
+    else:
+        print(f"[aug:nrc_emolex] skipped (no {nrc_csv.name})")
+
+    vad_csv = dir_ / "sense_valence_vad.csv"
+    if vad_csv.exists():
+        print("[aug:nrc_vad] sense_valence_vad ...")
+        cur.execute("""
+            IF OBJECT_ID('tempdb..#StagingVAD') IS NOT NULL DROP TABLE #StagingVAD;
+            CREATE TABLE #StagingVAD (
+                SenseID      BIGINT       NOT NULL,
+                Valence      DECIMAL(6,4) NOT NULL,
+                PositiveDraw DECIMAL(6,4) NOT NULL,
+                NegativeDraw DECIMAL(6,4) NOT NULL,
+                Arousal      DECIMAL(6,4) NOT NULL,
+                Dominance    DECIMAL(6,4) NOT NULL
+            );
+        """)
+        n = 0
+        for batch in in_batches(iter_csv(vad_csv), batch_size):
+            rows = []
+            for r in batch:
+                sid = sense_map.get(r["SourceTag"])
+                if sid is None:
+                    continue
+                rows.append((
+                    sid,
+                    float(r["Valence"]),
+                    float(r["PositiveDraw"]),
+                    float(r["NegativeDraw"]),
+                    float(r.get("Arousal")   or 0.0),
+                    float(r.get("Dominance") or 0.0),
+                ))
+            if rows:
+                cur.executemany(
+                    "INSERT INTO #StagingVAD (SenseID, Valence, PositiveDraw, "
+                    "NegativeDraw, Arousal, Dominance) VALUES (?, ?, ?, ?, ?, ?)",
+                    rows)
+                n += len(rows)
+        cur.execute("""
+            UPDATE s
+               SET s.Valence      = v.Valence,
+                   s.PositiveDraw = v.PositiveDraw,
+                   s.NegativeDraw = v.NegativeDraw
+              FROM dbo.Sense s
+              JOIN #StagingVAD v ON v.SenseID = s.SenseID;
+        """)
+        conn.commit()
+        print(f"[aug:nrc_vad]    staged {n:,} rows; updated Sense valence/pos/neg.")
+    else:
+        print(f"[aug:nrc_vad] skipped (no {vad_csv.name})")
+
+    wikt_words = dir_ / "words_wikt.csv"
+    if wikt_words.exists():
+        print("[aug:wikt] words_wikt ...")
+        cur.execute("""
+            IF OBJECT_ID('tempdb..#StagingWordWikt') IS NOT NULL
+                DROP TABLE #StagingWordWikt;
+            CREATE TABLE #StagingWordWikt (
+                Lemma           NVARCHAR(128) NOT NULL,
+                NormalizedLemma NVARCHAR(128) NOT NULL,
+                IsPalindrome    BIT           NOT NULL DEFAULT 0,
+                Frequency       BIGINT        NOT NULL DEFAULT 0,
+                SourceTag       NVARCHAR(64)  NOT NULL
+            );
+        """)
+        n = 0
+        for batch in in_batches(iter_csv(wikt_words), batch_size):
+            rows = [(r["Lemma"], r["NormalizedLemma"],
+                     int(r.get("IsPalindrome") or 0),
+                     int(r.get("Frequency") or 0),
+                     r["SourceTag"]) for r in batch]
+            cur.executemany(
+                "INSERT INTO #StagingWordWikt (Lemma, NormalizedLemma, "
+                "IsPalindrome, Frequency, SourceTag) VALUES (?, ?, ?, ?, ?)", rows)
+            n += len(rows)
+        cur.execute("""
+            INSERT INTO dbo.Word (Lemma, NormalizedLemma, IsPalindrome, Frequency)
+            SELECT sw.Lemma, sw.NormalizedLemma, sw.IsPalindrome, sw.Frequency
+              FROM #StagingWordWikt sw
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM dbo.Word w
+                  WHERE w.NormalizedLemma = sw.NormalizedLemma
+             );
+        """)
+        conn.commit()
+        print(f"[aug:wikt]       staged {n:,} word rows; merged new entries into Word.")
+    else:
+        print(f"[aug:wikt] words_wikt skipped (no {wikt_words.name})")
+
+    wikt_senses = dir_ / "senses_wikt.csv"
+    if wikt_senses.exists():
+        print("[aug:wikt] senses_wikt ...")
+        cur.execute("""
+            IF OBJECT_ID('tempdb..#StagingSense') IS NOT NULL DROP TABLE #StagingSense;
+            IF OBJECT_ID('tempdb..#StagingSenseOut') IS NOT NULL
+                DROP TABLE #StagingSenseOut;
+            CREATE TABLE #StagingSense (
+                NormalizedLemma NVARCHAR(128) NOT NULL,
+                PosCode         NVARCHAR(16)  NULL,
+                SenseOrder      INT           NOT NULL,
+                Definition      NVARCHAR(1024) NOT NULL,
+                Gloss           NVARCHAR(256) NULL,
+                PositiveDraw    DECIMAL(6,4)  NULL,
+                NegativeDraw    DECIMAL(6,4)  NULL,
+                Valence         DECIMAL(6,4)  NULL,
+                Frequency       BIGINT        NULL,
+                SourceTag       NVARCHAR(64)  NOT NULL
+            );
+        """)
+        n = 0
+        for batch in in_batches(iter_csv(wikt_senses), batch_size):
+            rows = [(r["NormalizedLemma"], r.get("PosCode") or None,
+                     int(r["SenseOrder"]),
+                     (r["Definition"] or "")[:1024],
+                     (r.get("Gloss") or None) if r.get("Gloss") else None,
+                     float(r.get("PositiveDraw") or 0.0),
+                     float(r.get("NegativeDraw") or 0.0),
+                     float(r.get("Valence") or 0.0),
+                     int(r.get("Frequency") or 0),
+                     r["SourceTag"]) for r in batch]
+            cur.executemany(
+                "INSERT INTO #StagingSense (NormalizedLemma, PosCode, SenseOrder, "
+                "Definition, Gloss, PositiveDraw, NegativeDraw, Valence, "
+                "Frequency, SourceTag) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+            n += len(rows)
+        cur.execute("EXEC dbo.usp_LoadStagingSenses")
+        cur.execute("SELECT SourceTag, SenseID FROM #StagingSenseOut")
+        added = {tag: int(sid) for tag, sid in cur.fetchall()}
+        sense_map.update(added)
+        conn.commit()
+        print(f"[aug:wikt]       staged {n:,} sense rows; added "
+              f"{len(added):,} new SenseID mappings.")
+    else:
+        print(f"[aug:wikt] senses_wikt skipped (no {wikt_senses.name})")
+
+    wikt_rel = dir_ / "word_relations_wikt.csv"
+    if wikt_rel.exists():
+        print("[aug:wikt] word_relations_wikt ...")
+        cur.execute("""
+            IF OBJECT_ID('tempdb..#StagingWR') IS NOT NULL DROP TABLE #StagingWR;
+            CREATE TABLE #StagingWR (
+                FromNormalizedLemma NVARCHAR(128) NOT NULL,
+                ToNormalizedLemma   NVARCHAR(128) NOT NULL,
+                RelationCode        NVARCHAR(32)  NOT NULL,
+                Strength            DECIMAL(6,4)  NOT NULL
+            );
+        """)
+        n = 0
+        for batch in in_batches(iter_csv(wikt_rel), batch_size):
+            rows = [(r["FromNormalizedLemma"],
+                     r["ToNormalizedLemma"],
+                     r["RelationCode"],
+                     float(r.get("Strength") or 0.5)) for r in batch]
+            cur.executemany(
+                "INSERT INTO #StagingWR (FromNormalizedLemma, ToNormalizedLemma, "
+                "RelationCode, Strength) VALUES (?, ?, ?, ?)", rows)
+            n += len(rows)
+        cur.execute("""
+            INSERT INTO dbo.WordRelation (FromWordID, ToWordID, RelationTypeID, Strength)
+            SELECT fw.WordID, tw.WordID, rt.RelationTypeID, wr.Strength
+              FROM #StagingWR wr
+              JOIN dbo.Word fw         ON fw.NormalizedLemma = wr.FromNormalizedLemma
+              JOIN dbo.Word tw         ON tw.NormalizedLemma = wr.ToNormalizedLemma
+              JOIN dbo.RelationType rt ON rt.Code = wr.RelationCode
+             WHERE fw.WordID <> tw.WordID
+               AND NOT EXISTS (
+                   SELECT 1 FROM dbo.WordRelation x
+                    WHERE x.FromWordID     = fw.WordID
+                      AND x.ToWordID       = tw.WordID
+                      AND x.RelationTypeID = rt.RelationTypeID
+               );
+        """)
+        conn.commit()
+        print(f"[aug:wikt]       staged {n:,} relation rows; merged into WordRelation.")
+    else:
+        print(f"[aug:wikt] word_relations_wikt skipped (no {wikt_rel.name})")
+
+
 def main() -> None:
     args = parse_args()
     input_dir = Path(args.input_dir)
@@ -407,6 +625,8 @@ def main() -> None:
         load_relations(conn, input_dir, sense_map, args.batch_size)
     if "concepts" not in skip and sense_map:
         load_concepts(conn, input_dir, sense_map, args.batch_size)
+    if "augmentations" not in skip and sense_map:
+        load_augmentations(conn, input_dir, sense_map, args.batch_size)
 
     conn.close()
     print(f"[run] ALL DONE in {time.time() - t0:.1f}s")
