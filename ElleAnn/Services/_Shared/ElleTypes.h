@@ -331,12 +331,13 @@ typedef enum ELLE_SERVICE_ID {
     SVC_CONSENT,
     SVC_FIESTA,
     SVC_PROBABILITY,
+    SVC_MIND_MANAGER,
     ELLE_SERVICE_COUNT
 } ELLE_SERVICE_ID;
 
 #ifdef __cplusplus
 
-static_assert((int)ELLE_SERVICE_COUNT == 22,
+static_assert((int)ELLE_SERVICE_COUNT == 23,
               "ELLE_SERVICE_COUNT changed — update g_serviceNames[], "
               "Heartbeat service state arrays, and GetPipeName() switch "
               "in lockstep before bumping this assert.");
