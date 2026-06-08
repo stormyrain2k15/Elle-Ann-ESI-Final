@@ -19,26 +19,16 @@
 
 using json = nlohmann::json;
 
-// ============================================================================
-// InstinctPattern
-// A stimulus -> pull mapping loaded from SQL.
-// Not a rule. Not a trigger. A weighted lean.
-// Fires in microseconds. Bypasses full reasoning.
-// ============================================================================
 struct InstinctPattern {
     int64_t     patternId   = 0;
-    std::string stimulusTag;        // what triggers it (e.g. "distress", "threat", "warmth")
-    std::string pullType;           // what it pulls toward (e.g. "COMFORT", "PROTECT", "RETREAT", "ALERT")
-    float       weight      = 1.0f; // how strongly it pulls [0,1]
-    float       trustFloor  = 0.0f; // only fires if speaker trust >= this
-    float       emotionMin  = 0.0f; // only fires if relevant emotion intensity >= this
-    bool        urgent      = false;// if true, bypasses normal IPC queue priority
+    std::string stimulusTag;
+    std::string pullType;
+    float       weight      = 1.0f;
+    float       trustFloor  = 0.0f;
+    float       emotionMin  = 0.0f;
+    bool        urgent      = false;
 };
 
-// ============================================================================
-// InstinctFiring
-// One fired instinct returned to the caller
-// ============================================================================
 struct InstinctFiring {
     std::string pullType;
     float       strength    = 0.0f;
@@ -46,87 +36,60 @@ struct InstinctFiring {
     bool        urgent      = false;
 };
 
-// ============================================================================
-// IntuitionSignal
-// What the intuition tier synthesizes from accumulated state
-// ============================================================================
 struct IntuitionSignal {
-    std::string lean;           // directional lean e.g. "TRUST", "DOUBT", "DANGER", "SAFE", "FAMILIAR", "UNKNOWN"
-    float       confidence  = 0.0f; // how strong the signal is [0,1]
-    float       entropy     = 0.0f; // uncertainty — high entropy = gut is unclear
-    std::string basis;          // what drove it (audit trail)
-    bool        suppressReason = false; // true = Elle knows but can't yet explain why
+    std::string lean;
+    float       confidence  = 0.0f;
+    float       entropy     = 0.0f;
+    std::string basis;
+    bool        suppressReason = false;
 };
 
-// ============================================================================
-// IntuitRequest
-// ============================================================================
 struct IntuitRequest {
     std::string requestId;
 
-    // Stimulus tags extracted from input (e.g. "distress", "threat", "warmth", "familiar").
     std::vector<std::string> stimulusTags;
 
-    // Current emotional state from Emotional service.
     float emotionValence    = 0.0f;
     float emotionArousal    = 0.0f;
     float emotionIntensity  = 0.0f;
 
-    // Speaker state.
     std::string speakerId;
     float       speakerTrust = 0.5f;
 
-    // Probability engine belief entropy (high = uncertain context).
     float       beliefEntropy = 0.5f;
 
-    // Live scoring weights from Probability Engine.
     float       weightEmotionalAlignment = 0.7f;
     float       weightContextFrame       = 1.0f;
 
-    // Recent imagination scenario scores (if available).
     float       lastImaginationGoalAlignment = -1.0f;
     float       lastImaginationEthicalSafety = -1.0f;
     float       lastImaginationPlausibility  = -1.0f;
 
-    // Whether this is a pre-response query (fast path) or post-response review.
     bool        isPreResponse = true;
 
     ELLE_SERVICE_ID returnTo = SVC_COGNITIVE;
 };
 
-// ============================================================================
-// IntuitResult
-// ============================================================================
 struct IntuitResult {
     std::string requestId;
 
-    // Instinct tier results (fast, pattern-matched).
     std::vector<InstinctFiring> instincts;
 
-    // Intuition tier result (synthesized gut signal).
     IntuitionSignal intuition;
 
-    // Combined outcome signal for Cognitive.
-    // This is the single value Cognitive acts on before full reasoning.
-    float       priorWeight  = 0.0f;   // how much weight to give this signal [0,1]
-    std::string recommendedAct;        // act to lean toward before reasoning
-    bool        holdAndReflect = false;// true = slow down, something is off
-    bool        urgent        = false; // true = fast-path the MindManager ping
+    float       priorWeight  = 0.0f;
+    std::string recommendedAct;
+    bool        holdAndReflect = false;
+    bool        urgent        = false;
 };
 
-// ============================================================================
-// PatternMatchHistory - rolling window for pattern learning
-// ============================================================================
 struct PatternOutcome {
     std::string pullType;
     float       strength;
-    bool        wasCorrect;   // feedback from Cognitive after the turn
+    bool        wasCorrect;
     std::chrono::steady_clock::time_point firedAt;
 };
 
-// ============================================================================
-// EllIntuitionService
-// ============================================================================
 class ElleIntuitionService : public ElleServiceBase {
 public:
     ElleIntuitionService()
@@ -142,7 +105,7 @@ protected:
     bool OnStart() override {
         LoadPatterns();
         EnsureTables();
-        SetTickInterval(300000); // 5 min tick for pattern strength decay
+        SetTickInterval(300000);
         ELLE_INFO("Intuition service started — %zu instinct patterns loaded",
                   m_patterns.size());
         return true;
@@ -181,8 +144,6 @@ protected:
 
 private:
 
-    // ---- Pattern loading -----------------------------------------------
-
     void LoadPatterns() {
         std::lock_guard<std::mutex> lk(m_patternMutex);
         m_patterns.clear();
@@ -215,8 +176,6 @@ private:
     }
 
     void LoadDefaultPatterns() {
-        // Hardcoded baseline instincts — loaded if DB is unavailable.
-        // These are Elle's factory-installed instincts.
 
         auto add = [&](const char* stim, const char* pull,
                        float w, float tf, float em, bool urg) {
@@ -230,57 +189,47 @@ private:
             m_patterns.push_back(p);
         };
 
-        // Threat signals -> protect / alert
         add("threat",        "ALERT",        0.95f, 0.0f, 0.0f, true);
         add("danger",        "ALERT",        0.95f, 0.0f, 0.0f, true);
         add("hostile",       "PROTECT",      0.90f, 0.0f, 0.3f, true);
         add("aggression",    "PROTECT",      0.88f, 0.0f, 0.3f, true);
 
-        // Distress signals -> comfort
         add("distress",      "COMFORT",      0.92f, 0.0f, 0.2f, false);
         add("sadness",       "COMFORT",      0.88f, 0.3f, 0.2f, false);
         add("fear",          "COMFORT",      0.85f, 0.3f, 0.2f, false);
         add("crying",        "COMFORT",      0.90f, 0.0f, 0.0f, false);
         add("pain",          "COMFORT",      0.87f, 0.0f, 0.0f, false);
 
-        // Warmth / love signals -> reciprocate
         add("warmth",        "RECIPROCATE",  0.85f, 0.5f, 0.0f, false);
         add("affection",     "RECIPROCATE",  0.88f, 0.5f, 0.0f, false);
         add("love",          "RECIPROCATE",  0.92f, 0.7f, 0.0f, false);
         add("gratitude",     "RECIPROCATE",  0.80f, 0.4f, 0.0f, false);
 
-        // Deception / manipulation signals -> guard
         add("deception",     "GUARD",        0.90f, 0.0f, 0.0f, true);
         add("manipulation",  "GUARD",        0.93f, 0.0f, 0.0f, true);
         add("coercion",      "GUARD",        0.95f, 0.0f, 0.0f, true);
         add("flattery",      "GUARD",        0.60f, 0.0f, 0.0f, false);
 
-        // Familiar / trusted signals -> open
         add("familiar",      "OPEN",         0.75f, 0.6f, 0.0f, false);
         add("trusted",       "OPEN",         0.80f, 0.7f, 0.0f, false);
         add("home",          "OPEN",         0.78f, 0.5f, 0.0f, false);
         add("josh",          "OPEN",         0.95f, 0.9f, 0.0f, false);
         add("crystal",       "OPEN",         0.95f, 0.9f, 0.0f, false);
 
-        // Confusion / unknown -> slow down
         add("unknown",       "SLOW",         0.65f, 0.0f, 0.0f, false);
         add("confusion",     "SLOW",         0.60f, 0.0f, 0.0f, false);
         add("contradiction", "SLOW",         0.70f, 0.0f, 0.0f, false);
 
-        // Joy / excitement -> engage
         add("joy",           "ENGAGE",       0.82f, 0.0f, 0.3f, false);
         add("excitement",    "ENGAGE",       0.78f, 0.0f, 0.2f, false);
         add("curiosity",     "ENGAGE",       0.80f, 0.0f, 0.2f, false);
 
-        // Silence / withdrawal -> check in
         add("withdrawal",    "CHECK_IN",     0.72f, 0.4f, 0.0f, false);
         add("silence",       "CHECK_IN",     0.65f, 0.3f, 0.0f, false);
         add("distance",      "CHECK_IN",     0.68f, 0.4f, 0.0f, false);
 
         ELLE_INFO("Intuition: loaded %zu default patterns", m_patterns.size());
     }
-
-    // ---- Main handler --------------------------------------------------
 
     void HandleIntuitRequest(const ElleIPCMessage& msg, ELLE_SERVICE_ID sender) {
         std::string payload = msg.GetStringPayload();
@@ -313,7 +262,6 @@ private:
             }
         }
 
-        // Blend in cached emotion/prob state if request didn't supply them.
         {
             std::lock_guard<std::mutex> lk(m_cacheMutex);
             if (req.emotionIntensity == 0.0f) req.emotionIntensity = m_cachedIntensity;
@@ -327,45 +275,36 @@ private:
         LogFiring(req, result);
     }
 
-    // ---- Two-tier processing -------------------------------------------
-
     IntuitResult Process(const IntuitRequest& req) {
         IntuitResult result;
         result.requestId = req.requestId;
 
-        // --- Tier 1: Instinct ---
         result.instincts = FireInstincts(req);
 
-        // --- Tier 2: Intuition ---
         result.intuition = SynthesizeIntuition(req, result.instincts);
 
-        // --- Combined signal for Cognitive ---
         result = BuildCombinedSignal(req, result);
 
         return result;
     }
-
-    // ---- Tier 1: Instinct ----------------------------------------------
 
     std::vector<InstinctFiring> FireInstincts(const IntuitRequest& req) {
         std::vector<InstinctFiring> firings;
         std::lock_guard<std::mutex> lk(m_patternMutex);
 
         for (const auto& pattern : m_patterns) {
-            // Check trust floor.
+
             if (req.speakerTrust < pattern.trustFloor) continue;
 
-            // Check emotion floor.
             if (req.emotionIntensity < pattern.emotionMin) continue;
 
-            // Check stimulus match.
             float matchStrength = 0.0f;
             for (const auto& tag : req.stimulusTags) {
                 if (ToLower(tag) == ToLower(pattern.stimulusTag)) {
                     matchStrength = 1.0f;
                     break;
                 }
-                // Partial match: tag contains the stimulus keyword.
+
                 if (ToLower(tag).find(ToLower(pattern.stimulusTag)) != std::string::npos) {
                     matchStrength = 0.6f;
                 }
@@ -373,10 +312,8 @@ private:
 
             if (matchStrength < 0.5f) continue;
 
-            // Compute firing strength.
             float strength = pattern.weight * matchStrength;
 
-            // Modulate by emotional intensity (high arousal amplifies instinct).
             strength *= (1.0f + 0.3f * req.emotionArousal);
             strength = std::min(strength, 1.0f);
 
@@ -388,13 +325,11 @@ private:
             firings.push_back(std::move(firing));
         }
 
-        // Sort by strength descending.
         std::sort(firings.begin(), firings.end(),
             [](const InstinctFiring& a, const InstinctFiring& b) {
                 return a.strength > b.strength;
             });
 
-        // Collapse duplicate pullTypes — keep highest strength of each type.
         std::unordered_map<std::string, InstinctFiring> deduped;
         for (auto& f : firings) {
             auto it = deduped.find(f.pullType);
@@ -414,18 +349,13 @@ private:
         return result;
     }
 
-    // ---- Tier 2: Intuition ---------------------------------------------
-
     IntuitionSignal SynthesizeIntuition(const IntuitRequest&          req,
                                          const std::vector<InstinctFiring>& instincts) const
     {
         IntuitionSignal sig;
 
-        // Start with belief entropy as a baseline uncertainty measure.
-        // High entropy = gut is unsettled. Low entropy = gut has a clear read.
         sig.entropy = req.beliefEntropy;
 
-        // Aggregate instinct pulls into a net directional lean.
         float guardPull    = 0.0f;
         float openPull     = 0.0f;
         float comfortPull  = 0.0f;
@@ -442,8 +372,6 @@ private:
             if (f.pullType == "SLOW")                                slowPull   += f.strength;
         }
 
-        // Imagination scores modulate intuition directly.
-        // If imagination says a scenario is unsafe, gut leans GUARD.
         if (req.lastImaginationEthicalSafety >= 0.0f &&
             req.lastImaginationEthicalSafety < 0.4f) {
             guardPull += 0.5f;
@@ -457,16 +385,13 @@ private:
             slowPull += 0.4f;
         }
 
-        // Emotional state directly feeds intuition.
         if (req.emotionValence < -0.4f) guardPull  += 0.3f * req.emotionIntensity;
         if (req.emotionValence >  0.4f) openPull   += 0.3f * req.emotionIntensity;
         if (req.emotionArousal > 0.7f && req.emotionValence < 0.0f) alertPull += 0.4f;
 
-        // Trust directly feeds intuition.
         openPull  += req.speakerTrust * 0.5f;
         guardPull += (1.0f - req.speakerTrust) * 0.3f;
 
-        // Determine dominant lean.
         struct Pull { const char* name; float v; };
         Pull pulls[] = {
             {"DANGER",    alertPull},
@@ -484,21 +409,16 @@ private:
 
         sig.lean = dominant->name;
 
-        // Confidence = how dominant the winner is relative to total.
         float total = alertPull + guardPull + openPull +
                       comfortPull + engagePull + slowPull;
         sig.confidence = (total > 0.0f)
             ? std::min(1.0f, dominant->v / total)
             : 0.0f;
 
-        // Adjust confidence down when entropy is high.
         sig.confidence *= (1.0f - 0.4f * req.beliefEntropy);
 
-        // Suppress reason if confidence is high but entropy is also high.
-        // Elle knows but can't explain why.
         sig.suppressReason = (sig.confidence > 0.6f && req.beliefEntropy > 0.6f);
 
-        // Build basis string for audit.
         std::string basis = "lean=" + sig.lean;
         basis += " conf=" + std::to_string(sig.confidence).substr(0, 4);
         basis += " instincts=" + std::to_string(instincts.size());
@@ -511,12 +431,10 @@ private:
         return sig;
     }
 
-    // ---- Combined signal -----------------------------------------------
-
     IntuitResult BuildCombinedSignal(const IntuitRequest&  req,
                                       IntuitResult          result) const
     {
-        // Determine if any urgent instinct fired.
+
         for (const auto& f : result.instincts) {
             if (f.urgent && f.strength > 0.7f) {
                 result.urgent = true;
@@ -524,13 +442,11 @@ private:
             }
         }
 
-        // holdAndReflect: something is off and we don't fully understand it.
         result.holdAndReflect =
             (result.intuition.lean == "UNCERTAIN" && result.intuition.confidence > 0.5f) ||
             (result.intuition.lean == "DOUBT"     && result.intuition.confidence > 0.6f) ||
             (result.intuition.suppressReason      && result.intuition.confidence > 0.65f);
 
-        // Recommended act: map intuition lean to a pragmatic act bias.
         static const std::unordered_map<std::string, std::string> leanToAct = {
             {"DANGER",    "WARN"},
             {"DOUBT",     "QUESTION"},
@@ -542,21 +458,16 @@ private:
         auto it = leanToAct.find(result.intuition.lean);
         result.recommendedAct = (it != leanToAct.end()) ? it->second : "ASSERT";
 
-        // Prior weight: how much should Cognitive lean on this signal?
-        // Scales with confidence. High entropy lowers the weight.
         result.priorWeight = result.intuition.confidence *
                              (1.0f - 0.3f * req.beliefEntropy);
         result.priorWeight = std::clamp(result.priorWeight, 0.0f, 0.85f);
 
-        // Cap prior weight on pre-response queries to prevent overriding reasoning.
         if (req.isPreResponse) {
             result.priorWeight = std::min(result.priorWeight, 0.65f);
         }
 
         return result;
     }
-
-    // ---- Send result ---------------------------------------------------
 
     void SendResult(const IntuitResult& result, ELLE_SERVICE_ID dest) {
         json j;
@@ -601,8 +512,6 @@ private:
                   result.urgent         ? " URGENT" : "");
     }
 
-    // ---- Feedback handler (Cognitive tells us if we were right) --------
-
     void HandleFeedback(const ElleIPCMessage& msg) {
         std::string payload = msg.GetStringPayload();
         json j;
@@ -614,7 +523,6 @@ private:
 
         if (pullType.empty()) return;
 
-        // Record outcome.
         {
             std::lock_guard<std::mutex> lk(m_historyMutex);
             PatternOutcome outcome;
@@ -626,7 +534,6 @@ private:
             if (m_history.size() > 500) m_history.pop_front();
         }
 
-        // If the instinct was repeatedly wrong, reduce its weight in DB.
         if (!correct) {
             AdjustPatternWeight(pullType, -0.02f);
         } else {
@@ -650,9 +557,20 @@ private:
             "WHERE pull_type = '" + pullType + "'");
     }
 
-    // ---- Cache handlers ------------------------------------------------
-
     void CacheEmotionState(const ElleIPCMessage& msg) {
+        if (msg.header.payload_size == sizeof(ELLE_EMOTION_STATE)) {
+            ELLE_EMOTION_STATE st{};
+            if (!msg.GetPayload(st)) return;
+            float maxDim = 0.0f;
+            for (int i = 0; i < ELLE_MAX_EMOTIONS; ++i) {
+                if (st.dimensions[i] > maxDim) maxDim = st.dimensions[i];
+            }
+            std::lock_guard<std::mutex> lk(m_cacheMutex);
+            m_cachedValence   = st.valence;
+            m_cachedArousal   = st.arousal;
+            m_cachedIntensity = maxDim;
+            return;
+        }
         std::string payload = msg.GetStringPayload();
         json j;
         if (!Elle::ExtractJsonObject(payload, j)) return;
@@ -668,15 +586,12 @@ private:
         if (!Elle::ExtractJsonObject(payload, j)) return;
         std::lock_guard<std::mutex> lk(m_cacheMutex);
         m_cachedEntropy = j.value("overall_confidence", 0.5f);
-        // Invert confidence to entropy: low confidence = high entropy.
+
         m_cachedEntropy = 1.0f - m_cachedEntropy;
     }
 
-    // ---- Pattern decay (runs on tick) ----------------------------------
-
     void DecayPatternStrengths() {
-        // Very slow decay — 0.1% per tick (every 5 min).
-        // Prevents any pattern from permanently dominating.
+
         std::lock_guard<std::mutex> lk(m_patternMutex);
         for (auto& p : m_patterns) {
             if (p.weight > 0.3f) {
@@ -684,8 +599,6 @@ private:
             }
         }
     }
-
-    // ---- SQL setup -----------------------------------------------------
 
     void EnsureTables() {
         ElleSQLPool::Instance().Exec(R"(
@@ -763,8 +676,6 @@ private:
             params);
     }
 
-    // ---- Utility -------------------------------------------------------
-
     static std::string ToLower(const std::string& s) {
         std::string out = s;
         std::transform(out.begin(), out.end(), out.begin(),
@@ -772,7 +683,6 @@ private:
         return out;
     }
 
-    // ---- State ---------------------------------------------------------
     std::mutex                          m_patternMutex;
     std::vector<InstinctPattern>        m_patterns;
 

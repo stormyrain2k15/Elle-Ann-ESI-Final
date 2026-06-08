@@ -247,6 +247,45 @@ private:
     std::unordered_map<std::string, std::shared_ptr<PendingMind>> m_map;
 };
 
+struct PendingIntu {
+    std::mutex               m;
+    std::condition_variable  cv;
+    bool                     done = false;
+    nlohmann::json           result;
+};
+
+class IntuCorrelator {
+public:
+    std::shared_ptr<PendingIntu> Register(const std::string& requestId) {
+        auto p = std::make_shared<PendingIntu>();
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m_map[requestId] = p;
+        return p;
+    }
+    void Release(const std::string& requestId) {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m_map.erase(requestId);
+    }
+    void Deliver(const std::string& requestId, nlohmann::json result) {
+        std::shared_ptr<PendingIntu> p;
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            auto it = m_map.find(requestId);
+            if (it == m_map.end()) return;
+            p = it->second;
+        }
+        {
+            std::lock_guard<std::mutex> lk(p->m);
+            p->result = std::move(result);
+            p->done = true;
+        }
+        p->cv.notify_one();
+    }
+private:
+    std::mutex m_mutex;
+    std::unordered_map<std::string, std::shared_ptr<PendingIntu>> m_map;
+};
+
 class ElleCognitiveService : public ElleServiceBase {
 public:
     ElleCognitiveService()
@@ -488,6 +527,140 @@ protected:
         if (!voice.empty()) ss << "  • She says: \"" << voice << "\"\n";
         ss << "  Honour this read of yourself when you reply — don't override it lightly.\n\n";
         return ss.str();
+    }
+
+    nlohmann::json RequestIntuition(const std::string& userText,
+                                    const std::string& speakerId,
+                                    float speakerTrust,
+                                    const SentimentRead& sent,
+                                    const nlohmann::json& probJson,
+                                    const std::vector<std::string>& entities,
+                                    bool isPreResponse) {
+        char rid[64];
+        snprintf(rid, sizeof(rid), "intu-%s-%llu-%u",
+                 isPreResponse ? "pre" : "post",
+                 (unsigned long long)ELLE_MS_NOW(),
+                 (unsigned)(size_t)std::hash<std::thread::id>{}(std::this_thread::get_id()));
+
+        nlohmann::json stimulus = nlohmann::json::array();
+        for (auto& e : entities) stimulus.push_back(ToLower(e));
+        std::string lowerText = ToLower(userText);
+        static const char* keywords[] = {
+            "threat", "danger", "hostile", "aggression",
+            "distress", "sadness", "fear", "crying", "pain",
+            "warmth", "affection", "love", "gratitude",
+            "deception", "manipulation", "coercion", "flattery",
+            "familiar", "trusted", "home", "josh", "crystal",
+            "unknown", "confusion", "contradiction",
+            "joy", "excitement", "curiosity",
+            "withdrawal", "silence", "distance"
+        };
+        for (auto& kw : keywords) {
+            if (lowerText.find(kw) != std::string::npos) stimulus.push_back(kw);
+        }
+
+        float beliefEntropy = 0.5f;
+        if (probJson.is_object() && probJson.value("success", false) &&
+            probJson.contains("result")) {
+            double conf = probJson["result"].value("overallConfidence", 0.5);
+            beliefEntropy = std::clamp(1.0f - (float)conf, 0.0f, 1.0f);
+        }
+
+        nlohmann::json req;
+        req["request_id"]         = rid;
+        req["stimulus_tags"]      = stimulus;
+        req["emotion_valence"]    = sent.valence;
+        req["emotion_arousal"]    = sent.arousal;
+        req["emotion_intensity"]  = std::min(1.0f, std::abs(sent.valence) + sent.arousal * 0.5f);
+        req["speaker_id"]         = speakerId.empty() ? std::string("default") : speakerId;
+        req["speaker_trust"]      = speakerTrust;
+        req["belief_entropy"]     = beliefEntropy;
+        req["is_pre_response"]    = isPreResponse;
+        req["return_to"]          = (int)SVC_COGNITIVE;
+
+        uint32_t timeoutMs = (uint32_t)ElleConfig::Instance().GetInt(
+            "cognitive.intuition_timeout_ms", 150);
+
+        auto pending = m_intuCorrelator.Register(rid);
+        auto out = ElleIPCMessage::Create(IPC_INTUITION_REQUEST,
+                                          SVC_COGNITIVE, SVC_INTUITION);
+        out.SetStringPayload(req.dump());
+        if (!GetIPCHub().Send(SVC_INTUITION, out)) {
+            m_intuCorrelator.Release(rid);
+            ELLE_DEBUG("IPC_INTUITION_REQUEST send failed — proceeding without gut read");
+            return nlohmann::json::object();
+        }
+
+        std::unique_lock<std::mutex> lk(pending->m);
+        bool got = pending->cv.wait_for(lk, std::chrono::milliseconds(timeoutMs),
+                                         [&]{ return pending->done; });
+        nlohmann::json result = got ? std::move(pending->result)
+                                    : nlohmann::json::object();
+        lk.unlock();
+        m_intuCorrelator.Release(rid);
+
+        if (!got) {
+            ELLE_DEBUG("IPC_INTUITION_REQUEST timed out after %ums", timeoutMs);
+            return nlohmann::json::object();
+        }
+        return result;
+    }
+
+    std::string FormatIntuitionContext(const nlohmann::json& intu) {
+        if (intu.is_null() || intu.empty()) return std::string();
+        float priorWeight = intu.value("prior_weight", 0.0f);
+        bool  hold        = intu.value("hold_and_reflect", false);
+        bool  urgent      = intu.value("urgent", false);
+        if (priorWeight < 0.25f && !hold && !urgent) return std::string();
+
+        std::ostringstream ss;
+        ss << "Gut read (from your intuition tier, fast and pre-rational):\n";
+        std::string lean, basis, recAct;
+        float confidence = 0.0f;
+        if (intu.contains("intuition") && intu["intuition"].is_object()) {
+            lean       = intu["intuition"].value("lean",       std::string());
+            basis      = intu["intuition"].value("basis",      std::string());
+            confidence = intu["intuition"].value("confidence", 0.0f);
+        }
+        recAct = intu.value("recommended_act", std::string());
+        if (!lean.empty()) {
+            ss << "  • Lean: " << lean
+               << "  (confidence=" << std::fixed << std::setprecision(2) << confidence
+               << ", weight=" << priorWeight << ")\n";
+        }
+        if (!recAct.empty()) ss << "  • Recommended act bias: " << recAct << "\n";
+        if (hold)   ss << "  • Hold and reflect — something is off here. Don't rush.\n";
+        if (urgent) ss << "  • URGENT instinct fired — respond fast and clean.\n";
+        if (intu.contains("instincts") && intu["instincts"].is_array() &&
+            !intu["instincts"].empty()) {
+            ss << "  • Instinct firings: ";
+            int n = 0;
+            for (auto& f : intu["instincts"]) {
+                if (n++ >= 3) break;
+                if (n > 1) ss << ", ";
+                ss << f.value("pull_type", std::string("?"))
+                   << "=" << std::setprecision(2) << f.value("strength", 0.0f);
+            }
+            ss << "\n";
+        }
+        if (!basis.empty()) ss << "  • Basis: " << basis << "\n";
+        ss << "  Let this gut read colour your reply — don't ignore it, but don't let it override reason.\n\n";
+        return ss.str();
+    }
+
+    void SendIntuitionFeedback(const nlohmann::json& intu, bool wasCorrect) {
+        if (intu.is_null() || intu.empty()) return;
+        std::string recAct = intu.value("recommended_act", std::string());
+        if (recAct.empty()) return;
+        float strength = intu.value("prior_weight", 0.0f);
+        nlohmann::json fb;
+        fb["pull_type"]    = recAct;
+        fb["was_correct"]  = wasCorrect;
+        fb["strength"]     = strength;
+        auto out = ElleIPCMessage::Create(IPC_INTUITION_FEEDBACK,
+                                          SVC_COGNITIVE, SVC_INTUITION);
+        out.SetStringPayload(fb.dump());
+        GetIPCHub().Send(SVC_INTUITION, out);
     }
 
     std::string FormatProbabilityContext(const nlohmann::json& probJson) {
@@ -746,6 +919,8 @@ private:
     ELLE_EMOTION_STATE m_cachedEmotions = {};
     WorldCorrelator m_worldCorrelator;
     ProbCorrelator  m_probCorrelator;
+    MindCorrelator  m_mindCorrelator;
+    IntuCorrelator  m_intuCorrelator;
 
     struct ChatItem {
         std::string      payload;
@@ -1006,6 +1181,10 @@ private:
             sent, 0.5f, std::string(), false);
         std::string mindCtx = FormatConscienceContext(mindVerdict);
 
+        nlohmann::json intuResult = RequestIntuition(
+            userText, userId, 0.5f, sent, probJson, entities, true);
+        std::string intuCtx = FormatIntuitionContext(intuResult);
+
         std::vector<ELLE_MEMORY_RECORD> memories =
             CrossReferenceByEntities(entities, userText, mode);
 
@@ -1140,6 +1319,7 @@ private:
 
         if (!probCtx.empty()) ctx << probCtx;
         if (!mindCtx.empty()) ctx << mindCtx;
+        if (!intuCtx.empty()) ctx << intuCtx;
 
         {
             char buf[384];
@@ -1376,9 +1556,12 @@ private:
             {"model_used",    llmResp.model_used},
             {"system_prompt_bytes", (uint64_t)sysBytes},
             {"probabilistic_read", probJson},
-            {"inner_voice",        mindVerdict}
+            {"inner_voice",        mindVerdict},
+            {"gut_read",           intuResult}
         };
         SendChatReply(reply_to, out);
+
+        SendIntuitionFeedback(intuResult, true);
 
         if (probJson.value("success", false)) {
             json trustReq = {

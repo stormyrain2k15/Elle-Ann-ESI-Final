@@ -1,4 +1,59 @@
-## 2026-02 — Elle.Service.Intuition integrated
+## 2026-02 — Elle.Service.Intuition integration (completion pass)
+
+### Nude-code strip
+- `Intuition.cpp`: stripped all line/block comments per NUDE CODE policy
+  (789 → 686 lines, 0 comment lines remain). Raw-string SQL bodies and
+  string literals preserved verbatim.
+
+### Cognitive wiring (new in this pass)
+- Added `PendingIntu` + `IntuCorrelator` parallel to `PendingMind` /
+  `MindCorrelator`.
+- Added `m_intuCorrelator` field on `ElleCognitiveService` (and closed a
+  pre-existing missing `m_mindCorrelator` field declaration discovered in
+  the same struct).
+- New methods on `ElleCognitiveService`:
+  - `RequestIntuition(userText, speakerId, trust, sent, probJson,
+    entities, isPreResponse)` — builds an `IPC_INTUITION_REQUEST` with
+    stimulus tags (entities + keyword scan), inline emotion v/a/i derived
+    from `QuickSentiment`, and `belief_entropy = 1 − probJson.result.
+    overallConfidence`. Waits up to
+    `cognitive.intuition_timeout_ms` (default 150 ms). Returns `{}` on
+    timeout / send-fail and degrades cleanly.
+  - `FormatIntuitionContext(intu)` — emits a `"Gut read"` block into the
+    system prompt only when `prior_weight ≥ 0.25`, `hold_and_reflect`,
+    or `urgent`. Lists lean / confidence / recommended-act / top-3
+    instinct firings / basis.
+  - `SendIntuitionFeedback(intu, wasCorrect)` — pings
+    `IPC_INTUITION_FEEDBACK` so per-pattern weights can decay or
+    strengthen.
+- `HandleChatRequest` pipeline now runs intuition immediately after the
+  conscience check and feeds `intuCtx` into the prompt next to
+  `probCtx` / `mindCtx`. After the chat reply ships, feedback is sent
+  with `was_correct=true` (placeholder until a real outcome signal is
+  wired in).
+- Chat reply JSON now includes a top-level `"gut_read"` field alongside
+  `"probabilistic_read"` and `"inner_voice"`.
+
+### Intuition.cpp robustness fix
+- `CacheEmotionState` now detects binary `ELLE_EMOTION_STATE` payloads
+  (size match → `msg.GetPayload<ELLE_EMOTION_STATE>()`, derives
+  intensity from `max(dimensions[i])`) and falls back to JSON only when
+  the payload size differs. Closes the binary-vs-JSON mismatch with
+  `Emotional::BroadcastEmotionState`.
+
+### Verification
+- Probability ctest suite: **43/43 PASS** (post-edit re-run).
+- `Intuition.cpp` brace / paren balance: 88/88, 318/318.
+- `CognitiveEngine.cpp` brace delta after edits: balanced
+  (Δ{ = Δ} = 22).
+
+### Docs
+- New: `Docs/INTUITION_SERVICE.md` — full service spec, IPC schema,
+  SQL footprint, mesh registration.
+
+---
+
+
 
 ### New service
 - Added `SVC_INTUITION` (count 25 → 26). Registered `"Intuition"` in

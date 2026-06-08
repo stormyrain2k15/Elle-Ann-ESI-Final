@@ -29,6 +29,24 @@ Build a massively robust autonomous agentic Emotional Synthetic Intelligence.
 
 ## Completed (this session — Feb 2026)
 
+### Elle.Service.Intuition wiring completion (Feb 2026, current pass)
+- `Intuition.cpp`: NUDE CODE strip (789 → 686 lines, 0 comments).
+- Wired into `Cognitive` chat pipeline: `RequestIntuition` after
+  conscience check, `FormatIntuitionContext` injects a "Gut read" block
+  into the system prompt, `SendIntuitionFeedback` closes the learning
+  loop after each reply.
+- Chat reply JSON now carries `gut_read` alongside `probabilistic_read`
+  and `inner_voice`.
+- Closed a latent missing-member bug: `m_mindCorrelator` was referenced
+  but never declared in `ElleCognitiveService` — now declared next to
+  `m_probCorrelator` / `m_intuCorrelator`.
+- `Intuition.cpp::CacheEmotionState` now handles the binary
+  `ELLE_EMOTION_STATE` broadcast payload (size-detected) and falls back
+  to JSON only when sizes don't match.
+- Probability ctest suite: 43/43 PASS post-edit.
+- New doc: `Docs/INTUITION_SERVICE.md`.
+
+
 ### Phase 5 — Imagination Engine (NEW backlog, user-requested Feb 2026)
 
 **Goal**: Give Elle the ability to *imagine* — not just recall, not just respond — generate plausible novel scenarios, evaluate them against her goals/morals, and iterate.
