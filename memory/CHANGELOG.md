@@ -1,4 +1,61 @@
-## 2026-02 — Documentation refresh (current pass)
+## 2026-02 — Intuition: ctest harness + SQL injection fix + engine extraction
+
+### Engine extraction
+- New: `Services/Elle.Service.Intuition/core/IntuitionEngine.h` —
+  header-only deterministic engine (pattern store, FireInstincts,
+  SynthesizeIntuition, BuildCombinedSignal, AdjustPatternWeight, Decay,
+  LoadDefaults). Pure C++17, zero Windows / SQL / IPC dependencies.
+- `Intuition.cpp` refactored from 700 → 376 lines. Now a thin service
+  wrapper that owns an `IntuitionEngine m_engine` and delegates
+  pattern + reasoning logic to it. SQL, IPC, and Windows-service
+  responsibilities stay in `Intuition.cpp`.
+- `Elle.Service.Intuition.vcxproj` updated to include `core/IntuitionEngine.h`.
+
+### SQL injection fix (P2 audit item)
+- `AdjustPatternWeight` previously concatenated `pullType` into a SQL
+  `UPDATE`. Although the only sender today is Cognitive, that path was
+  a latent SQL-injection vector if `IPC_INTUITION_FEEDBACK` ever
+  carried untrusted input.
+- Rewritten to use `ElleSQLPool::QueryParams` with `?` placeholders
+  for all four parameters (delta×3 + pullType). Zero string
+  concatenation, parameterised on the wire.
+
+### ctest harness
+- New: `Services/Elle.Service.Intuition/CMakeLists.txt` — mirrors
+  `Elle.Service.Probability/CMakeLists.txt`. Fetches `doctest` v2.4.11
+  via `FetchContent`. Produces `elle_intu_tests` target.
+- New `tests/` directory: 6 files, **39 doctest cases** covering:
+  - Pattern store: LoadDefaults (31 baseline), ReplacePatterns,
+    AdjustPatternWeight clamp [0.1, 1.0], Decay floor.
+  - FireInstincts: exact/substring match, trust floor, emotion gate,
+    arousal amplification, dedupe-by-pullType (keep strongest),
+    case-insensitivity, sort-by-strength, empty stimulus.
+  - SynthesizeIntuition: lean derivation across ALERT/COMFORT/SAFE/
+    DOUBT/UNCERTAIN/ENGAGE, emotion-axis influence, imagination
+    feedback (ethical_safety / plausibility / goal_alignment),
+    confidence×entropy attenuation, suppressReason gating, basis
+    string format.
+  - BuildCombinedSignal: urgent flag gating (urgent + strong only),
+    lean→recommendedAct mapping (6 cases), holdAndReflect triggers
+    (UNCERTAIN/DOUBT/suppressReason), priorWeight clamp + pre-response
+    cap at 0.65, full Process pipeline smoke.
+  - Feedback: positive/negative AdjustPatternWeight, unknown-pull no-op,
+    Decay floor preservation.
+
+### Verification (Linux container)
+- `cmake -S . -B build -DCMAKE_POLICY_VERSION_MINIMUM=3.5`
+- `cmake --build build -j`
+- `ctest --output-on-failure` → **39/39 PASS** (0.10s real)
+- Probability suite re-run: **43/43 PASS** (no regression)
+- Combined: **82/82 ctests green**
+
+### Docs
+- New: `Services/Elle.Service.Intuition/README.md` — harness layout, coverage table, CI mention.
+- `Docs/INTUITION_SERVICE.md` updated with harness + SQL-audit notes.
+
+---
+
+
 
 Brought 13 README / Docs files in line with the actual Feb-2026 repo
 state:

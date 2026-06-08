@@ -1,0 +1,28 @@
+
+# Consider dependencies only in project.
+set(CMAKE_DEPENDS_IN_PROJECT_ONLY OFF)
+
+# The set of languages for which implicit dependencies are needed:
+set(CMAKE_DEPENDS_LANGUAGES
+  )
+
+# The set of dependency files which are needed:
+set(CMAKE_DEPENDS_DEPENDENCY_FILES
+  "/app/ElleAnn/Services/Elle.Service.Intuition/tests/test_combined_signal.cpp" "CMakeFiles/elle_intu_tests.dir/tests/test_combined_signal.cpp.o" "gcc" "CMakeFiles/elle_intu_tests.dir/tests/test_combined_signal.cpp.o.d"
+  "/app/ElleAnn/Services/Elle.Service.Intuition/tests/test_feedback.cpp" "CMakeFiles/elle_intu_tests.dir/tests/test_feedback.cpp.o" "gcc" "CMakeFiles/elle_intu_tests.dir/tests/test_feedback.cpp.o.d"
+  "/app/ElleAnn/Services/Elle.Service.Intuition/tests/test_fire_instincts.cpp" "CMakeFiles/elle_intu_tests.dir/tests/test_fire_instincts.cpp.o" "gcc" "CMakeFiles/elle_intu_tests.dir/tests/test_fire_instincts.cpp.o.d"
+  "/app/ElleAnn/Services/Elle.Service.Intuition/tests/test_main.cpp" "CMakeFiles/elle_intu_tests.dir/tests/test_main.cpp.o" "gcc" "CMakeFiles/elle_intu_tests.dir/tests/test_main.cpp.o.d"
+  "/app/ElleAnn/Services/Elle.Service.Intuition/tests/test_patterns.cpp" "CMakeFiles/elle_intu_tests.dir/tests/test_patterns.cpp.o" "gcc" "CMakeFiles/elle_intu_tests.dir/tests/test_patterns.cpp.o.d"
+  "/app/ElleAnn/Services/Elle.Service.Intuition/tests/test_synthesize.cpp" "CMakeFiles/elle_intu_tests.dir/tests/test_synthesize.cpp.o" "gcc" "CMakeFiles/elle_intu_tests.dir/tests/test_synthesize.cpp.o.d"
+  )
+
+# Targets to which this target links which contain Fortran sources.
+set(CMAKE_Fortran_TARGET_LINKED_INFO_FILES
+  )
+
+# Targets to which this target links which contain Fortran sources.
+set(CMAKE_Fortran_TARGET_FORWARD_LINKED_INFO_FILES
+  )
+
+# Fortran module output directory.
+set(CMAKE_Fortran_TARGET_MODULE_DIR "")

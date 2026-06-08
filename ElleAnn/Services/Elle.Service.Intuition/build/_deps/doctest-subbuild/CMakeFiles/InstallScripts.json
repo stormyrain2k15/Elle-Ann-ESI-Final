@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/app/ElleAnn/Services/Elle.Service.Intuition/build/_deps/doctest-subbuild/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

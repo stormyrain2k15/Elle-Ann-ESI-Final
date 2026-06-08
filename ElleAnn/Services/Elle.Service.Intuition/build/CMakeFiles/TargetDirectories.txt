@@ -1,0 +1,16 @@
+/app/ElleAnn/Services/Elle.Service.Intuition/build/CMakeFiles/elle_intu_tests.dir
+/app/ElleAnn/Services/Elle.Service.Intuition/build/CMakeFiles/test.dir
+/app/ElleAnn/Services/Elle.Service.Intuition/build/CMakeFiles/edit_cache.dir
+/app/ElleAnn/Services/Elle.Service.Intuition/build/CMakeFiles/rebuild_cache.dir
+/app/ElleAnn/Services/Elle.Service.Intuition/build/CMakeFiles/list_install_components.dir
+/app/ElleAnn/Services/Elle.Service.Intuition/build/CMakeFiles/install.dir
+/app/ElleAnn/Services/Elle.Service.Intuition/build/CMakeFiles/install/local.dir
+/app/ElleAnn/Services/Elle.Service.Intuition/build/CMakeFiles/install/strip.dir
+/app/ElleAnn/Services/Elle.Service.Intuition/build/_deps/doctest-build/CMakeFiles/doctest_with_main.dir
+/app/ElleAnn/Services/Elle.Service.Intuition/build/_deps/doctest-build/CMakeFiles/test.dir
+/app/ElleAnn/Services/Elle.Service.Intuition/build/_deps/doctest-build/CMakeFiles/edit_cache.dir
+/app/ElleAnn/Services/Elle.Service.Intuition/build/_deps/doctest-build/CMakeFiles/rebuild_cache.dir
+/app/ElleAnn/Services/Elle.Service.Intuition/build/_deps/doctest-build/CMakeFiles/list_install_components.dir
+/app/ElleAnn/Services/Elle.Service.Intuition/build/_deps/doctest-build/CMakeFiles/install.dir
+/app/ElleAnn/Services/Elle.Service.Intuition/build/_deps/doctest-build/CMakeFiles/install/local.dir
+/app/ElleAnn/Services/Elle.Service.Intuition/build/_deps/doctest-build/CMakeFiles/install/strip.dir

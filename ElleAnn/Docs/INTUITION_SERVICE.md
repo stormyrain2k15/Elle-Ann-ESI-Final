@@ -150,3 +150,22 @@ block is suppressed).
 
 `Intuition.cpp` is fully stripped of comments and block banners — only
 source code remains. Documentation lives here in `Docs/`.
+
+## Test harness
+
+The pure deterministic logic (Tier-1 instinct firing + Tier-2
+synthesis + combined-signal builder) lives in a header-only engine at
+`Services/Elle.Service.Intuition/core/IntuitionEngine.h`. A standalone
+CMake project at the same folder root builds **39 doctest cases**
+covering pattern loading, firing, synthesis, combined-signal, and
+feedback. All 39 pass under `ctest`. See
+`Services/Elle.Service.Intuition/README.md` for the layout and how to
+run the harness.
+
+## SQL audit
+
+All DB access in `Intuition.cpp` goes through `ElleSQLPool::{Query,
+Exec, QueryParams}` (RAII-safe). `AdjustPatternWeight` uses
+parameterised statements (`?` placeholders + `QueryParams`) — no SQL
+strings are concatenated against IPC inputs, so the
+`IPC_INTUITION_FEEDBACK` path has no injection surface.
