@@ -691,6 +691,16 @@ protected:
                 }
                 break;
             }
+            case IPC_INTUITION_RESULT: {
+                try {
+                    auto j = nlohmann::json::parse(msg.GetStringPayload());
+                    std::string rid = j.value("request_id", "");
+                    if (!rid.empty()) m_intuCorrelator.Deliver(rid, std::move(j));
+                } catch (const std::exception& e) {
+                    ELLE_DEBUG("IPC_INTUITION_RESULT malformed JSON: %s", e.what());
+                }
+                break;
+            }
             case IPC_CHAT_REQUEST: {
 
                 uint32_t maxQueue = (uint32_t)ElleConfig::Instance().GetInt(
@@ -728,7 +738,7 @@ protected:
 
     std::vector<ELLE_SERVICE_ID> GetDependencies() override {
         return { SVC_HEARTBEAT, SVC_EMOTIONAL, SVC_MEMORY, SVC_ACTION,
-                 SVC_PROBABILITY, SVC_MIND_MANAGER };
+                 SVC_PROBABILITY, SVC_MIND_MANAGER, SVC_INTUITION };
     }
 
 private:
@@ -1603,6 +1613,33 @@ private:
                         break;
                 }
                 strncpy_s(a.command,    intent.description, ELLE_MAX_MSG - 1);
+                strncpy_s(a.parameters, intent.parameters,  ELLE_MAX_MSG - 1);
+                a.required_trust = intent.required_trust;
+                a.created_ms = ELLE_MS_NOW();
+                a.timeout_ms = intent.timeout_ms ? intent.timeout_ms : 30000;
+                auto msg = ElleIPCMessage::Create(IPC_ACTION_REQUEST, SVC_COGNITIVE, SVC_ACTION);
+                msg.SetPayload(a);
+                routed = hub.Send(SVC_ACTION, msg);
+                note = "action";
+                break;
+            }
+        }
+
+        if (routed) {
+            ElleDB::UpdateIntentStatus(intent.id, INTENT_COMPLETED,
+                                       std::string("routed:") + note);
+        } else {
+            ELLE_WARN("Intent %llu (type=%u) failed to route via %s",
+                      (unsigned long long)intent.id, intent.type, note.c_str());
+            ElleDB::UpdateIntentStatus(intent.id, INTENT_FAILED,
+                                       std::string("route_failed:") + note);
+        }
+    }
+};
+
+ELLE_SERVICE_MAIN(ElleCognitiveService)
+e)
+           strncpy_s(a.command,    intent.description, ELLE_MAX_MSG - 1);
                 strncpy_s(a.parameters, intent.parameters,  ELLE_MAX_MSG - 1);
                 a.required_trust = intent.required_trust;
                 a.created_ms = ELLE_MS_NOW();
