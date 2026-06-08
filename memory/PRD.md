@@ -9,11 +9,11 @@ Build a massively robust autonomous agentic Emotional Synthetic Intelligence.
 **Runs exclusively on user's local Windows PC** — no E2E in cloud.
 
 ## What Exists
-- **25 Windows Services**: Heartbeat, Cognitive, Emotional, Memory, GoalEngine,
+- **26 Windows Services**: Heartbeat, Cognitive, Emotional, Memory, GoalEngine,
   Action, SelfPrompt, WorldModel, Dream, Solitude, Bonding, InnerLife,
   Continuity, XChromosome, Family, Consent, QueueWorker, HTTP, Identity,
-  Fiesta, Probability, MindManager, Imagination,
-  **Composer (deterministic sentence composition — replaces the LLM surface, NEW Feb 2026)**,
+  Fiesta, Probability, MindManager, Imagination, Composer,
+  **Intuition (two-tier instinct + intuition engine, NEW Feb 2026)**,
   plus Lua.Behavioral.
 - **Tensor-free / token-free**: Every generative call site (21 in total across
   Cognitive, Solitude, Bonding, Continuity, InnerLife, Memory, SelfPrompt,

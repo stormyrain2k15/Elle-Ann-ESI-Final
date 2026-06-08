@@ -1,3 +1,35 @@
+## 2026-02 — Elle.Service.Intuition integrated
+
+### New service
+- Added `SVC_INTUITION` (count 25 → 26). Registered `"Intuition"` in
+  `g_serviceNames`. New IPC types `IPC_INTUITION_REQUEST`,
+  `IPC_INTUITION_RESULT`, `IPC_INTUITION_FEEDBACK`.
+- Two-tier engine: **Tier 1 Instinct** = fast pattern-matched stimulus→pull
+  firings (loaded from `dbo.intuition_pattern`, factory-default fallback if
+  table is empty); **Tier 2 Intuition** = synthesised gut signal blending
+  instinct firings + belief entropy + emotion + speaker trust + recent
+  imagination scores into one of `DANGER | DOUBT | SAFE | REACH_OUT |
+  ENGAGE | UNCERTAIN`.
+- Returns a `prior_weight` + `recommended_act` + `hold_and_reflect` + `urgent`
+  bundle for Cognitive to lean on before full reasoning. Sets
+  `ELLE_IPC_FLAG_URGENT` on the reply when an urgent instinct fires.
+- Feedback loop: Cognitive sends `IPC_INTUITION_FEEDBACK` after a turn;
+  weights adjust ±0.01-0.02 and persist via SQL UPDATE. Slow tick-decay
+  prevents permanent dominance.
+- SQL: `intuition_pattern` + `intuition_log` (auto-created on start).
+- Project `{B1000000-…-019}` registered in `ElleAnn.sln`.
+
+### Fixes applied to the supplied source (same playbook as MindManager/Composer)
+- `rs.ok` → `rs.success` (SQLResultSet field name).
+- Bare `ElleIPCMessage reply; reply.header.msg_type = …` → `ElleIPCMessage::Create(...)` factory call (preserves magic / version / checksum and correlation_id will be wired by callers).
+- `main()` → `ELLE_SERVICE_MAIN(ElleIntuitionService)` macro.
+- `GREATEST/LEAST` (Postgres-style) → SQL Server `CASE WHEN` in the weight-clamp UPDATE.
+- vcxproj: ProjectGuid normalised to `{B1000000-…-019}`, doubled `..\\_Shared\\` → `..\_Shared\`, ProjectReference pointed at the real shared lib GUID.
+
+### Verification
+- 52/52 probability engine tests still pass after the count bump.
+
+
 ## 2026-02 — Last mile: ElleLLM façade deleted, 21 call sites rewired direct-to-Composer
 
 ### Rewired (Cognitive/Solitude/Bonding/Continuity/InnerLife/Memory/SelfPrompt/GoalEngine/Imagination/IdentityCore/SelfSurprise/HTTPServer)
