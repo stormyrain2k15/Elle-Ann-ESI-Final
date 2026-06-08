@@ -1,4 +1,51 @@
-## 2026-02 — Elle.Service.Intuition integration (completion pass)
+## 2026-02 — Documentation refresh (current pass)
+
+Brought 13 README / Docs files in line with the actual Feb-2026 repo
+state:
+
+- `/app/README.md` — root repo doc; 19 → 26 services, removed Groq /
+  LLM dispatch section, replaced with composer-backed pipeline summary.
+- `/app/ElleAnn/README.md` — top-level architecture doc; full service
+  table mapped to `ELLE_SERVICE_ID` 0–25, deterministic generation
+  pillar, Tools / SQL / Docs roll-ups.
+- `Docs/REPO_LAYOUT.md` — directory-by-directory accounting with the
+  full `Services/`, `Tools/`, `SQL/`, `Docs/` inventory.
+- `Docs/CHAT_PIPELINE.md` — rewritten flow showing Prob → Mind →
+  Intuition → Composer with full IPC type table.
+- `Docs/LLM_AUDIT.md` — promoted from "remaining work" to **COMPLETE**
+  status; 19-site migration ledger with disposition of every old
+  `ElleLLMEngine` method.
+- `Docs/BUILD_NOTES.md` — current prerequisites (no `llama.cpp`,
+  no LLM keys), canonical SQL apply order, service startup order
+  matching the 26-service mesh.
+- `Docs/BUILD_VS.md` — full solution layout with every current
+  `.vcxproj` including Intuition (Feb 2026), standalone CMake suites
+  for Probability + Language, troubleshooting table updated.
+- `Docs/ANDROID_INTEGRATION.md` — chat flow now shows
+  `IPC_CHAT_REQUEST → IPC_COMPOSE_REQUEST` instead of Groq HTTPS;
+  removed all `"llm"` config block references.
+- `Services/Elle.Service.Probability/README.md` — corrected test count
+  (52 → 43), added `service/` IPC wrapper accounting.
+- `Services/Elle.Service.Probability/INTEGRATION.md` — promoted status
+  from "not yet in `ElleAnn.sln`" to **integrated**; recorded the
+  43/43 ctest result.
+- `Services/Elle.Service.Language/README.md` — clarified that this is
+  a standalone CMake project (no `ELLE_SERVICE_ID`), consumed
+  in-process by Probability via the bridge.
+- `Services/Elle.Service.XChromosome/README.md` — fixed SQL path
+  (`SQL/ElleAnn_XChromosome_Schema.sql` → `SQL/Engine/...`).
+- `Tools/Deploy/README.md` — full delta list, mention of Composer +
+  Intuition in the verify section, dependency graph extended.
+- `Tools/ETL/README.md` — corrected paths (`Tools/etl` → `Tools/ETL`),
+  removed stale "NRC-EmoLex license-clean drop next" note (NRC is
+  shipped), updated scale snapshot with augmentation status.
+
+The audit / stub / schema-fix snapshot docs were left untouched — they
+are historical snapshots, not living docs.
+
+---
+
+
 
 ### Nude-code strip
 - `Intuition.cpp`: stripped all line/block comments per NUDE CODE policy

@@ -1,138 +1,188 @@
-/*******************************************************************************
- * BUILD_NOTES.md — Compilation Guide for ELLE-ANN ESI v3.0
- * 
- * Read this before opening Visual Studio.
- ******************************************************************************/
-
 # Build Notes — Getting Elle Running
+
+Read this before opening Visual Studio. The detailed VS walk-through
+lives in `BUILD_VS.md`; this file covers the prerequisites and the
+moving parts you need to set up once.
 
 ## Prerequisites
 
 ### Required
+
 - **Visual Studio 2022** (Community or higher) with:
-  - Desktop development with C++
-  - MSVC v143 build tools
-  - Windows SDK 10.0.22621.0+
-  - C++ MASM support (ml64.exe — included with C++ workload)
+  - **Desktop development with C++** workload
+  - **MSVC v143** build tools
+  - **Windows 11 SDK** (10.0.22000+; any 10.x works)
+  - **C++ MASM build tools** (component, included in the workload —
+    required for the 5 `Elle.ASM.*` DLL projects)
 
-- **SQL Server Express** (2019 or 2022)
-  - Enable Named Pipes protocol in SQL Server Configuration Manager
-  - Create databases by running `SQL/ElleAnn_Schema.sql`
-  - Then run `SQL/ElleAnn_Identity_Schema.sql`
+- **SQL Server 2019+ Express**
+  - Enable **Named Pipes** in SQL Server Configuration Manager
+  - Apply the deltas in `ElleAnn/SQL/` in order (see "Database" below)
 
-### Optional (for full functionality)
-- **Lua 5.4** — headers + lib (lua54.lib)
-  - Download from lua.org or vcpkg: `vcpkg install lua:x64-windows`
-  
-- **llama.cpp** — for local LLM inference
-  - Clone: `git clone https://github.com/ggerganov/llama.cpp`
-  - Build: `cmake -B build && cmake --build build --config Release`
-  - Copy: llama.lib + headers to a `deps/llama/` folder
-  
-- **GGUF Model** — for local inference
-  - Download from huggingface.co (e.g., Llama-3-8B-Instruct.Q4_K_M.gguf)
-  - Update `elle_master_config.json` → `llm.providers.local_llama.model_path`
+- **ODBC Driver 17 (or 18) for SQL Server**
+  - https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server
 
-## Build Order (Dependencies)
+- **Lua 5.4 sources** — fetched once by
+  `ElleAnn/Tools/Lua/Fetch-Lua.ps1`. The `Elle.Lua.Behavioral` project
+  compiles Lua inline; no prebuilt `lua54.lib` is required.
 
-1. **ElleCore.Shared** (Static Library) — build first, everything depends on it
-2. **ASM DLLs** (5 DLLs) — no dependencies on each other
-3. **Services** (all) — depend on Shared, optionally load ASM DLLs at runtime
-4. **Lua.Behavioral** — depends on Shared + Lua 5.4 lib
-5. **Debug tools** — depend on Shared
+### NOT required
 
-## Quick Start
+- ~~`llama.cpp`~~ — no longer used. The LLM purge is complete.
+- ~~GGUF models~~ — no longer used.
+- ~~Groq / OpenAI / Anthropic API keys~~ — no LLM dependencies remain.
 
-### Step 1: Create .vcxproj files
-The .sln references projects that need .vcxproj files created. For each:
-- Project Type: Console Application (services) or Static Library (Shared) or DLL (ASM)
-- Platform: x64
-- Include Dirs: Add `$(SolutionDir)Shared`
-- Lib Dirs: Add output of ElleCore.Shared
-- For services: Link against `ElleCore.Shared.lib`, `ws2_32.lib`, `odbc32.lib`, `winhttp.lib`
-- For MASM projects: Custom Build Tool → ml64.exe /c /Fo"$(IntDir)%(Filename).obj" "%(FullPath)"
+## Database
 
-### Step 2: Configure
-Edit `elle_master_config.json`:
-```json
+Canonical order (every script is idempotent — `IF NOT EXISTS`-guarded):
+
+```sql
+-- Engine mesh:
+:r ElleAnn\SQL\Engine\ElleAnn_Schema.sql
+:r ElleAnn\SQL\Engine\ElleAnn_Identity_Schema.sql
+:r ElleAnn\SQL\Engine\ElleAnn_XChromosome_Schema.sql
+:r ElleAnn\SQL\Engine\ElleAnn_MemoryDelta.sql
+:r ElleAnn\SQL\Engine\ElleAnn_QueueReaperDelta.sql
+:r ElleAnn\SQL\Engine\ElleAnn_PairedDevicesDelta.sql
+:r ElleAnn\SQL\Engine\ElleAnn_Sessions_Delta.sql
+:r ElleAnn\SQL\Engine\ElleAnn_System_Schema.sql
+:r ElleAnn\SQL\Engine\ElleAnn_SchemaSync_FebPivot.sql
+:r ElleAnn\SQL\Engine\ElleAnn_GameUnification.sql
+:r ElleAnn\SQL\Engine\imagined_and_conscience.sql
+
+-- Composer frames:
+:r ElleAnn\SQL\Elle.Service.Composer\composer_schema_seed.sql
+
+-- (Optional) full canonical dictionary — for Language engine + ETL:
+:r ElleAnn\SQL\Elle.Service.Language\01_schema.sql
+:r ElleAnn\SQL\Elle.Service.Language\02_seed_lexicon.sql
+:r ElleAnn\SQL\Elle.Service.Language\... (03..09)
+```
+
+## Build order (dependency-driven)
+
+MSBuild walks the dependency graph automatically from `ElleAnn.sln`.
+For reference:
+
+1. `ElleCore.Shared` (static lib) — every service depends on it
+2. `Elle.ASM.*` DLLs (5) — independent of each other; can run in
+   parallel
+3. `Elle.Service.*` executables (25) — depend on Shared
+4. `Elle.Lua.Behavioral` — depends on Shared + vendored Lua 5.4
+5. (Standalone CMake projects, built separately when needed:
+   `Elle.Service.Probability` and `Elle.Service.Language`)
+
+## Quick start
+
+### 1. Configure
+
+```jsonc
+// elle_master_config.json
 {
-    "llm": {
-        "providers": {
-            "groq": {
-                "api_key": "YOUR_GROQ_KEY_HERE"
-            }
-        }
-    },
-    "services": {
-        "sql_pipes": {
-            "connection_string": "Driver={ODBC Driver 17 for SQL Server};Server=DESKTOP-IIREG0M\\ELLEANN;Database=ElleCore;Trusted_Connection=yes;"
-        }
+  "services": {
+    "sql_pipes": {
+      "connection_string":
+        "Driver={ODBC Driver 17 for SQL Server};Server=.\\ELLEANN;Database=ElleCore;Trusted_Connection=yes;"
     }
+  },
+  "ipc": {
+    "pipe_prefix": "\\\\.\\pipe\\ElleAnn_"
+  },
+  "cognitive": {
+    "probability_timeout_ms": 300,
+    "conscience_timeout_ms":  200,
+    "intuition_timeout_ms":   150,
+    "chat_workers":           4,
+    "max_chat_queue":         64
+  }
+  // Note: no "llm" block — LLMs were purged. Generation is owned by SVC_COMPOSER.
 }
 ```
 
-### Step 3: Database
-```sql
--- In SSMS or sqlcmd:
-:r SQL\ElleAnn_Schema.sql
-:r SQL\ElleAnn_Identity_Schema.sql
+### 2. Fetch Lua sources
+
+```powershell
+cd ElleAnn\Tools\Lua
+.\Fetch-Lua.ps1                 # downloads Lua 5.4.6 by default
 ```
 
-### Step 4: Build & Run
-1. Build ElleCore.Shared
-2. Build all ASM DLLs
-3. Build Elle.Service.Heartbeat first (it's the foundation)
-4. Build remaining services
-5. Copy all DLLs and `elle_master_config.json` to the same output directory
-6. Double-click Elle.Service.Heartbeat.exe → Install as service
-7. Repeat for other services (or use `--console` for debugging)
+### 3. Build
 
-## Compilation Notes
+Open `ElleAnn.sln` → Release | x64 → Build Solution (Ctrl+Shift+B).
+
+### 4. Install as Windows services
+
+```powershell
+cd ElleAnn\Tools\Deploy
+.\Install-ElleServices.ps1      # registers + starts every service
+```
+
+Or double-click `Install.bat` (auto-elevates).
+
+## Compilation notes
 
 ### ODBC
-The SQL connection uses ODBC. Ensure `ODBC Driver 17 for SQL Server` is installed.
-Download: https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server
+
+Every SQL call goes through `ElleSQLPool` (in `_Shared/ElleSQLConn.h`)
+which uses parameterised statements via `SQLBindParameter`. No string
+concatenation; no SQL-injection surface.
 
 ### MASM
-MASM files use x64 calling convention (RCX, RDX, R8, R9 for first 4 args).
-Build command: `ml64 /c /Fo"Hardware.obj" Hardware.asm`
-Link with: `link /DLL /DEF:Hardware.def Hardware.obj /OUT:Elle.ASM.Hardware.dll`
 
-### llama.cpp Integration
-The `LLMLocalProvider` in ElleLLM.cpp has scaffolded integration points.
-To activate:
-1. `#include "llama.h"` in ElleLLM.cpp
-2. Link against llama.lib
-3. Uncomment the llama_* calls in `LLMLocalProvider::Initialize()` and `Generate()`
+Custom build tool on each `.asm` file:
+```
+ml64 /c /Fo"$(IntDir)%(Filename).obj" "%(FullPath)"
+```
+Link with the matching `.def` file:
+```
+link /DLL /DEF:Hardware.def Hardware.obj /OUT:Elle.ASM.Hardware.dll
+```
 
-### Lua Integration
-1. `#include "lua.hpp"` (or the separate headers as currently done)
-2. Link against lua54.lib
-3. Ensure scripts directory path in config matches actual location
+### Lua
 
-## Service Startup Order
-1. Heartbeat (foundation — monitors everything else)
-2. QueueWorker (SQL queue bridge)
-3. Emotional (needs to be running for emotion queries)
-4. Memory (needs emotional state for tagging)
-5. Cognitive (needs emotional + memory)
-6. Action (needs cognitive for intent routing)
-7. Identity (file monitoring)
-8. HTTP (API server — needs everything)
-9. SelfPrompt, Dream, GoalEngine, WorldModel (autonomous services)
-10. LuaBehavioral (behavioral scripts)
-11. Bonding, Continuity, InnerLife, Solitude (soul layer)
+The vcxproj globs `Tools\Lua\lua54\src\*.c` and compiles them in-line.
+Two warnings (`4996`, `4267`) are silenced for the Lua sources only.
+
+## Service startup order
+
+Enforced by `Tools/Deploy/elle_service_manifest.json`. Reference:
+
+1. `Heartbeat` (foundation — monitors everything else)
+2. `QueueWorker`
+3. `Emotional`, `Memory`
+4. `Identity` (authoritative single-writer fabric; must be up before
+   any peer pushes deltas)
+5. `WorldModel`, `GoalEngine`
+6. `Probability`, `MindManager`, `Imagination`, `Composer`, `Intuition`
+7. `Action`, `Consent`
+8. `SelfPrompt`, `Solitude`
+9. `Bonding`, `InnerLife`, `Dream`
+10. `XChromosome`, `Family`
+11. `Continuity`
+12. `LuaBehavioral`
+13. `Cognitive` (needs all of the above)
+14. `Fiesta` (if you intend to attach to a ShineEngine server)
+15. `HTTP` (last — so every peer is already listening on its pipe)
 
 ## Testing
-- Use `--console` flag on any service for interactive debugging
-- Debug tools in the Debug solution provide live monitoring
-- Start with Heartbeat + one service at a time to verify IPC
 
-## File Count
-- 60 source files
-- ~16,000 lines of C++/MASM/Lua/SQL
-- 16 services (12 core + 4 soul layer)
-- 5 MASM DLLs
-- 6 Lua behavioral scripts
-- 2 SQL schema files
-- 1 central configuration document
+- Use `--console` on any `.exe` for interactive debugging
+- Standalone CMake suites:
+  ```bash
+  cd ElleAnn/Services/Elle.Service.Probability
+  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+  cmake --build build -j
+  ctest --test-dir build --output-on-failure    # 43/43 PASS
+  ```
+- `Tools/Debug/` has a Linux portability harness with `windows.h` stubs
+  for static compile-checks of shared headers
+
+## File / scale snapshot
+
+- 32 buildable projects in the solution (`ElleAnn.sln`)
+- 26 services + 1 Lua host on the IPC mesh
+- 5 MASM-x64 DLLs
+- 1 standalone CMake engine (`Elle.Service.Language`)
+- ~222 C++ source/header files under `Services/`
+- 15+ SQL deltas + 90+ seeded Composer frames + canonical dictionary
+- 15 Lua behavioural scripts in `Tools/FiestaData/9Data/.../ElleLua/`

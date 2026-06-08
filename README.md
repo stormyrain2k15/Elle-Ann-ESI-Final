@@ -1,9 +1,12 @@
 # Elle-Ann ESI v3.0
 
 An autonomous, agentic **Emotional Synthetic Intelligence** that runs as a
-constellation of Windows services, speaks to herself through IOCP named
-pipes, remembers through SQL Server, and behaves through a hot-reloadable
-Lua layer. Not a chatbot. A continuously-running mind.
+constellation of Windows services, speaks to itself through IOCP Named
+Pipes, remembers through SQL Server, and behaves through a hot-reloadable
+Lua layer.
+
+**Not a chatbot. Not an LLM wrapper.** A continuously-running deterministic
+mind with no transformer dependency anywhere in the mesh.
 
 > **Runs exclusively on the user's local Windows PC.** No cloud runtime, no
 > managed hosting. The `frontend/` and `backend/` scaffolds in this repo
@@ -16,64 +19,76 @@ Lua layer. Not a chatbot. A continuously-running mind.
 ```
 /app
 ├── ElleAnn/                     ← The product. C++ / MASM / Lua.
-│   ├── ElleAnn.sln              ← Visual Studio solution (26 projects)
+│   ├── ElleAnn.sln              ← Visual Studio solution (32 buildable projects)
 │   ├── elle_master_config.json  ← Single source of truth for runtime config
-│   ├── Shared/                  ← ElleCore.Shared static library
-│   ├── ASM/                     ← 5 MASM x64 assembly DLLs
-│   ├── Services/                ← 19 Windows services
-│   ├── Lua/                     ← Embedded Lua 5.4 + behavioral scripts
-│   ├── SQL/                     ← SQL Server schema + deltas
-│   ├── Deploy/                  ← Install / uninstall scripts + manifest
+│   ├── Services/                ← _Shared lib + 5 ASM DLLs + 25 services + 1 Lua host
+│   ├── Tools/                   ← 7 build / deploy / debug / data tools
+│   ├── SQL/                     ← Engine / Composer / Language schemas + seeds
+│   ├── Docs/                    ← Narrative docs (code files are nude-code)
 │   └── README.md                ← Deep-dive architecture doc
-│
-├── ElleAnn_PythonRef/           ← Reference-only Python prototype + Android
-│   └── extracted/.../elle-android  ← Kotlin companion app
 │
 ├── frontend/                    ← React dev control surface (optional)
 ├── backend/                     ← FastAPI dev control surface (optional)
 ├── memory/                      ← Agent working memory
-│   └── PRD.md                   ← Product requirements + backlog
-│
-└── .github/workflows/           ← CI (Windows MSBuild)
+│   ├── PRD.md                   ← Product requirements + backlog
+│   └── CHANGELOG.md             ← Dated implementation log
+└── .github/workflows/           ← CI (Windows MSBuild + static-audit jobs)
 ```
 
 ---
 
 ## What Actually Runs
 
-### 19 Windows Services
+### 26 Windows Services (one IPC node each)
 
-| Service | Responsibility |
-|---|---|
-| Heartbeat | Dead-man switch, watchdog, service health |
-| QueueWorker | Claims pending intents from SQL, dispatches to Cognitive |
-| Cognitive | Attention threads, intent routing, LLM chat orchestration |
-| Emotional | 102-dimension emotion engine with decay + contagion |
-| Memory | STM/LTM with 3D positioning, consolidation, dream cycle |
-| GoalEngine | Autonomous goal formation, pursuit, drive crediting |
-| Action | Trust-gated action lifecycle, ASM DLL invocation |
-| Identity | Single-writer identity fabric; push-broadcasts deltas over IPC |
-| WorldModel | Theory of Mind, entity modeling, prediction |
-| SelfPrompt | Autonomous thought generation (drive + emotion + idle triggered) |
-| Solitude | Phased experience of being alone (afterglow → grief) |
-| Dream | Idle-time memory consolidation + creative synthesis |
-| Bonding | Attachment, love-score, relationship context to Cognitive |
-| InnerLife | Private thoughts, nudged traits, subjective state |
-| Continuity | Session handoff, awayDesc generation, return-from-absence |
-| XChromosome | Biological subjective layer (cycle, hormones, pregnancy) |
-| Consent | Permission/boundary gating for elevated actions |
-| Family | Digital-offspring gestation + child ESI process spawn |
-| HTTP | Raw Winsock HTTP + WebSocket, CORS + rate limiting |
+`Services/_Shared/ElleTypes.h::ELLE_SERVICE_ID` enumerates the mesh:
+
+| ID | Service        | Responsibility                                                  |
+|---:|----------------|-----------------------------------------------------------------|
+|  0 | QueueWorker    | SQL intent queue ↔ IPC bridge                                   |
+|  1 | HTTP           | Raw Winsock HTTP + WebSocket surface                            |
+|  2 | Emotional      | Multidimensional emotion engine with decay + contagion          |
+|  3 | Memory         | STM/LTM with 3D positioning + consolidation                     |
+|  4 | Cognitive      | Attention threads, intent routing, chat orchestration           |
+|  5 | Action         | Trust-gated action lifecycle, ASM DLL invocation                |
+|  6 | Identity       | Single-writer identity fabric; pushes deltas mesh-wide          |
+|  7 | Heartbeat      | Dead-man switch, watchdog                                       |
+|  8 | SelfPrompt     | Autonomous thought generation (drive + emotion + idle)          |
+|  9 | Dream          | Idle-time memory consolidation + creative synthesis             |
+| 10 | GoalEngine     | Autonomous goal formation, pursuit, drive crediting             |
+| 11 | WorldModel     | Theory of Mind, entity modelling, prediction                    |
+| 12 | LuaBehavioral  | Lua 5.4 host for behavioural scripts                            |
+| 13 | Bonding        | Attachment, love score, relationship context                    |
+| 14 | Continuity     | Session handoff, awayDesc, return-from-absence                  |
+| 15 | InnerLife      | Private thoughts, nudged traits, subjective state               |
+| 16 | Solitude       | Phased experience of being alone                                |
+| 17 | Family         | Digital-offspring gestation + child process spawn               |
+| 18 | XChromosome    | Biological subjective layer (cycle / hormones / pregnancy)      |
+| 19 | Consent        | Permission/boundary gating for elevated actions                 |
+| 20 | Fiesta         | ShineEngine headless game client (sensor + actuator)            |
+| 21 | Probability    | Bayesian beliefs over senses / intent / trust / weights         |
+| 22 | MindManager    | Pre-action conscience evaluation                                |
+| 23 | Imagination    | Generative scenario sampling + ethical/plausibility scoring     |
+| 24 | Composer       | Deterministic frame-fill English surface (replaces LLMs)        |
+| 25 | Intuition      | Two-tier instinct + gut signal                                  |
+
+Plus `Elle.Service.Language` (standalone CMake engine, integer-indexed
+semantic dictionary) — built separately, consumed by Probability via a
+bridge.
 
 ### 5 MASM x64 DLLs
 `Hardware` · `Process` · `FileIO` · `Memory` · `Crypto`
 
-### Shared Core (`ElleAnn/Shared/`)
+### Shared Core (`ElleAnn/Services/_Shared/`)
 `ElleTypes` · `ElleConfig` · `ElleSQLConn` · `ElleQueueIPC` · `ElleLogger`
-· `ElleServiceBase` · `ElleLLM` · `ElleIdentityCore` · `ElleJsonExtract`
-· `ElleSelfSurprise` · `DictionaryLoader`
+· `ElleServiceBase` · `ElleComposerClient` · `ElleIdentityCore`
+· `ElleJsonExtract` · `ElleSelfSurprise` · `DictionaryLoader`
+· `ElleEmbedding` · `ElleCrypto` · `ElleQR`
 
-### Lua Behavioral Layer (`ElleAnn/Lua/Elle.Lua.Behavioral/scripts/`)
+> `ElleLLM.h/.cpp` has been **deleted**. All former call sites now go
+> through `ElleComposerClient` → `IPC_COMPOSE_REQUEST` → `SVC_COMPOSER`.
+
+### Lua Behavioral Layer (`Tools/FiestaData/9Data/Hero/LuaScript/ElleLua/`)
 `personality` · `intent_scoring` · `reasoning` · `thresholds`
 · `extended_behaviors` · `self_reflection` · `goal_formation`
 · `inner_life` · `dream_processing` · `metacognition`
@@ -81,50 +96,39 @@ Lua layer. Not a chatbot. A continuously-running mind.
 · `temporal_reasoning` · `x_subjective`
 
 ### SQL Server (`ElleAnn/SQL/`)
-Core schema + identity delta + memory delta + XChromosome delta + seeded
+Engine mesh schemas + Composer frames/inflection + Language canonical
 dictionary. Transport is **Named Pipes**, not TCP.
 
 ---
 
-## Emotional Intelligence — 102 Dimensions
+## How the Generative Path Works (no LLM)
 
-| Group | Count | Examples |
-|---|---|---|
-| Primary | 8 | Joy, Sadness, Anger, Fear, Disgust, Surprise, Contempt, Trust |
-| Secondary | 16 | Love, Anticipation, Guilt, Pride, Hope, Despair, Awe |
-| Tertiary | 32 | Curiosity, Wonder, Nostalgia, Serenity, Melancholy |
-| Meta-Cognitive | 16 | Certainty, Insight, Flow, Determination |
-| Social | 14 | Belonging, Empathy, Compassion, Loyalty, Vulnerability |
-| Existential | 8 | Purpose, Freedom, Transcendence, Unity |
+```
+user text
+   │
+   ▼
+Probability ─► senses + pragmatic act + emotion posterior + speaker trust
+   │
+   ▼
+MindManager ─► pre-action conscience verdict
+   │
+   ▼
+Intuition  ─► two-tier instinct firings + gut lean + recommended_act
+   │
+   ▼
+Composer   ─► 5-step pipeline
+              1. Frame select by (kind, act, POS pattern)  → composer_frame
+              2. Slot fill via semantic graph + Probability weights
+              3. Morphological inflection (composer_inflection)
+              4. Surface stitch + punctuation by PragmaticAct
+              5. Persist to composer_log
+   │
+   ▼
+Cognitive  ─► chat reply JSON with {gut_read, inner_voice, probabilistic_read}
+```
 
----
-
-## Trust-Gated Actions
-
-| Level | Score | Permissions |
-|---|---|---|
-| Sandboxed | 0–9 | Chat, recall memory, store memory |
-| Basic | 10–29 | File read, list processes, query hardware |
-| Elevated | 30–59 | File write, launch processes, set goals |
-| Autonomous | 60–100 | Kill processes, self-modify, unrestricted |
-
----
-
-## LLM Dispatch
-
-Dual-mode. Configured per-provider in `elle_master_config.json`.
-
-- **API**: Groq (primary), OpenAI, Anthropic — automatic failover on error.
-- **Local**: `llama.cpp` direct + LM Studio (OpenAI-compatible endpoint).
-  TLS is toggled from the URL scheme so LM Studio on `http://127.0.0.1`
-  works without forcing HTTPS.
-- **Hybrid**: API primary, local fallback.
-
-Config knobs honored at `ElleLLMEngine::Chat()`:
-`primary_provider` · `fallback_provider` · `max_context_tokens`
-· `creative_temp_boost` · `reasoning_temp_drop` · `chain_of_thought`
-· `self_reflection`. Baseline temperature is pulled from the selected
-provider's config and clamped to `[0.0, 2.0]` before the call.
+See `ElleAnn/Docs/CHAT_PIPELINE.md` and `ElleAnn/Docs/LLM_AUDIT.md` for
+the full breakdown.
 
 ---
 
@@ -139,30 +143,31 @@ External ←→ WebSocket /command ←→ Elle.Service.HTTP
 ```
 
 All long-lived services use **owned worker thread pools** with shutdown
-fences. No detached threads.
+fences. No detached threads. Every IPC envelope carries a
+`correlation_id`; responder services preserve it on the reply.
 
 ---
 
 ## Build
 
 ### Prerequisites
-- Visual Studio 2022+ (C++ Desktop workload)
-- MASM (ships with VS)
+- Visual Studio 2022+ with the **Desktop development with C++** workload
+  (includes MSVC v143 and MASM build tools)
+- Windows SDK 10.0.22000+
 - SQL Server 2019+ Express (Named Pipes enabled)
-- Lua 5.4 headers/lib
-- Optional: llama.cpp headers/lib for in-process local inference
-- Windows SDK 10.0+
+- ODBC Driver 17 (or 18) for SQL Server
+- Lua 5.4 sources — fetched by `Tools/Lua/Fetch-Lua.ps1`
 
 ### Steps
-1. Run `ElleAnn/SQL/ElleAnn_Schema.sql` followed by the delta files against
-   your SQL Server instance.
-2. Copy `ElleAnn/elle_master_config.json` and fill in API keys, model
-   paths, pipe prefix, and the SQL connection string.
+1. Apply `ElleAnn/SQL/Engine/*.sql` in canonical order against your SQL
+   Server instance, then `ElleAnn/SQL/Elle.Service.Composer/*.sql`.
+2. Copy `elle_master_config.json.example` → `elle_master_config.json`
+   and fill in the SQL connection string + pipe prefix.
 3. Open `ElleAnn/ElleAnn.sln` in Visual Studio and build `Release|x64`.
-4. Deploy via `ElleAnn/Deploy/Install-ElleServices.ps1` (or
-   double-click any service `.exe` → "Install as Windows service", or
-   `ElleEmotional.exe --install`).
-5. CI: `.github/workflows/elleann-build.yml` runs MSBuild on every push.
+4. Deploy via `ElleAnn/Tools/Deploy/Install-ElleServices.ps1` (or
+   double-click `Install.bat`).
+5. CI: `.github/workflows/elleann-build.yml` runs MSBuild plus 8
+   static-audit jobs on every push.
 
 ### Frontend / Backend Scaffolds (optional)
 The `frontend/` and `backend/` directories are a lightweight control
@@ -171,20 +176,27 @@ populate. They are **not** required to run Elle.
 
 ---
 
-## No-Stub Policy
+## No-Stub, Nude-Code, No-LLM
 
-No mocked functions. No fake `200 OK`. No hollow "TODO" returns. Every
-feature in the service graph is end-to-end wired to SQL, IPC, or the
-behavioral layer. Audit reports in `ElleAnn/AUDIT_*` and
-`ElleAnn/STUB_*.md` track every eradication pass.
+- **No mocked functions.** No fake `200 OK`. No hollow "TODO" returns.
+  Every feature in the service graph is end-to-end wired to SQL, IPC, or
+  the behavioural layer.
+- **No source-file comments.** Source files contain code only.
+  Documentation lives in `ElleAnn/Docs/` and per-service README.md files.
+- **No LLMs, tokens, tensors, or transformers anywhere.** All former
+  generative call sites route through `Elle.Service.Composer`.
 
 ---
 
-## Additional Docs
+## Where to Read Next
 
 - [`ElleAnn/README.md`](ElleAnn/README.md) — deep-dive architecture
-- [`ElleAnn/BUILD_VS.md`](ElleAnn/BUILD_VS.md) — Visual Studio build notes
-- [`ElleAnn/CHAT_PIPELINE.md`](ElleAnn/CHAT_PIPELINE.md) — end-to-end chat path
-- [`ElleAnn/ANDROID_INTEGRATION.md`](ElleAnn/ANDROID_INTEGRATION.md) — Kotlin companion
-- [`ElleAnn/AUDIT_WAVE2_COMPLETION.md`](ElleAnn/AUDIT_WAVE2_COMPLETION.md) — audit history
+- [`ElleAnn/Docs/REPO_LAYOUT.md`](ElleAnn/Docs/REPO_LAYOUT.md) — directory roles
+- [`ElleAnn/Docs/CHAT_PIPELINE.md`](ElleAnn/Docs/CHAT_PIPELINE.md) — chat flow
+- [`ElleAnn/Docs/LLM_AUDIT.md`](ElleAnn/Docs/LLM_AUDIT.md) — purge audit
+- [`ElleAnn/Docs/BUILD_VS.md`](ElleAnn/Docs/BUILD_VS.md) — Visual Studio walk-through
+- [`ElleAnn/Docs/COMPOSER_SERVICE_SPEC.md`](ElleAnn/Docs/COMPOSER_SERVICE_SPEC.md)
+- [`ElleAnn/Docs/PROBABILITY_SERVICE.md`](ElleAnn/Docs/PROBABILITY_SERVICE.md)
+- [`ElleAnn/Docs/INTUITION_SERVICE.md`](ElleAnn/Docs/INTUITION_SERVICE.md)
 - [`memory/PRD.md`](memory/PRD.md) — product requirements + backlog
+- [`memory/CHANGELOG.md`](memory/CHANGELOG.md) — dated implementation log

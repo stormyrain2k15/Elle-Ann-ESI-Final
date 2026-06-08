@@ -92,7 +92,7 @@ entries ≥ 0.15 intensity to `x_symptoms`:
 `x_pregnancy_events`, `x_contraception`, `x_lifecycle`, `x_stimulus_log`,
 `x_symptoms`, `x_modulation_log`.
 
-Schema: `SQL/ElleAnn_XChromosome_Schema.sql` — apply after
+Schema: `SQL/Engine/ElleAnn_XChromosome_Schema.sql` — apply after
 `ElleAnn_MemoryDelta.sql`.
 
 ## HTTP endpoints

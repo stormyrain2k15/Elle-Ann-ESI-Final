@@ -11,16 +11,20 @@ script you run on the Windows box that hosts SQL Server.
 ```bash
 # Container side (Linux) — generate CSVs
 pip install nltk tqdm
-python3 /app/ElleAnn/Tools/etl/sources/wordnet_to_elle.py
-python3 /app/ElleAnn/Tools/etl/validate_csvs.py
-# → 12 CSVs in /app/ElleAnn/Tools/etl/output/  (~100 MB, 0 errors)
+python3 /app/ElleAnn/Tools/ETL/sources/wordnet_to_elle.py
+python3 /app/ElleAnn/Tools/ETL/validate_csvs.py
+# → 12 CSVs in /app/ElleAnn/Tools/ETL/output/  (~100 MB, 0 errors)
 
-# Copy /app/ElleAnn/Tools/etl/output/  to your Windows box, e.g. C:\Elle\etl\output\
+# (Optional) layer on lexicon augmentations
+python3 /app/ElleAnn/Tools/ETL/sources/nrc_emolex_to_elle.py
+python3 /app/ElleAnn/Tools/ETL/sources/nrc_vad_to_elle.py
+python3 /app/ElleAnn/Tools/ETL/sources/wiktionary_to_elle.py
+
+# Copy /app/ElleAnn/Tools/ETL/output/  to your Windows box, e.g. C:\Elle\etl\output\
 
 # Windows side — load into SQL Server
 pip install pyodbc tqdm
 # 1) Create DB + schema (canonical run order):
-#    sqlcmd -S localhost -d master -i sql\00_create_database.sql   (if you have one)
 #    for /R sql %f in (*.sql) do sqlcmd -S localhost -d EllesLanguage -i %f
 # 2) Stream the CSVs:
 python load_to_sqlserver.py ^
@@ -42,7 +46,7 @@ without losing fidelity.
 ## Layout
 
 ```
-Tools/etl/
+Tools/ETL/
 ├── README.md              this file
 ├── sources/
 │   ├── wordnet_to_elle.py     WordNet → CSV (117 k synsets → 12 CSVs)
@@ -165,18 +169,14 @@ Exit code is `0` on green, `1` on any ERROR. Warnings are informational.
 
 ## What's intentionally NOT in the ETL
 
-- **NRC-EmoLex / VAD lexicon** — license-clean drop next. WordNet alone
-  gives ~2.5 k emotion-tagged senses (definition-keyword heuristic); the
-  real lexicon will lift that to all senses with a real word-level emotion
-  vector.
 - **SUBTLEX / Google n-gram frequencies** — currently every Frequency
   defaults to 0. Loader's MERGE clamps to MAX, so dropping a frequency
   source later just adds the missing column.
 - **Context frames** — handcrafted seeds live in
-  `elle-language/config/context_frames.json`. We will eventually grow
-  these from a tagged corpus, not from WordNet.
+  `Elle.Service.Language/config/context_frames.json`. We will
+  eventually grow these from a tagged corpus, not from WordNet.
 
-## Current scale (WordNet only)
+## Current scale (WordNet baseline)
 
 ```
 words.csv                       83,045 unique lemmas
@@ -186,7 +186,7 @@ senses.csv                      88,429 senses
 phrase_senses.csv               29,229 phrase senses
 sense_usage_examples.csv       235,316 rows
 sense_context_examples.csv     235,316 rows
-sense_emotions.csv               3,280 rows  (will explode w/ NRC-EmoLex)
+sense_emotions.csv               3,280 rows  (baseline; NRC-EmoLex augmentation expands this)
 sense_relations.csv            198,186 rows
 word_relations.csv             170,313 rows
 concepts.csv                   137,666 concepts
@@ -194,3 +194,9 @@ concept_members.csv            206,746 memberships
 ```
 
 Total: ~100 MB CSV, all SQL-load-ready, validated 0 ERR / 1 WARN.
+
+Adding the augmentations (NRC-EmoLex, NRC-VAD, Wiktionary) layers
+on top: emotion coverage moves from ~3k senses to mesh-wide, valence /
+arousal / dominance gets real lexicon values rather than the WordNet
+draw-keyword heuristic, and Wiktionary fills out lemmas + senses
+WordNet misses (proper nouns, neologisms, technical vocabulary).
