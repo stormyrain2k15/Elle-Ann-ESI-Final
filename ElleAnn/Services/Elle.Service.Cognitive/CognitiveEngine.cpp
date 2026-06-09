@@ -338,6 +338,45 @@ protected:
 
     }
 
+    void MaybeFireIntellectLearn(const std::string& userText, const std::string& userId) {
+        std::string low = ToLower(userText);
+        static const char* triggers[] = {
+            "let me tell you about ", "let me teach you about ",
+            "i'll teach you ", "i'll explain ",
+            "i want to teach you ", "today i learned ",
+            "i just learned ", "the lesson is ",
+            "remember that ", "the key thing is "
+        };
+        std::string subject;
+        for (auto& t : triggers) {
+            auto pos = low.find(t);
+            if (pos == std::string::npos) continue;
+            size_t start = pos + std::strlen(t);
+            size_t end = userText.find_first_of(".!?\n", start);
+            if (end == std::string::npos) end = userText.size();
+            if (end <= start) continue;
+            subject = userText.substr(start, end - start);
+            while (!subject.empty() && (subject.front()==' '||subject.front()=='"')) subject.erase(0,1);
+            while (!subject.empty() && (subject.back()==' '||subject.back()=='"'||subject.back()==',')) subject.pop_back();
+            if (subject.size() > 120) subject = subject.substr(0, 120);
+            break;
+        }
+        if (subject.empty()) return;
+        nlohmann::json payload;
+        payload["request_id"] = std::string("intl-") + std::to_string(ELLE_MS_NOW());
+        payload["subject"]    = subject;
+        payload["category"]   = "general";
+        payload["source"]     = userId.empty() ? std::string("conversation") : userId;
+        payload["content"]    = userText;
+        auto msg = ElleIPCMessage::Create(IPC_INTELLECT_LEARN,
+                                          SVC_COGNITIVE, SVC_INTELLECT);
+        msg.SetStringPayload(payload.dump());
+        if (GetIPCHub().Send(SVC_INTELLECT, msg)) {
+            ELLE_INFO("Cognitive: autonomous learn fired subject='%s'", subject.c_str());
+        }
+    }
+
+
     std::string FetchLearnedKnowledgeContext(const std::string& userText) {
         if (userText.empty()) return "";
         std::string lowText = ToLower(userText);
@@ -1230,6 +1269,8 @@ private:
             userText, userId, 0.5f, sent, probJson, entities, true);
         std::string intuCtx = FormatIntuitionContext(intuResult);
         std::string knowCtx = FetchLearnedKnowledgeContext(userText);
+
+        MaybeFireIntellectLearn(userText, userId);
 
         std::vector<ELLE_MEMORY_RECORD> memories =
             CrossReferenceByEntities(entities, userText, mode);

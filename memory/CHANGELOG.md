@@ -1,4 +1,28 @@
-## 2026-02 — Elle.Service.Intellect added (service #27)
+## 2026-02 — Autonomous learn + pairing kill + anti-slop tracking honesty
+
+### Cognitive autonomous `IPC_INTELLECT_LEARN` trigger
+`CognitiveEngine::HandleChatRequest` now calls `MaybeFireIntellectLearn(userText, userId)` after the gut-read context block. Ten teaching/learning triggers detected (`"let me tell you about "`, `"today i learned "`, `"the lesson is "`, etc.). Extracts subject up to sentence terminator, trims to ≤120 chars, fires `IPC_INTELLECT_LEARN` to `SVC_INTELLECT` with `{request_id, subject, category=general, source=userId, content=userText}`. Silent no-op when no trigger matches.
+
+### Pairing removed — username/password only
+- `POST /api/auth/pair-code` → **410 Gone** ("pair-code flow removed; use POST /api/auth/login with username+password")
+- `POST /api/auth/pair` → **410 Gone**
+- `GET /api/auth/qr` → **410 Gone**, the ~62-line QR-encode handler **deleted** (not just disabled)
+- `POST /api/auth/login` remains the canonical route — already accepts `{username, password}`
+- Android Kotlin client still has Pair-screen UI; backend 410s enforce the contract until the client catches up
+
+### Anti-slop audit tracking — honesty pass
+New: `Docs/ANTI_SLOP_AUDIT_TRACKING.md`. Single source of truth for every item flagged in `anti_slop_code_audit.md` + `deeper_anti_slop_audit.md`. Per the user's explicit instruction, every item is in the matrix — none silently skipped — with brutally honest status (FIXED / IN-PROGRESS / DEFERRED / NEEDS-DESIGN). Inherits ~24 prior fixes from `DB_CONSUMPTION_FIX.md` + `SLOPPY_WORK_FIX.md`. ~30 items still open, with priority order documented for the next pass.
+
+### Verification
+- Probability ctest: 52/52 PASS
+- Intuition ctest: 39/39 PASS
+- HTTPServer.cpp braces 2054/2054 (deletion balanced)
+- CognitiveEngine.cpp braces 365/369 (same string-literal baseline as before the edit — confirmed unchanged)
+- Combined: 91/91 green
+
+---
+
+
 
 User uploaded the new `Elle.Service.Intellect` service. Integrated using the same pattern as Intuition/Composer/Imagination.
 

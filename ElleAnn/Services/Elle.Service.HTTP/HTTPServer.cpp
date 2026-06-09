@@ -2006,13 +2006,13 @@ private:
         m_router.Register("POST", "/api/auth/pair-code",
             [](const HTTPRequest&) -> HTTPResponse {
                 return HTTPResponse::Err(410,
-                    "pair-code flow retired; use POST /api/auth/login");
+                    "pair-code flow removed; use POST /api/auth/login with username+password");
             }, AUTH_PUBLIC);
 
         m_router.Register("POST", "/api/auth/pair",
             [](const HTTPRequest&) -> HTTPResponse {
                 return HTTPResponse::Err(410,
-                    "pair flow retired; use POST /api/auth/login");
+                    "pair flow removed; use POST /api/auth/login with username+password");
             }, AUTH_PUBLIC);
 
         m_router.Register("POST", "/api/auth/login",
@@ -2387,67 +2387,10 @@ private:
             }, AUTH_ADMIN);
 
         m_router.Register("GET", "/api/auth/qr",
-            [](const HTTPRequest& req) -> HTTPResponse {
-
-                std::string code, host, port;
-                auto findQ = [&](const std::string& key, std::string& out) {
-
-                    size_t q = req.path.find('?');
-                    if (q == std::string::npos) return;
-                    std::string qs = req.path.substr(q + 1);
-                    size_t start = 0;
-                    while (start < qs.size()) {
-                        size_t amp = qs.find('&', start);
-                        std::string pair = qs.substr(start,
-                            amp == std::string::npos ? qs.size() - start : amp - start);
-                        size_t eq = pair.find('=');
-                        if (eq != std::string::npos &&
-                            pair.substr(0, eq) == key) {
-                            out = pair.substr(eq + 1);
-                            return;
-                        }
-                        if (amp == std::string::npos) break;
-                        start = amp + 1;
-                    }
-                };
-                findQ("code", code);
-                findQ("host", host);
-                findQ("port", port);
-
-                if (code.size() != 6) {
-                    return HTTPResponse::Err(400, "code must be 6 digits");
-                }
-                for (char c : code) {
-                    if (c < '0' || c > '9')
-                        return HTTPResponse::Err(400, "code must be 6 digits");
-                }
-
-                const auto& http = ElleConfig::Instance().GetHTTP();
-                if (host.empty()) host = http.bind_address;
-                if (port.empty()) port = std::to_string(http.port);
-                if (host.empty() || host == "0.0.0.0") {
-
-                    return HTTPResponse::Err(400,
-                        "host required when bind_address is 0.0.0.0 — "
-                        "pass ?host=<LAN-address>");
-                }
-
-                std::string uri = "ellepair://" + host + ":" + port + "/" + code;
-                auto qr = ElleQR::Encode(uri, ElleQR::Ecc::M);
-                if (qr.size == 0) {
-                    return HTTPResponse::Err(500, "qr encode failed");
-                }
-                std::string svg = ElleQR::ToSvg(qr, 6, 4);
-
-                HTTPResponse r;
-                r.status      = 200;
-                r.statusText  = "OK";
-                r.contentType = "image/svg+xml";
-                r.body        = std::move(svg);
-
-                r.headers["Cache-Control"] = "no-store, max-age=0";
-                return r;
-            }, AUTH_ADMIN);
+            [](const HTTPRequest&) -> HTTPResponse {
+                return HTTPResponse::Err(410,
+                    "pair-QR removed; use POST /api/auth/login with username+password");
+            }, AUTH_PUBLIC);
 
         m_router.Register("GET", "/api/diag/queues", [](const HTTPRequest&) {
             ElleDB::QueueSnapshot s;
