@@ -79,6 +79,7 @@ protected:
         m_tickCount++;
         if (m_tickCount % 60 == 0) {
             LogHealthSummary();
+            RecordHealthMetrics(healthy);
         }
     }
 
@@ -181,6 +182,34 @@ private:
             ELLE_INFO("  %s: %s (last seen %llums ago)",
                       ElleIPC::GetServiceName((ELLE_SERVICE_ID)i),
                       healthy[i] ? "HEALTHY" : "UNHEALTHY", age);
+        }
+    }
+
+    void RecordHealthMetrics(const std::vector<char>& healthy) {
+        int healthyCount = 0;
+        int unhealthyCount = 0;
+        for (int i = 0; i < ELLE_SERVICE_COUNT; i++) {
+            if (healthy[i]) healthyCount++;
+            else            unhealthyCount++;
+        }
+        ElleDB::RecordMetric("services_healthy",   (double)healthyCount);
+        ElleDB::RecordMetric("services_unhealthy", (double)unhealthyCount);
+        ElleDB::RecordMetric("heartbeat_ticks",    (double)m_tickCount);
+
+        ElleDB::QueueSnapshot qs = {};
+        if (ElleDB::GetQueueSnapshot(qs)) {
+            ElleDB::RecordMetric("queue_intent_pending",      (double)qs.intent_pending);
+            ElleDB::RecordMetric("queue_intent_processing",   (double)qs.intent_processing);
+            ElleDB::RecordMetric("queue_intent_completed_1h", (double)qs.intent_completed_1h);
+            ElleDB::RecordMetric("queue_intent_failed_1h",    (double)qs.intent_failed_1h);
+            ElleDB::RecordMetric("queue_intent_stale",        (double)qs.intent_stale_processing);
+            ElleDB::RecordMetric("queue_action_queued",       (double)qs.action_queued);
+            ElleDB::RecordMetric("queue_action_locked",       (double)qs.action_locked);
+            ElleDB::RecordMetric("queue_action_executing",    (double)qs.action_executing);
+            ElleDB::RecordMetric("queue_action_success_1h",   (double)qs.action_success_1h);
+            ElleDB::RecordMetric("queue_action_failure_1h",   (double)qs.action_failure_1h);
+            ElleDB::RecordMetric("queue_hardware_pending",    (double)qs.hardware_pending);
+            ElleDB::RecordMetric("queue_hardware_dispatched", (double)qs.hardware_dispatched);
         }
     }
 };

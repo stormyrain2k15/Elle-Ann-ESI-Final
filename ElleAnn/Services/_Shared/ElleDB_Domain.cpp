@@ -238,10 +238,11 @@ bool RecallMemories(const std::string& query,
         "  LEFT JOIN ElleCore.dbo.memory_tags mt ON mt.memory_id = m.id "
         "  LEFT JOIN ElleCore.dbo.memory_entity_links mel ON mel.memory_id = m.id "
         "  LEFT JOIN ElleCore.dbo.world_entity we ON we.id = mel.entity_id "
-        "  WHERE  LOWER(mt.tag) = LOWER(?) "
+        "  WHERE  (LOWER(mt.tag) = LOWER(?) "
         "      OR m.content LIKE ? "
         "      OR m.summary LIKE ? "
-        "      OR LOWER(we.name) = LOWER(?) "
+        "      OR LOWER(we.name) = LOWER(?)) "
+        "    AND m.tier < 3 "
         ") "
         "SELECT TOP (?) m.id, m.memory_type, m.tier, m.content, m.summary, "
         "       m.emotional_valence, m.importance, m.relevance, "
@@ -309,6 +310,7 @@ bool RecallRecentLTM(std::vector<ELLE_MEMORY_RECORD>& out, uint32_t maxCount) {
         "       m.position_x, m.position_y, m.position_z, "
         "       m.access_count, m.created_ms, m.last_access_ms "
         "FROM ElleCore.dbo.memory m "
+        "WHERE m.tier IN (1, 2) "
         "ORDER BY m.created_ms DESC;",
         { std::to_string(maxCount) });
     if (!rs.success) return false;

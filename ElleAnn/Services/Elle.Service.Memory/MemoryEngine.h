@@ -34,6 +34,9 @@ public:
 
     void DecaySTM();
 
+    void AgeBufferToLTM();
+    void ArchiveColdLTM();
+
     void LinkMemories(uint64_t id1, uint64_t id2);
 
     void UpdateClusters();

@@ -119,6 +119,9 @@ struct MemoryConfig {
     uint32_t    stm_capacity = 256;
     float       stm_decay_seconds = 15.0f;
     float       promote_threshold = 0.6f;
+    uint32_t    buffer_to_ltm_seconds   = 86400;
+    uint32_t    ltm_to_archive_seconds  = 2592000;
+    uint32_t    aging_interval_min       = 30;
     uint32_t    consolidation_interval_min = 5;
     uint32_t    recall_interval_sec = 30;
     float       cluster_threshold = 0.75f;

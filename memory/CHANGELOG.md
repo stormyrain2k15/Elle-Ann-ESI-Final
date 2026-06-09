@@ -1,4 +1,45 @@
-## 2026-02 — Intuition: ctest harness + SQL injection fix + engine extraction
+## 2026-02 — DB consumption foundation fix (memory tiers + all hollow funcs wired)
+
+Reaction to the June 9, 2026 DB Consumption Audit. Every flagged
+"HOLLOW / DEAD / BLOCKER" function is now consumed by an autonomous
+service caller. No tables deleted; no functions retired.
+
+### Memory-tier foundation — critical fix
+- `PromoteToMTM` was writing `tier=2` (= MEM_LTM, **wrong**) — now `tier=1` (MEM_BUFFER), guarded by `WHERE tier=0`.
+- `PromoteToLTM` was writing `tier=3` (= MEM_ARCHIVE, **wrong**) — now `tier=2` (MEM_LTM), guarded by `WHERE tier IN (0,1)`.
+- `ArchiveMemory` was a one-line forward to PromoteToLTM (**fake**) — now writes `tier=3` (MEM_ARCHIVE), guarded by `WHERE tier=2`.
+- `MemoryEngine` 4 STM-eviction paths now write **MEM_BUFFER** (not MEM_LTM): shutdown flush, StoreSTM capacity eviction, ConsolidateMemories promotion, DecaySTM floor-promotion.
+- New `MemoryEngine::AgeBufferToLTM()` + `ArchiveColdLTM()` periodic passes scheduled in `RecallLoop` every `aging_interval_min` (default 30 min). They call new shared-layer bulk helpers `PromoteAgedBuffersToLTM` and `ArchiveAgedLTM`.
+- `RecallMemories` now filters `tier < 3`. `RecallRecentLTM` filters `tier IN (1,2)`.
+- New config knobs: `buffer_to_ltm_seconds=86400` (1d), `ltm_to_archive_seconds=2592000` (30d), `aging_interval_min=30`.
+
+### Audit-flagged dead functions — now consumed
+| Function | New caller |
+|---|---|
+| `UpdateEntityInteraction` | `Cognitive::CrossReferenceByEntities` |
+| `SubmitAction` | `Action::OnMessage(IPC_ACTION_REQUEST)` — every action now queued before execution |
+| `UpsertPairedDevice` | `HTTP /api/auth/login` |
+| `TouchPairedDeviceLastSeen` | `HTTP` middleware (per authenticated request) |
+| `ListSessions` | `HTTP GET /api/auth/sessions` (admin) |
+| `DeleteSessionsForUser` | `HTTP DELETE /api/auth/sessions/by-user/{nUserNo}` (admin) |
+| `GetRecentLogs` | `HTTP GET /api/admin/logs?count=N&svc=ID` (admin) |
+| `RecordMetric` | `Heartbeat::RecordHealthMetrics` (15 metrics every 60 ticks) + `Solitude::OnPhaseTransition` (5 metrics per change) |
+| `ListSubjects` / `ListSkills` / `RecordSkillUse` | `Cognitive::FetchLearnedKnowledgeContext` — scans every user turn for a known subject, injects "Learned-knowledge recall" prompt block, and bumps RecordSkillUse on matched skills |
+
+### Solitude — first SQL surface ever
+Solitude previously had zero direct DB activity. `OnPhaseTransition` now:
+- Reads `LoadLatestEmotionSnapshot` to snapshot valence/arousal at the moment of phase change.
+- Records 5 metrics: `solitude_phase`, `solitude_transition_count`, `solitude_last_phase_<name>_ms`, plus the two emotion values.
+
+### Verification
+- Probability ctest suite: **43/43 PASS** (no regression)
+- Intuition ctest suite: **39/39 PASS** (no regression)
+- Combined: **82/82 ctests green** after the foundation fix
+- Full doc: `Docs/DB_CONSUMPTION_FIX.md` lists every function, caller, and file touched
+
+---
+
+
 
 ### Engine extraction
 - New: `Services/Elle.Service.Intuition/core/IntuitionEngine.h` —

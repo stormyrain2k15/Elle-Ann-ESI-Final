@@ -218,6 +218,10 @@ namespace ElleDB {
     bool PromoteToMTM(uint64_t memId);
     bool PromoteToLTM(uint64_t memId);
     bool ArchiveMemory(uint64_t memId);
+    bool PromoteAgedBuffersToLTM(uint64_t olderThanMs, uint32_t maxCount,
+                                 std::vector<uint64_t>& promotedIds);
+    bool ArchiveAgedLTM(uint64_t olderThanMs, uint32_t maxCount,
+                        std::vector<uint64_t>& archivedIds);
 
     std::string GetSubjective(const std::string& key);
 

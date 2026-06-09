@@ -703,7 +703,17 @@ protected:
         switch ((ELLE_IPC_MSG_TYPE)msg.header.msg_type) {
             case IPC_ACTION_REQUEST: {
                 ELLE_ACTION_RECORD action;
-                if (msg.GetPayload(action)) ExecuteAction(action);
+                if (msg.GetPayload(action)) {
+                    if (action.id == 0) {
+                        action.id = (uint32_t)(ELLE_MS_NOW() & 0x7fffffff);
+                    }
+                    if (!ElleDB::SubmitAction(action)) {
+                        ELLE_WARN("SubmitAction failed for cmd='%s' — "
+                                  "executing inline without queue audit",
+                                  action.command);
+                    }
+                    ExecuteAction(action);
+                }
                 break;
             }
             case IPC_TRUST_QUERY: {

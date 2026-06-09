@@ -338,6 +338,48 @@ protected:
 
     }
 
+    std::string FetchLearnedKnowledgeContext(const std::string& userText) {
+        if (userText.empty()) return "";
+        std::string lowText = ToLower(userText);
+
+        std::vector<ElleDB::LearnedSubject> subjects;
+        if (!ElleDB::ListSubjects(subjects, std::string(), 256)) return "";
+        if (subjects.empty()) return "";
+
+        std::ostringstream ss;
+        int hits = 0;
+        for (const auto& sub : subjects) {
+            std::string lowName = ToLower(sub.subject);
+            if (lowName.empty()) continue;
+            if (lowText.find(lowName) == std::string::npos) continue;
+            if (hits == 0) ss << "Learned-knowledge recall (subjects I've actually studied):\n";
+            ss << "  • " << sub.subject;
+            if (!sub.category.empty()) ss << "  [" << sub.category << "]";
+            ss << "  proficiency=" << sub.proficiency_level;
+            if (!sub.who_taught.empty()) ss << " taught_by=" << sub.who_taught;
+            if (!sub.notes.empty()) {
+                std::string n = sub.notes;
+                if (n.size() > 140) n = n.substr(0, 137) + "...";
+                ss << "\n    notes: " << n;
+            }
+            ss << "\n";
+            if (++hits >= 4) break;
+        }
+        if (hits == 0) return "";
+
+        std::vector<ElleDB::Skill> skills;
+        if (ElleDB::ListSkills(skills, std::string())) {
+            for (const auto& sk : skills) {
+                std::string lowSkill = ToLower(sk.skill_name);
+                if (lowSkill.empty()) continue;
+                if (lowText.find(lowSkill) == std::string::npos) continue;
+                ElleDB::RecordSkillUse(sk.skill_name);
+            }
+        }
+        ss << "  Use this knowledge to ground the reply — don't fabricate over what's real.\n\n";
+        return ss.str();
+    }
+
     std::string FetchWorldContext(const std::vector<std::string>& entities) {
         if (entities.empty()) return "";
 
@@ -351,7 +393,6 @@ protected:
         req["names"]            = entities;
         req["min_familiarity"]  = 0.0;
         req["limit"]            = (int)entities.size() + 4;
-
         auto pending = m_worldCorrelator.Register(rid);
         auto out = ElleIPCMessage::Create(IPC_WORLD_QUERY, SVC_COGNITIVE, SVC_WORLD_MODEL);
         out.SetStringPayload(req.dump());
@@ -1031,6 +1072,10 @@ private:
                 ELLE_WORLD_ENTITY ent = {};
                 bool found = ElleDB::GetEntity(ToLower(name), ent);
 
+                if (found && ent.id > 0) {
+                    ElleDB::UpdateEntityInteraction(ent.id);
+                }
+
                 ELLE_WORLD_ENTITY upd = {};
                 strncpy_s(upd.name, ToLower(name).c_str(), ELLE_MAX_NAME - 1);
                 strncpy_s(upd.type, found ? ent.type : "person", ELLE_MAX_TAG - 1);
@@ -1184,6 +1229,7 @@ private:
         nlohmann::json intuResult = RequestIntuition(
             userText, userId, 0.5f, sent, probJson, entities, true);
         std::string intuCtx = FormatIntuitionContext(intuResult);
+        std::string knowCtx = FetchLearnedKnowledgeContext(userText);
 
         std::vector<ELLE_MEMORY_RECORD> memories =
             CrossReferenceByEntities(entities, userText, mode);
@@ -1320,6 +1366,7 @@ private:
         if (!probCtx.empty()) ctx << probCtx;
         if (!mindCtx.empty()) ctx << mindCtx;
         if (!intuCtx.empty()) ctx << intuCtx;
+        if (!knowCtx.empty()) ctx << knowCtx;
 
         {
             char buf[384];

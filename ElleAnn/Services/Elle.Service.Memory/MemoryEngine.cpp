@@ -66,10 +66,10 @@ void MemoryEngine::Shutdown() {
 
     uint32_t flushed = 0;
     for (auto& e : snapshot) {
-        e.tier = MEM_LTM;
+        e.tier = MEM_BUFFER;
         if (ElleDB::StoreMemory(e)) flushed++;
     }
-    ELLE_INFO("Memory shutdown: flushed %u STM entries to LTM", flushed);
+    ELLE_INFO("Memory shutdown: flushed %u STM entries to MEM_BUFFER", flushed);
 }
 
 uint64_t MemoryEngine::StoreSTM(const std::string& content, float importance,
@@ -126,7 +126,7 @@ uint64_t MemoryEngine::StoreSTM(const std::string& content, float importance,
                 victim = m_stm.begin();
             }
             ELLE_MEMORY_RECORD copy = *victim;
-            copy.tier = MEM_LTM;
+            copy.tier = MEM_BUFFER;
             toPromote.push_back(copy);
             m_stm.erase(victim);
         }
@@ -134,9 +134,9 @@ uint64_t MemoryEngine::StoreSTM(const std::string& content, float importance,
 
     for (auto& rec : toPromote) {
         if (!ElleDB::StoreMemory(rec)) {
-            ELLE_WARN("STM capacity eviction: LTM write failed for [%llu] — record lost", rec.id);
+            ELLE_WARN("STM capacity eviction: buffer write failed for [%llu] — record lost", rec.id);
         } else {
-            ELLE_DEBUG("STM capacity pressure: promoted [%llu] %.50s... (rel=%.2f)",
+            ELLE_DEBUG("STM→BUFFER (capacity): [%llu] %.50s... (rel=%.2f)",
                        rec.id, rec.content, rec.relevance);
         }
     }
@@ -260,7 +260,7 @@ void MemoryEngine::ConsolidateMemories() {
             if (impFastTrack || accessFreq || strongEmotion ||
                 (!criticalTier && decayedOut)) {
                 ELLE_MEMORY_RECORD copy = *it;
-                copy.tier = MEM_LTM;
+                copy.tier = MEM_BUFFER;
                 toWrite.push_back(copy);
                 it = m_stm.erase(it);
             } else if (!criticalTier && trivialGone) {
@@ -279,12 +279,12 @@ void MemoryEngine::ConsolidateMemories() {
     for (auto& rec : toWrite) {
         if (ElleDB::StoreMemory(rec)) {
             promoted++;
-            ELLE_INFO("STM→LTM [%llu] pri=%s imp=%.2f rel=%.2f acc=%u | %.60s",
+            ELLE_INFO("STM→BUFFER [%llu] pri=%s imp=%.2f rel=%.2f acc=%u | %.60s",
                       rec.id, PriorityLabel(PriorityTier(rec.importance)),
                       rec.importance, rec.relevance, rec.access_count,
                       rec.content);
         } else {
-            ELLE_WARN("STM→LTM write failed for [%llu] — returning to STM", rec.id);
+            ELLE_WARN("STM→BUFFER write failed for [%llu] — returning to STM", rec.id);
             rec.tier = MEM_STM;
             reinsert.push_back(rec);
         }
@@ -336,7 +336,7 @@ void MemoryEngine::DecaySTM() {
             if (PriorityTier(it->importance) != 0 &&
                 it->relevance <= kMinRelevanceFloor) {
                 ELLE_MEMORY_RECORD copy = *it;
-                copy.tier = MEM_LTM;
+                copy.tier = MEM_BUFFER;
                 floorPromoted.push_back(copy);
                 it = m_stm.erase(it);
             } else {
@@ -347,10 +347,46 @@ void MemoryEngine::DecaySTM() {
 
     for (auto& rec : floorPromoted) {
         if (ElleDB::StoreMemory(rec)) {
-            ELLE_DEBUG("DecaySTM floor-promoted [%llu] rel=%.3f", rec.id, rec.relevance);
+            ELLE_DEBUG("DecaySTM floor→BUFFER [%llu] rel=%.3f", rec.id, rec.relevance);
         } else {
             ELLE_WARN("DecaySTM floor-promote write failed for [%llu] — record lost", rec.id);
         }
+    }
+}
+
+void MemoryEngine::AgeBufferToLTM() {
+    auto cfg = ElleConfig::Instance().GetMemory();
+    uint64_t now = ELLE_MS_NOW();
+    uint64_t bufTtlMs = (uint64_t)cfg.buffer_to_ltm_seconds * 1000ULL;
+    if (bufTtlMs == 0) bufTtlMs = 86400000ULL;
+    uint64_t cutoff = (now > bufTtlMs) ? (now - bufTtlMs) : 0;
+
+    std::vector<uint64_t> promoted;
+    if (!ElleDB::PromoteAgedBuffersToLTM(cutoff, 128, promoted)) {
+        ELLE_WARN("AgeBufferToLTM: SQL pass failed");
+        return;
+    }
+    if (!promoted.empty()) {
+        ELLE_INFO("BUFFER→LTM aged %zu records (cutoff=%llu ms older than now)",
+                  promoted.size(), (unsigned long long)bufTtlMs);
+    }
+}
+
+void MemoryEngine::ArchiveColdLTM() {
+    auto cfg = ElleConfig::Instance().GetMemory();
+    uint64_t now = ELLE_MS_NOW();
+    uint64_t ltmTtlMs = (uint64_t)cfg.ltm_to_archive_seconds * 1000ULL;
+    if (ltmTtlMs == 0) ltmTtlMs = 2592000000ULL;
+    uint64_t cutoff = (now > ltmTtlMs) ? (now - ltmTtlMs) : 0;
+
+    std::vector<uint64_t> archived;
+    if (!ElleDB::ArchiveAgedLTM(cutoff, 64, archived)) {
+        ELLE_WARN("ArchiveColdLTM: SQL pass failed");
+        return;
+    }
+    if (!archived.empty()) {
+        ELLE_INFO("LTM→ARCHIVE aged %zu records (cutoff=%llu ms older than now)",
+                  archived.size(), (unsigned long long)ltmTtlMs);
     }
 }
 
@@ -610,7 +646,10 @@ void RecallLoop::Run() {
     auto& cfg = ElleConfig::Instance().GetMemory();
     uint32_t recallMs = cfg.recall_interval_sec * 1000;
     uint32_t consolidateMs = cfg.consolidation_interval_min * 60 * 1000;
+    uint32_t agingMs       = cfg.aging_interval_min * 60 * 1000;
+    if (agingMs == 0) agingMs = 30 * 60 * 1000;
     uint64_t lastConsolidate = ELLE_MS_NOW();
+    uint64_t lastAging       = ELLE_MS_NOW();
 
     while (m_running) {
 
@@ -619,6 +658,12 @@ void RecallLoop::Run() {
         if (ELLE_MS_NOW() - lastConsolidate > consolidateMs) {
             m_engine.ConsolidateMemories();
             lastConsolidate = ELLE_MS_NOW();
+        }
+
+        if (ELLE_MS_NOW() - lastAging > agingMs) {
+            m_engine.AgeBufferToLTM();
+            m_engine.ArchiveColdLTM();
+            lastAging = ELLE_MS_NOW();
         }
 
         ElleWait::PollingSleep(recallMs, m_running);

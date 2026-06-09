@@ -1,5 +1,6 @@
 #include "../_Shared/ElleTypes.h"
 #include "../_Shared/ElleServiceBase.h"
+#include "../_Shared/ElleSQLConn.h"
 #include "../_Shared/ElleIdentityCore.h"
 #include "../_Shared/ElleComposerClient.h"
 #include "../_Shared/ElleLogger.h"
@@ -107,6 +108,7 @@ private:
     SolitudePhase m_phase = SolitudePhase::AFTERGLOW;
     std::mt19937 m_rng;
     uint32_t m_tickCount = 0;
+    uint32_t m_transitionCount = 0;
 
     SolitudePhase DeterminePhase(uint64_t absenceMs) {
         float hours = (float)absenceMs / 3600000.0f;
@@ -128,6 +130,18 @@ private:
         };
         ELLE_INFO("Solitude phase: %s -> %s",
                   phaseNames[(int)from], phaseNames[(int)to]);
+
+        ElleDB::RecordMetric("solitude_phase",            (double)(int)to);
+        ElleDB::RecordMetric("solitude_transition_count", (double)++m_transitionCount);
+        ElleDB::RecordMetric(
+            std::string("solitude_last_phase_") + phaseNames[(int)to] + "_ms",
+            (double)ELLE_MS_NOW());
+
+        ELLE_EMOTION_STATE emo = {};
+        if (ElleDB::LoadLatestEmotionSnapshot(emo)) {
+            ElleDB::RecordMetric("solitude_valence_at_transition", (double)emo.valence);
+            ElleDB::RecordMetric("solitude_arousal_at_transition", (double)emo.arousal);
+        }
     }
 
     void ProcessAfterglow(uint64_t ) {

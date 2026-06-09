@@ -667,6 +667,15 @@ void ElleConfig::PopulateFromJSON(const JsonValue& root) {
         m_memory.dream_consolidation = mem["dream_consolidation_enabled"].bool_val;
         m_memory.dream_interval_min = (uint32_t)mem["dream_interval_minutes"].int_val;
         m_memory.archive_after_days = (uint32_t)mem["archive_after_days"].int_val;
+        if (!mem["buffer_to_ltm_seconds"].is_null()) {
+            m_memory.buffer_to_ltm_seconds = (uint32_t)mem["buffer_to_ltm_seconds"].int_val;
+        }
+        if (!mem["ltm_to_archive_seconds"].is_null()) {
+            m_memory.ltm_to_archive_seconds = (uint32_t)mem["ltm_to_archive_seconds"].int_val;
+        }
+        if (!mem["aging_interval_min"].is_null()) {
+            m_memory.aging_interval_min = (uint32_t)mem["aging_interval_min"].int_val;
+        }
     }
 
     const auto& http = root["http_server"];

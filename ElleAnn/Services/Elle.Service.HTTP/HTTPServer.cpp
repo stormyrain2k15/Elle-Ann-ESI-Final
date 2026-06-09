@@ -626,6 +626,13 @@ public:
 
             ElleDB::TouchSessionLastSeen(token);
 
+            {
+                auto dit = req.headers.find("x-client-device-id");
+                if (dit != req.headers.end() && !dit->second.empty()) {
+                    ElleDB::TouchPairedDeviceLastSeen(dit->second);
+                }
+            }
+
             req.headers["x-auth-nuserno"]   = std::to_string(sess.nUserNo);
             req.headers["x-auth-user-id"]   = sess.sUserID;
             req.headers["x-auth-user-name"] = sess.sUserName;
@@ -2152,6 +2159,25 @@ private:
                         id.nUserNo, id.sUserID, id.sUserName);
                 }
 
+                {
+                    ElleDB::PairedDeviceRow pdrow;
+                    pdrow.device_id    = device_id;
+                    pdrow.device_name  = device_name;
+                    pdrow.peer_addr    = peer;
+                    pdrow.first_seen_ms = now;
+                    pdrow.last_seen_ms  = now;
+                    pdrow.revoked       = false;
+                    if (!ElleDB::UpsertPairedDevice(pdrow)) {
+                        ELLE_WARN("login: UpsertPairedDevice failed device=%s "
+                                  "(non-fatal — login still succeeds)",
+                                  device_id.c_str());
+                    }
+                    {
+                        std::lock_guard<std::mutex> lk(g_pairedCacheMx);
+                        g_pairedCache.erase(device_id);
+                    }
+                }
+
                 ELLE_INFO("login: user=\"%s\" nUserNo=%lld nAuthID=%d "
                           "device=%s peer=%s",
                           id.sUserID.c_str(), (long long)id.nUserNo,
@@ -2244,6 +2270,97 @@ private:
                     {"revoked",   true},
                     {"device_id", it->second}
                 });
+            }, AUTH_ADMIN);
+
+        m_router.Register("GET", "/api/auth/sessions",
+            [](const HTTPRequest& req) -> HTTPResponse {
+                uint32_t limit = 100;
+                size_t q = req.path.find('?');
+                if (q != std::string::npos) {
+                    std::string qs = req.path.substr(q + 1);
+                    size_t lp = qs.find("limit=");
+                    if (lp != std::string::npos) {
+                        try {
+                            limit = (uint32_t)std::stoul(qs.substr(lp + 6));
+                            if (limit == 0 || limit > 1000) limit = 100;
+                        } catch (const std::exception&) { limit = 100; }
+                    }
+                }
+                std::vector<ElleDB::SessionRow> rows;
+                if (!ElleDB::ListSessions(rows, limit)) {
+                    return HTTPResponse::Err(500, "failed to list sessions");
+                }
+                json arr = json::array();
+                for (const auto& r : rows) {
+                    arr.push_back({
+                        {"token_prefix", r.token.substr(0, std::min<size_t>(8, r.token.size()))},
+                        {"nUserNo",      r.nUserNo},
+                        {"sUserID",      r.sUserID},
+                        {"sUserName",    r.sUserName},
+                        {"nAuthID",      r.nAuthID},
+                        {"created_ms",   (int64_t)r.created_ms},
+                        {"last_seen_ms", (int64_t)r.last_seen_ms},
+                        {"device_name",  r.device_name},
+                        {"peer_addr",    r.peer_addr}
+                    });
+                }
+                return HTTPResponse::OK({ {"sessions", arr}, {"count", (int)arr.size()} });
+            }, AUTH_ADMIN);
+
+        m_router.Register("DELETE", "/api/auth/sessions/by-user/{nUserNo}",
+            [](const HTTPRequest& req) -> HTTPResponse {
+                auto it = req.headers.find("x-path-nUserNo");
+                if (it == req.headers.end() || it->second.empty()) {
+                    return HTTPResponse::Err(400, "nUserNo required");
+                }
+                int64_t target = 0;
+                try { target = std::stoll(it->second); }
+                catch (const std::exception&) {
+                    return HTTPResponse::Err(400, "nUserNo not numeric");
+                }
+                int deleted = ElleDB::DeleteSessionsForUser(target);
+                ELLE_INFO("Admin DELETE sessions/by-user/%lld → %d session(s) removed",
+                          (long long)target, deleted);
+                return HTTPResponse::OK({
+                    {"nUserNo", target},
+                    {"deleted", deleted}
+                });
+            }, AUTH_ADMIN);
+
+        m_router.Register("GET", "/api/admin/logs",
+            [](const HTTPRequest& req) -> HTTPResponse {
+                uint32_t count = 100;
+                int      svcFilter = -1;
+                size_t q = req.path.find('?');
+                if (q != std::string::npos) {
+                    std::string qs = req.path.substr(q + 1);
+                    size_t lp = qs.find("count=");
+                    if (lp != std::string::npos) {
+                        try {
+                            count = (uint32_t)std::stoul(qs.substr(lp + 6));
+                            if (count == 0 || count > 2000) count = 100;
+                        } catch (const std::exception&) { count = 100; }
+                    }
+                    size_t sp = qs.find("svc=");
+                    if (sp != std::string::npos) {
+                        try { svcFilter = std::stoi(qs.substr(sp + 4)); }
+                        catch (const std::exception&) { svcFilter = -1; }
+                    }
+                }
+                std::vector<ELLE_LOG_ENTRY> entries;
+                if (!ElleDB::GetRecentLogs(entries, count, svcFilter)) {
+                    return HTTPResponse::Err(500, "failed to fetch logs");
+                }
+                json arr = json::array();
+                for (const auto& e : entries) {
+                    arr.push_back({
+                        {"created_ms", (int64_t)e.created_ms},
+                        {"level",      (int)e.level},
+                        {"service",    (int)e.service},
+                        {"message",    std::string(e.message)}
+                    });
+                }
+                return HTTPResponse::OK({ {"logs", arr}, {"count", (int)arr.size()} });
             }, AUTH_ADMIN);
 
         m_router.Register("GET", "/api/auth/qr",

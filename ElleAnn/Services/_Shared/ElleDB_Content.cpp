@@ -25,23 +25,58 @@ bool GetLatestEmotionState(ELLE_EMOTION_STATE& out) {
 
 bool PromoteToMTM(uint64_t memId) {
     return ElleSQLPool::Instance().QueryParams(
-        "UPDATE ElleCore.dbo.memory SET tier = 2, "
+        "UPDATE ElleCore.dbo.memory SET tier = 1, "
         "       last_access_ms = ? "
-        "WHERE id = ?;",
+        "WHERE id = ? AND tier = 0;",
         { std::to_string((int64_t)ELLE_MS_NOW()), std::to_string((int64_t)memId) }).success;
 }
 
 bool PromoteToLTM(uint64_t memId) {
     return ElleSQLPool::Instance().QueryParams(
-        "UPDATE ElleCore.dbo.memory SET tier = 3, "
+        "UPDATE ElleCore.dbo.memory SET tier = 2, "
         "       last_access_ms = ? "
-        "WHERE id = ?;",
+        "WHERE id = ? AND tier IN (0, 1);",
         { std::to_string((int64_t)ELLE_MS_NOW()), std::to_string((int64_t)memId) }).success;
 }
 
 bool ArchiveMemory(uint64_t memId) {
+    return ElleSQLPool::Instance().QueryParams(
+        "UPDATE ElleCore.dbo.memory SET tier = 3, "
+        "       last_access_ms = ? "
+        "WHERE id = ? AND tier = 2;",
+        { std::to_string((int64_t)ELLE_MS_NOW()), std::to_string((int64_t)memId) }).success;
+}
 
-    return PromoteToLTM(memId);
+bool PromoteAgedBuffersToLTM(uint64_t olderThanMs, uint32_t maxCount,
+                             std::vector<uint64_t>& promotedIds) {
+    auto rs = ElleSQLPool::Instance().QueryParams(
+        "SELECT TOP (?) id FROM ElleCore.dbo.memory "
+        "WHERE tier = 1 AND last_access_ms < ? "
+        "ORDER BY last_access_ms ASC;",
+        { std::to_string((int32_t)maxCount), std::to_string((int64_t)olderThanMs) });
+    if (!rs.success) return false;
+    promotedIds.clear();
+    for (auto& row : rs.rows) {
+        uint64_t id = (uint64_t)std::stoll(row[0]);
+        if (PromoteToLTM(id)) promotedIds.push_back(id);
+    }
+    return true;
+}
+
+bool ArchiveAgedLTM(uint64_t olderThanMs, uint32_t maxCount,
+                    std::vector<uint64_t>& archivedIds) {
+    auto rs = ElleSQLPool::Instance().QueryParams(
+        "SELECT TOP (?) id FROM ElleCore.dbo.memory "
+        "WHERE tier = 2 AND last_access_ms < ? AND importance < 0.75 "
+        "ORDER BY last_access_ms ASC;",
+        { std::to_string((int32_t)maxCount), std::to_string((int64_t)olderThanMs) });
+    if (!rs.success) return false;
+    archivedIds.clear();
+    for (auto& row : rs.rows) {
+        uint64_t id = (uint64_t)std::stoll(row[0]);
+        if (ArchiveMemory(id)) archivedIds.push_back(id);
+    }
+    return true;
 }
 
 std::string GetSubjective(const std::string& key) {
