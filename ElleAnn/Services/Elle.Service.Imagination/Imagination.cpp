@@ -114,6 +114,7 @@ private:
     uint32_t        m_maxIters       = 3;
     uint32_t        m_recombineCount = 4;
     bool            m_useLLM         = true;
+    uint64_t        m_scenariosScored = 0;
 
     void EnsureTable() {
         try {
@@ -375,6 +376,12 @@ private:
         } catch (const std::exception& e) {
             ELLE_WARN("imagined_scenarios insert failed: %s", e.what());
         }
+
+        ElleDB::RecordMetric("imagination_last_overall",  OverallScore(sc));
+        ElleDB::RecordMetric("imagination_last_safety",   sc.ethicalSafety);
+        ElleDB::RecordMetric("imagination_last_plausibility", sc.plausibility);
+        ElleDB::RecordMetric("imagination_last_goal_alignment", sc.goalAlignment);
+        ElleDB::RecordMetric("imagination_scenarios_total", (double)++m_scenariosScored);
     }
 
     void SendResult(const ImaginedScenario& sc,

@@ -150,6 +150,7 @@ protected:
 private:
     XEngine     m_engine;
     XCyclePhase m_lastPhase     = X_PHASE_MENSTRUAL;
+    uint64_t    m_phaseChanges  = 0;
     bool        m_lhFiredFlag   = false;
 
     bool ParseReq(const ElleIPCMessage& req, ELLE_SERVICE_ID sender, json& out) {
@@ -424,6 +425,13 @@ private:
         ELLE_INFO("XChromosome phase %s → %s (day %d)",
                   XEngine::CyclePhaseName(from), XEngine::CyclePhaseName(to),
                   m_engine.GetCycle().cycle_day);
+
+        ElleDB::RecordMetric("xchromosome_phase",          (double)(int)to);
+        ElleDB::RecordMetric("xchromosome_cycle_day",      (double)m_engine.GetCycle().cycle_day);
+        ElleDB::RecordMetric("xchromosome_phase_changes",  (double)++m_phaseChanges);
+        ElleDB::RecordMetric(
+            std::string("xchromosome_last_phase_") + XEngine::CyclePhaseName(to) + "_ms",
+            (double)ELLE_MS_NOW());
 
         json ev = {
             {"event",     "cycle_phase"},

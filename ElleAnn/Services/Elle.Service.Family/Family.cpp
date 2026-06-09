@@ -48,6 +48,16 @@ protected:
         DrainConceptionBacklog();
         ProcessMaturePregnancies();
         MonitorLiveChildren();
+        if (++m_tickCount % 60 == 0) {
+            auto rs = ElleSQLPool::Instance().Query(
+                "SELECT "
+                "  (SELECT COUNT(*) FROM ElleCore.dbo.family_pregnancy WHERE born_ms IS NULL), "
+                "  (SELECT COUNT(*) FROM ElleCore.dbo.family_pregnancy WHERE born_ms IS NOT NULL)");
+            if (rs.success && !rs.rows.empty()) {
+                ElleDB::RecordMetric("family_pregnancies_active", (double)std::stoll(rs.rows[0][0]));
+                ElleDB::RecordMetric("family_children_born",      (double)std::stoll(rs.rows[0][1]));
+            }
+        }
     }
 
     void OnMessage(const ElleIPCMessage& msg, ELLE_SERVICE_ID ) override {
@@ -72,6 +82,8 @@ protected:
     }
 
 private:
+    uint64_t m_tickCount = 0;
+
     fs::path m_elleInstallRoot;
     fs::path m_pregnanciesRoot;
     fs::path m_childrenRoot;

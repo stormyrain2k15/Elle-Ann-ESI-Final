@@ -1,3 +1,35 @@
+## 2026-02 — Working the list (metric-write cluster + audit-misattribution surface)
+
+Closed 6 items, verified 1 already-wired, surfaced 3 audit-misattributions.
+
+### Fixed this pass
+- **D19** XChromosome `OnPhaseTransition` now records 4 metrics (`xchromosome_phase`, `cycle_day`, `phase_changes`, `last_phase_<name>_ms`).
+- **D20** Imagination scenario scoring now records 5 metrics (`imagination_last_overall`/`_safety`/`_plausibility`/`_goal_alignment`/`_scenarios_total`).
+- **D21** Composer per-composition now records frame-usage histogram (`composer_frame_uses_<frame_id>`) and `composer_compositions_total`.
+- **D24** Family `OnTick` records `family_pregnancies_active` + `family_children_born` every 60 ticks via single DB query.
+- **D28** SelfPrompt fixed: prompts now tag `source_drive` (was hardcoded 0); 3 metrics recorded (`selfprompt_total`, `selfprompt_last_drive`, `selfprompt_drive_<id>_count`).
+- **D29** LuaBehavioral `ReloadScripts` records `lua_reload_count`, `lua_scripts_loaded`, `lua_last_reload_ms`.
+
+### Verified already-wired
+- **D27** WorldModel `mental_model` field: actively used in `Continuity.cpp`, `EmotionalEngine.cpp`, `WorldModel.cpp` — no fix needed.
+
+### Audit-misattributed (surfaced this pass)
+- **D17** `RecordIdentityChange` — function name doesn't exist in `ElleDB`. Either add or pivot to `RecordMetric`.
+- **D18** `RecordContinuitySession` — same. Doesn't exist.
+- **D22** `RecordDreamCycle` — same. Doesn't exist.
+
+All three flagged in tracking matrix; next pass decides function vs metric.
+
+### Verification
+- All 6 modified service files structurally clean (braces + parens balanced).
+- Probability ctest: 52/52 PASS.
+- Intuition ctest: 39/39 PASS.
+- 91/91 ctests green, no regressions.
+
+Tracking matrix updated: `Docs/ANTI_SLOP_AUDIT_TRACKING.md`.
+
+---
+
 ## 2026-02 — Autonomous learn + pairing kill + anti-slop tracking honesty
 
 ### Cognitive autonomous `IPC_INTELLECT_LEARN` trigger

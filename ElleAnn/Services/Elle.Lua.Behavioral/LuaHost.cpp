@@ -149,12 +149,16 @@ public:
 
         lua_close(oldL);
         ELLE_INFO("Lua reload: %zu scripts loaded onto fresh state", loaded);
+        ElleDB::RecordMetric("lua_reload_count",       (double)++m_reloadCount);
+        ElleDB::RecordMetric("lua_scripts_loaded",     (double)loaded);
+        ElleDB::RecordMetric("lua_last_reload_ms",     (double)ELLE_MS_NOW());
     }
 
 private:
     lua_State* m_L;
     std::mutex m_mutex;
     std::vector<std::string> m_loadedScripts;
+    uint64_t   m_reloadCount = 0;
 
     void RegisterBindings() {
 

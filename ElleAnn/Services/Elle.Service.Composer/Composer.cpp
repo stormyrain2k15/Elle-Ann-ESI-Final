@@ -8,6 +8,7 @@
 #include "ComposerEngine.h"
 #include <string>
 #include <chrono>
+#include <unordered_map>
 
 using json = nlohmann::json;
 
@@ -164,6 +165,14 @@ private:
         resp["confidence"] = result.confidence;
         resp["log_id"]     = logId;
 
+        if (result.success && result.frameId > 0) {
+            ElleDB::RecordMetric(
+                std::string("composer_frame_uses_") + std::to_string(result.frameId),
+                (double)++m_frameUses[result.frameId]);
+            ElleDB::RecordMetric("composer_compositions_total",
+                                 (double)++m_compositionsTotal);
+        }
+
         json slotsJ = json::array();
         for (const auto& s : result.slots) {
             slotsJ.push_back({
@@ -205,6 +214,8 @@ private:
     }
 
     ComposerEngine m_engine;
+    std::unordered_map<int64_t, uint64_t> m_frameUses;
+    uint64_t                              m_compositionsTotal = 0;
 };
 
 ELLE_SERVICE_MAIN(ElleComposerService)

@@ -102,6 +102,8 @@ protected:
 private:
     std::mt19937 m_rng;
     uint64_t m_lastPromptMs = 0;
+    uint64_t m_promptCount  = 0;
+    uint64_t m_driveHistogram[DRIVE_COUNT] = {};
     uint64_t m_lastUserInteraction = 0;
     ELLE_DRIVE_STATE m_drives = {};
     ELLE_EMOTION_STATE m_emotions = {};
@@ -154,14 +156,27 @@ private:
             ELLE_INTENT_RECORD newIntent{};
             newIntent.type           = INTENT_SELF_REFLECT;
             newIntent.status         = INTENT_PENDING;
-            newIntent.source_drive   = 0;
+            int dominantDrive = 0;
+            float maxInt = 0.0f;
+            for (int d = 0; d < DRIVE_COUNT; ++d) {
+                if (m_drives.intensity[d] > maxInt) { maxInt = m_drives.intensity[d]; dominantDrive = d; }
+            }
+            newIntent.source_drive   = (ELLE_DRIVE_ID)dominantDrive;
             newIntent.urgency        = 0.3f;
             newIntent.confidence     = 0.7f;
             newIntent.required_trust = 0;
             newIntent.timeout_ms     = 60000;
             strncpy_s(newIntent.description, resp.content, ELLE_MAX_MSG - 1);
-            strncpy_s(newIntent.parameters, "origin=selfprompt", ELLE_MAX_MSG - 1);
+            strncpy_s(newIntent.parameters,
+                      (std::string("origin=selfprompt;drive=") + std::to_string(dominantDrive)).c_str(),
+                      ELLE_MAX_MSG - 1);
             ElleDB::SubmitIntent(newIntent);
+
+            ElleDB::RecordMetric("selfprompt_total",      (double)++m_promptCount);
+            ElleDB::RecordMetric("selfprompt_last_drive", (double)dominantDrive);
+            ElleDB::RecordMetric(
+                std::string("selfprompt_drive_") + std::to_string(dominantDrive) + "_count",
+                (double)++m_driveHistogram[dominantDrive]);
 
             MaybeRequestImagination(prompt, resp.content);
         }
