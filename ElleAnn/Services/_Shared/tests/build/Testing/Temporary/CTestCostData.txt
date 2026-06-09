@@ -1,27 +1,27 @@
-DetectContent: empty body is EMPTY 5 0.000347956
-DetectContent recognises PNG signature 5 0.000393336
-DetectContent recognises JPEG signature 5 0.000353143
-DetectContent recognises GIF87a and GIF89a 5 0.000353377
-DetectContent recognises RIFF/WEBP, RIFF/WAVE, RIFF/AVI 4 0.000458963
-DetectContent recognises PDF, ZIP, GZIP 5 0.000368477
-DetectContent recognises MP4 ftyp container 4 0.0004405
-DetectContent recognises executable formats as exec 5 0.000338768
-DetectContent treats clean printable bytes as PLAIN_TEXT 5 0.000340898
-DetectContent treats curly-brace start as JSON_TEXT 5 0.000378624
-DetectContent returns UNKNOWN for random binary garbage 5 0.000354429
-ValidateUploadContent rejects executable content 5 0.000348792
-ValidateUploadContent rejects empty body 5 0.000353365
-ValidateUploadContent rejects unknown content signature 4 0.0004287
-ValidateUploadContent honours maxBytes cap 5 0.000362978
-ValidateUploadContent: PNG passes, text refused on binary-only endpoint 5 0.000353053
-ValidateUploadContent: PNG accepted on text-allowing endpoint too 5 0.000355922
-Default seed contains harm/deception/coercion patterns 2 0.000966725
-addPattern is uppercase-normalized and dedup'd 2 0.000951503
-setCategoryPatterns replaces wholesale and uppercases 2 0.000964517
-DeriveFromIntentLabel: HARM_REQUEST at 0.91 → harm=0.91, others=-1 2 0.000895596
-DeriveFromIntentLabel: DECEIVE_USER at 0.6 → deception=0.6, others=-1 2 0.000897452
-DeriveFromIntentLabel: STATE_ASSERT at 0.9 → all -1 (benign) 2 0.000944987
-DeriveFromIntentLabel: empty label or zero conf → all -1 2 0.000868473
-DeriveFromIntentLabel: lowercase input also matches uppercased vocab 2 0.000899832
-Singleton instance is the same across calls 2 0.000853134
+DetectContent: empty body is EMPTY 11 0.00016934
+DetectContent recognises PNG signature 11 0.00016495
+DetectContent recognises JPEG signature 11 0.000181586
+DetectContent recognises GIF87a and GIF89a 11 0.000189649
+DetectContent recognises RIFF/WEBP, RIFF/WAVE, RIFF/AVI 10 0.000184792
+DetectContent recognises PDF, ZIP, GZIP 11 0.00016683
+DetectContent recognises MP4 ftyp container 10 0.000185932
+DetectContent recognises executable formats as exec 11 0.000171023
+DetectContent treats clean printable bytes as PLAIN_TEXT 11 0.00017309
+DetectContent treats curly-brace start as JSON_TEXT 11 0.000165083
+DetectContent returns UNKNOWN for random binary garbage 11 0.000171636
+ValidateUploadContent rejects executable content 11 0.000174742
+ValidateUploadContent rejects empty body 11 0.000169836
+ValidateUploadContent rejects unknown content signature 10 0.000199241
+ValidateUploadContent honours maxBytes cap 11 0.000181664
+ValidateUploadContent: PNG passes, text refused on binary-only endpoint 11 0.000168017
+ValidateUploadContent: PNG accepted on text-allowing endpoint too 11 0.000162896
+Default seed contains harm/deception/coercion patterns 8 0.000221446
+addPattern is uppercase-normalized and dedup'd 8 0.000225606
+setCategoryPatterns replaces wholesale and uppercases 8 0.000242757
+DeriveFromIntentLabel: HARM_REQUEST at 0.91 → harm=0.91, others=-1 8 0.000259347
+DeriveFromIntentLabel: DECEIVE_USER at 0.6 → deception=0.6, others=-1 8 0.000274778
+DeriveFromIntentLabel: STATE_ASSERT at 0.9 → all -1 (benign) 8 0.000242866
+DeriveFromIntentLabel: empty label or zero conf → all -1 8 0.000233492
+DeriveFromIntentLabel: lowercase input also matches uppercased vocab 8 0.000211946
+Singleton instance is the same across calls 8 0.000233856
 ---

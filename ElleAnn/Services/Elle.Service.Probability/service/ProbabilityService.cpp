@@ -46,6 +46,8 @@ protected:
             ElleConfig::Instance().GetBool("probability.auto_load_on_start", true);
         cfg.useInMemoryLanguage =
             ElleConfig::Instance().GetBool("probability.use_in_memory_language", false);
+        cfg.beliefJsonlMirrorPath =
+            ElleConfig::Instance().GetString("probability.belief_jsonl_mirror_path", "");
 
         if (!m_host.start(cfg)) {
             ELLE_ERROR("Probability host failed to start (auto_load=%d)",

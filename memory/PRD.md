@@ -79,6 +79,12 @@ Build a massively robust autonomous agentic Emotional Synthetic Intelligence.
 
 ## Completed (this session — Feb 2026)
 
+### HTTP Phase B + Multiplex belief mirror (current pass)
+- **HTTP god-file Phase B** landed. `ElleHTTPService::RegisterRoutes()` body now delegates to 18 in-class helper methods (`RegisterIntroRoutes`, `RegisterAuthRoutes`, …, `RegisterSHNRoutes`). All 158 route URLs preserved verbatim; per-method braces verified balanced. Three local lambdas (`ResolveAuthenticatedUser`, `RequireUserId`, `RequireAuthOrBodyUser`) promoted to `static` class members; route lambdas updated from `[ResolveAuthenticatedUser]`/`[RequireAuthOrBodyUser]` captures to `[]`. Phase A (header extraction) still pending — required only for Phase C.
+- **MultiplexBeliefPersistence** added: header-only fan-out wrapper over any number of `IBeliefPersistence` backends. `HostConfig::beliefJsonlMirrorPath` (and config key `probability.belief_jsonl_mirror_path`) wraps the primary backend with the multiplex + a `JsonlBeliefPersistence` so belief writes are mirrored to disk for tail-friendly observability. Mirror is fail-soft (errors leave the primary intact); primary remains fail-closed.
+- Tests: Probability ctest **79 → 85 PASS** (5 new multiplex cases + 1 host-wire case). Composer 17, Intuition 39, Language 1, Shared 26 — 168/168 total local Linux ctest green.
+
+
 ### Elle.Service.Intuition wiring completion (Feb 2026, current pass)
 - `Intuition.cpp`: NUDE CODE strip (789 → 686 lines, 0 comments).
 - Wired into `Cognitive` chat pipeline: `RequestIntuition` after

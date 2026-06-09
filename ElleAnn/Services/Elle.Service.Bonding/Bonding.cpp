@@ -536,6 +536,17 @@ protected:
 
     void OnTick() override {
 
+        const int64_t nowMs = ELLE_MS_NOW();
+        if (nowMs - m_lastSnapshotMs >= 86400000LL) {
+            if (ElleSQLPool::Instance().Exec(
+                    "EXEC ElleHeart.dbo.usp_BondingSnapshot @Reason = N'periodic';")) {
+                m_lastSnapshotMs = nowMs;
+                ELLE_INFO("Bonding: periodic relationship snapshot persisted");
+            } else {
+                ELLE_WARN("Bonding: periodic snapshot SQL failed");
+            }
+        }
+
         auto impulse = m_engine.ShouldReachOut();
         if (impulse.should_reach_out) {
             ELLE_INFO("Proactive impulse: %s (urgency: %.2f)",
@@ -691,6 +702,7 @@ protected:
 private:
     BondingEngine                  m_engine;
     Elle::Bonding::FiestaPlayerBondMap m_playerBonds;
+    int64_t                        m_lastSnapshotMs = 0;
 };
 
 ELLE_SERVICE_MAIN(ElleBondingService)

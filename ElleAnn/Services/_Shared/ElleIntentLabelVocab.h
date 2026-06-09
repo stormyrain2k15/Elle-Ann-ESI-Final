@@ -125,4 +125,6 @@ inline DerivedHarmSignals DeriveFromIntentLabel(
     return out;
 }
 
+bool LoadVocabFromSql(IntentLabelVocab& vocab = IntentLabelVocab::Instance());
+
 }

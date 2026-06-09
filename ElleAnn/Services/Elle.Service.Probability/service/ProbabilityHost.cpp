@@ -5,11 +5,15 @@
 #include "service/OdbcBeliefPersistence.hpp"
 #endif
 
+#include "elle/prob/JsonlBeliefPersistence.hpp"
+#include "elle/prob/MultiplexBeliefPersistence.hpp"
+
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <string>
 #include <utility>
+#include <vector>
 
 #ifndef ELLE_HOST_LOG_ERROR
 #define ELLE_HOST_LOG_ERROR(...) do { fprintf(stderr, "[ERROR] " __VA_ARGS__); fprintf(stderr, "\n"); } while(0)
@@ -150,6 +154,22 @@ void ProbabilityHost::wireBeliefBackendLocked() {
     }
 
     if (!m_beliefBackend) return;
+
+    if (!m_cfg.beliefJsonlMirrorPath.empty()) {
+        std::vector<std::shared_ptr<elle::prob::IBeliefPersistence>> chain;
+        chain.push_back(m_beliefBackend);
+        try {
+            chain.push_back(std::make_shared<elle::prob::JsonlBeliefPersistence>(
+                m_cfg.beliefJsonlMirrorPath));
+            m_beliefBackend = elle::prob::makeMultiplexBeliefPersistence(std::move(chain));
+            ELLE_HOST_LOG_WARN("ProbabilityHost: belief writes mirrored to JSONL at '%s'",
+                               m_cfg.beliefJsonlMirrorPath.c_str());
+        } catch (const std::exception& e) {
+            ELLE_HOST_LOG_ERROR("ProbabilityHost: JsonlBeliefPersistence ctor failed for "
+                                "'%s': %s — primary backend left intact, mirror skipped",
+                                m_cfg.beliefJsonlMirrorPath.c_str(), e.what());
+        }
+    }
 
     auto store = m_engine->beliefStorePtr();
     if (!store) return;

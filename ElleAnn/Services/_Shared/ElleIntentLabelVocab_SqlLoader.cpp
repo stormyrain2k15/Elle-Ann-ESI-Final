@@ -4,7 +4,7 @@
 
 namespace ElleConscience {
 
-bool LoadVocabFromSql(IntentLabelVocab& vocab = IntentLabelVocab::Instance()) {
+bool LoadVocabFromSql(IntentLabelVocab& vocab) {
     auto& pool = ElleSQLPool::Instance();
     auto rs = pool.Query(
         "SELECT category, pattern FROM ElleHeart.dbo.vw_IntentLabelVocab;");

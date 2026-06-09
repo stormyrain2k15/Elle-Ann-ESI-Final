@@ -141,10 +141,33 @@ the next one starts.
 - Lexical Completeness plumbing (`Docs/LEXICAL_COMPLETENESS.md`) is
   ready for an admin route to surface incomplete words once Phase C
   lands `HTTPServer_AdminRoutes.cpp`.
+- **Phase B (Feb 2026)**: `ElleHTTPService::RegisterRoutes()` body
+  split into 18 private helper methods (in-class, same TU). 158
+  route registrations preserved verbatim; brace-balanced (verified
+  per-method). Three local lambdas
+  (`ResolveAuthenticatedUser`, `RequireUserId`,
+  `RequireAuthOrBodyUser`) promoted to `static` class members so
+  they remain reachable across the split route registrars. Lambda
+  captures of these names at routes were rewritten from
+  `[ResolveAuthenticatedUser]` / `[RequireAuthOrBodyUser]` to `[]`
+  (unqualified lookup now resolves to the static class members).
+  The 18 helpers are, in file order:
+  `RegisterIntroRoutes`, `RegisterAuthRoutes`,
+  `RegisterDiagRoutes`, `RegisterAdminRoutes`,
+  `RegisterMemoryRoutes`, `RegisterEmotionRoutes`,
+  `RegisterMeTokensRoutes`, `RegisterVideoIdentityRoutes`,
+  `RegisterAIRoutes`, `RegisterDictionaryRoutes`,
+  `RegisterEducationRoutes`, `RegisterEmotionalContextRoutes`,
+  `RegisterXLifecycleRoutes`, `RegisterServerRoutes`,
+  `RegisterModelsRoutes`, `RegisterMoralsGoalsRoutes`,
+  `RegisterMiscRoutes`, `RegisterSHNRoutes`.
 
 ## Next agent's instructions
 
-1. Start with Phase A only.
-2. Run the Windows build locally before declaring Phase A done.
-3. Phase B in a single commit (it's a pure brace migration).
-4. Phase C one file at a time, each its own commit.
+1. ~~Start with Phase A only.~~ **(superseded by Phase B landing first;
+   Phase A still required for Phase C.)**
+2. Run the Windows build locally before declaring Phase B done.
+3. ~~Phase B in a single commit (it's a pure brace migration).~~ **DONE.**
+4. Phase A (extract class declaration into `HTTPServer.h`) is the
+   next prerequisite for Phase C.
+5. Phase C one file at a time, each its own commit, once Phase A lands.

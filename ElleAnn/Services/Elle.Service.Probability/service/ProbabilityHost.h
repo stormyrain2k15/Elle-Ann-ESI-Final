@@ -21,6 +21,7 @@ namespace elleann { namespace prob {
 struct HostConfig {
     std::string engineConfigPath;
     std::string probabilityConfigPath;
+    std::string beliefJsonlMirrorPath;
     bool        autoLoadOnStart      = true;
     bool        useInMemoryLanguage  = false;
     bool        useInMemoryBeliefs   = false;

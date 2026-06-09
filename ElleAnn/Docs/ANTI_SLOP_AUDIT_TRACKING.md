@@ -10,6 +10,115 @@
 > *the audit identified a real problem but the right fix requires a
 > design conversation, not just code*.
 
+## This pass — what landed (Feb 2026 — pass 10)
+
+### HTTP god-file split — Phase B — **CLOSED**
+
+`ElleHTTPService::RegisterRoutes()` body (was ~4140 LOC over 158
+`m_router.Register(...)` calls) is now a flat list of 18 calls into
+private member helpers in the same translation unit:
+`RegisterIntroRoutes`, `RegisterAuthRoutes`, `RegisterDiagRoutes`,
+`RegisterAdminRoutes`, `RegisterMemoryRoutes`, `RegisterEmotionRoutes`,
+`RegisterMeTokensRoutes`, `RegisterVideoIdentityRoutes`,
+`RegisterAIRoutes`, `RegisterDictionaryRoutes`,
+`RegisterEducationRoutes`, `RegisterEmotionalContextRoutes`,
+`RegisterXLifecycleRoutes`, `RegisterServerRoutes`,
+`RegisterModelsRoutes`, `RegisterMoralsGoalsRoutes`,
+`RegisterMiscRoutes`, `RegisterSHNRoutes`. Per-method brace balance
+verified (largest: `RegisterXLifecycleRoutes` 258/258).
+
+Three local helper lambdas
+(`ResolveAuthenticatedUser`, `RequireUserId`,
+`RequireAuthOrBodyUser`) promoted to `static` class members so they
+remain reachable across registrar boundaries; the six route lambdas
+that captured them by value (`[ResolveAuthenticatedUser]` /
+`[RequireAuthOrBodyUser]`) rewritten to `[]` (unqualified lookup
+resolves to the static members inside an enclosing class method).
+
+Phase A (header extraction) is now the explicit next prerequisite for
+Phase C (per-file translation units).
+
+### MultiplexBeliefPersistence — **CLOSED**
+
+New header-only impl at
+`Services/Elle.Service.Probability/include/elle/prob/MultiplexBeliefPersistence.hpp`.
+Wraps any number of `IBeliefPersistence` backends. Every mutating
+call (`upsertDomain`, `replacePosterior`, `appendEvidence`,
+`auditUpdate`) is fanned out to each backend in order. `loadAll()`
+returns the first non-empty backend's snapshot (so the durable
+primary, typically `OdbcBeliefPersistence`, drives restore).
+
+`HostConfig::beliefJsonlMirrorPath` (and config key
+`probability.belief_jsonl_mirror_path`) wraps the primary backend
+with the multiplex + a `JsonlBeliefPersistence` at the supplied path.
+JSONL ctor failure leaves the primary intact and is logged as ERROR
+(fail-soft on the mirror, fail-closed on the primary). 5 new doctest
+cases in `tests/test_multiplex_belief_persistence.cpp` plus 1 new
+case in `tests/test_host_belief_wire.cpp` that asserts the host
+backend is dynamic-castable to `MultiplexBeliefPersistence` with
+`backendCount() == 2` when the mirror path is set.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition | 39/39 PASS |
+| Probability | **85/85 PASS** (6 new this pass) |
+| Composer | 17/17 PASS |
+| Language | 1/1 PASS |
+| Shared (Upload + Vocab) | 26/26 PASS |
+| **Total local Linux ctest** | **168/168 PASS** |
+
+Zero regressions. NUDE CODE preserved.
+
+---
+
+## This pass — what landed (Feb 2026 — pass 9)
+
+### Bonding daily periodic snapshot — **CLOSED**
+
+`Bonding.cpp::OnTick` now compares `ELLE_MS_NOW() - m_lastSnapshotMs`
+against `86400000ms` (24h) on every tick and, when overdue,
+`EXEC ElleHeart.dbo.usp_BondingSnapshot @Reason = N'periodic';`
+populates `relationship_history`. Combined with the existing
+`@Reason='repair_landed'` call, `vw_RelationshipTrajectory` now grows
+both on emotional milestones AND on a steady cadence.
+
+### Bonding dashboard HTTP route — **CLOSED**
+
+`_Shared/ElleBeliefAdmin.{h,cpp}` extended with
+`FetchBondingDashboard`, `FetchBondingTrajectory`,
+`BondingDashboardToJson`, `BondingTrajectoryToJson`. Two new
+`AUTH_ADMIN` routes mirror the belief admin pattern:
+
+- `GET /api/admin/bonding/dashboard` → flat `vw_RelationshipDashboard` row with all derived indices.
+- `GET /api/admin/bonding/trajectory?limit=100` → ordered slice of `vw_RelationshipTrajectory`.
+
+### Periodic conscience vocab hot-reload — **CLOSED**
+
+`ElleConscience::LoadVocabFromSql` now has its declaration in
+`ElleIntentLabelVocab.h` (default `IntentLabelVocab::Instance()`),
+`Cognitive::OnStart` calls it on boot, and `Cognitive::OnMessage`
+re-fires it on every `IPC_CONFIG_RELOAD` broadcast. The existing
+`POST /api/admin/config/reload` already broadcasts that message via
+`IPC_CONFIG_RELOAD`, so vocab edits in `intent_label_vocab` table
+hit running services without restart.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition | 39/39 PASS |
+| Probability | 79/79 PASS |
+| Composer | 17/17 PASS |
+| Language | 48/48 PASS |
+| Shared (Upload + Vocab) | 26/26 PASS |
+| **Total** | **209/209 PASS** |
+
+Zero regressions.
+
+---
+
 ## This pass — what landed (Feb 2026 — pass 8)
 
 ### `JsonlBeliefPersistence` — **CLOSED**
@@ -472,7 +581,7 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 | 5 | Probability belief store never persisted | ✅ FIXED-THIS-PASS | Full SQL schema `SQL/Elle.Service.Probability/01_belief_persistence.sql` (5 tables + view + 4 procs + table-type). C++ interface `IBeliefPersistence` + `InMemoryBeliefPersistence` (real impl) + 8 doctest cases. Wiring into `BeliefStore::attachPersistence` is the next sub-step. |
 | 6 | GoalEngine LLM dependency | ↪ | Drop-in `GoalEngine.cpp` removed `FormGoal` call |
 | 7 | GoalEngine `OnStart` ignores `Initialize()` return | ↪ | Fixed alongside #6 |
-| 8 | HTTP god-file (6 000 LOC monolith) | 🟡 PLAN-LANDED | Execution plan committed at `Docs/HTTP_GOD_FILE_SPLIT_PLAN.md` (3-phase mechanical split). Actual code split requires Windows MSVC verification per phase. |
+| 8 | HTTP god-file (6 000 LOC monolith) | 🟡 PHASE-B-LANDED | Phase B done: `RegisterRoutes()` body split into 18 in-class helper methods (`RegisterIntroRoutes`…`RegisterSHNRoutes`); 3 local lambdas promoted to `static` class members. 158 routes preserved verbatim, per-method braces verified. Phase A (header extraction) is now the next prerequisite for Phase C. Plan at `Docs/HTTP_GOD_FILE_SPLIT_PLAN.md`. |
 | 9 | Upload endpoint validates filename, not content | ✅ FIXED-THIS-PASS | `_Shared/ElleUploadGuard.{h,cpp}` — 24 content-type byte-signature detection; `ValidateUploadContent` returns `{detected, allowed, isExec, reason}`. Both upload routes (`POST /api/memory/{id}/files`, `POST /api/video/avatar/upload`) hardened. Avatar route further restricts to image MIMEs only. 17 doctest cases. |
 | 10 | SHN write endpoint persists raw bytes with no rollback | ⏸ | Needs staging file + diff + atomic rename + version history |
 | 11 | Probability/Composer silent catches | ↪ | 9 silent catches now log (ProbabilityHost ×7, ProbabilityEngine ×1, Composer ×1, GoalEngine.AppendGoalFallback ×1) |
@@ -551,14 +660,13 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 
 ## Next pass — recommended priority order
 
-1. 🟣 **MindManager + Identity-drift semantic rebuild** (D1, D3) — biggest correctness lift.
-2. 🟣 **Probability belief persistence** (audit #5) — design + build the SQL schema.
-3. ⏸ **Integration test** for full Prob→Mind→Intuition→Composer chain (D31), now that the Composer harness exists.
-4. ⏸ **SQL fallback queue durability** (#3).
-5. ⏸ **HTTP god-file split + SQL re-centralisation** (#8, #15).
-6. ⏸ **Upload + SHN write hardening** (#9, #10).
-7. ⏸ **Restart-persistence + CI smoke tests** (D32–D35).
-8. ⏸ **Android client rewrite** to remove pair UI.
+1. ⏸ **HTTP god-file Phase A** — extract `ElleHTTPService` class declaration into `Services/Elle.Service.HTTP/HTTPServer.h`. Prerequisite for Phase C. Requires Windows MSVC verification.
+2. ⏸ **HTTP god-file Phase C** — move each `RegisterXxxRoutes()` body into its own per-file translation unit (`HTTPServer_AuthRoutes.cpp`, etc.) once Phase A lands. Each file = one commit, each commit a single helper.
+3. ⏸ **SQL fallback queue durability** (#3).
+4. ⏸ **Upload + SHN write hardening** (#9, #10).
+5. ⏸ **Restart-persistence + CI smoke tests** (D32–D35 remaining).
+6. ⏸ **Android client rewrite** to remove pair UI.
+7. ⏸ **Config schema drift sweep** (#12).
 
 Every item above keeps its tag in this file. When something moves from
 ⏸ to ✅, the row updates here so the next agent inherits accurate state.

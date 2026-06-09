@@ -141,4 +141,121 @@ nlohmann::json BeliefSnapshotToJson(const std::vector<BeliefSnapshotRow>& rows) 
     return out;
 }
 
+bool FetchBondingDashboard(BondingDashboardRow& out) {
+    out = BondingDashboardRow{};
+    auto& pool = ElleSQLPool::Instance();
+    auto rs = pool.Query(
+        "SELECT TOP 1 updated_ms, intimacy, passion, commitment, security, "
+        "anxiety, avoidance, felt_understood, felt_cared_for, investment, "
+        "total_interactions, meaningful_conversations, "
+        "conflicts_experienced, conflicts_resolved, repair_motivation, "
+        "CAST(unresolved_tension AS INT), "
+        "affection_index, commitment_index, distress_index, "
+        "meaningful_ratio, conflict_resolution_ratio "
+        "FROM ElleHeart.dbo.vw_RelationshipDashboard WHERE id = 1;");
+    if (!rs.success || rs.rows.empty()) {
+        ELLE_ERROR("BondingAdmin: vw_RelationshipDashboard query failed or empty");
+        return false;
+    }
+    auto& row = rs.rows[0];
+    out.updatedMs               = row.GetIntOr(0, 0);
+    out.intimacy                = row.GetFloatOr(1, 0.0);
+    out.passion                 = row.GetFloatOr(2, 0.0);
+    out.commitment              = row.GetFloatOr(3, 0.0);
+    out.security                = row.GetFloatOr(4, 0.0);
+    out.anxiety                 = row.GetFloatOr(5, 0.0);
+    out.avoidance               = row.GetFloatOr(6, 0.0);
+    out.feltUnderstood          = row.GetFloatOr(7, 0.0);
+    out.feltCaredFor            = row.GetFloatOr(8, 0.0);
+    out.investment              = row.GetFloatOr(9, 0.0);
+    out.totalInteractions       = (int)row.GetIntOr(10, 0);
+    out.meaningfulConversations = (int)row.GetIntOr(11, 0);
+    out.conflictsExperienced    = (int)row.GetIntOr(12, 0);
+    out.conflictsResolved       = (int)row.GetIntOr(13, 0);
+    out.repairMotivation        = row.GetFloatOr(14, 0.0);
+    out.unresolvedTension       = row.GetIntOr(15, 0) != 0;
+    out.affectionIndex          = row.GetFloatOr(16, 0.0);
+    out.commitmentIndex         = row.GetFloatOr(17, 0.0);
+    out.distressIndex           = row.GetFloatOr(18, 0.0);
+    out.meaningfulRatio         = row.GetFloatOr(19, 0.0);
+    out.conflictResolutionRatio = row.GetFloatOr(20, 0.0);
+    return true;
+}
+
+bool FetchBondingTrajectory(std::vector<BondingTrajectoryPoint>& out, int limit) {
+    out.clear();
+    const int capped = (limit <= 0 || limit > 1000) ? 100 : limit;
+    auto& pool = ElleSQLPool::Instance();
+    std::ostringstream sql;
+    sql << "SELECT TOP (" << capped << ") "
+        << "history_id, snapshot_ms, snapshot_reason, "
+        << "affection_index, distress_index, intimacy, security, repair_motivation "
+        << "FROM ElleHeart.dbo.vw_RelationshipTrajectory "
+        << "ORDER BY snapshot_ms DESC;";
+    auto rs = pool.Query(sql.str());
+    if (!rs.success) {
+        ELLE_ERROR("BondingAdmin: vw_RelationshipTrajectory query failed");
+        return false;
+    }
+    out.reserve(rs.rows.size());
+    for (auto& row : rs.rows) {
+        BondingTrajectoryPoint p;
+        p.historyId        = row.GetIntOr(0, 0);
+        p.snapshotMs       = row.GetIntOr(1, 0);
+        p.snapshotReason   = row.values.size() > 2 ? row.values[2] : std::string();
+        p.affectionIndex   = row.GetFloatOr(3, 0.0);
+        p.distressIndex    = row.GetFloatOr(4, 0.0);
+        p.intimacy         = row.GetFloatOr(5, 0.0);
+        p.security         = row.GetFloatOr(6, 0.0);
+        p.repairMotivation = row.GetFloatOr(7, 0.0);
+        out.push_back(std::move(p));
+    }
+    return true;
+}
+
+nlohmann::json BondingDashboardToJson(const BondingDashboardRow& r) {
+    nlohmann::json o;
+    o["updated_ms"]                = r.updatedMs;
+    o["intimacy"]                  = r.intimacy;
+    o["passion"]                   = r.passion;
+    o["commitment"]                = r.commitment;
+    o["security"]                  = r.security;
+    o["anxiety"]                   = r.anxiety;
+    o["avoidance"]                 = r.avoidance;
+    o["felt_understood"]           = r.feltUnderstood;
+    o["felt_cared_for"]            = r.feltCaredFor;
+    o["investment"]                = r.investment;
+    o["total_interactions"]        = r.totalInteractions;
+    o["meaningful_conversations"]  = r.meaningfulConversations;
+    o["conflicts_experienced"]     = r.conflictsExperienced;
+    o["conflicts_resolved"]        = r.conflictsResolved;
+    o["repair_motivation"]         = r.repairMotivation;
+    o["unresolved_tension"]        = r.unresolvedTension;
+    o["affection_index"]           = r.affectionIndex;
+    o["commitment_index"]          = r.commitmentIndex;
+    o["distress_index"]            = r.distressIndex;
+    o["meaningful_ratio"]          = r.meaningfulRatio;
+    o["conflict_resolution_ratio"] = r.conflictResolutionRatio;
+    return o;
+}
+
+nlohmann::json BondingTrajectoryToJson(const std::vector<BondingTrajectoryPoint>& rows) {
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& p : rows) {
+        nlohmann::json o;
+        o["history_id"]        = p.historyId;
+        o["snapshot_ms"]       = p.snapshotMs;
+        o["snapshot_reason"]   = p.snapshotReason;
+        o["affection_index"]   = p.affectionIndex;
+        o["distress_index"]    = p.distressIndex;
+        o["intimacy"]          = p.intimacy;
+        o["security"]          = p.security;
+        o["repair_motivation"] = p.repairMotivation;
+        arr.push_back(std::move(o));
+    }
+    nlohmann::json out;
+    out["rows"] = std::move(arr);
+    return out;
+}
+
 }

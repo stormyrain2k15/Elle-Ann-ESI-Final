@@ -2,8 +2,11 @@
 
 #include "service/ProbabilityHost.h"
 #include "elle/prob/BeliefPersistence.hpp"
+#include "elle/prob/MultiplexBeliefPersistence.hpp"
 
+#include <filesystem>
 #include <memory>
+#include <string>
 
 using namespace elleann::prob;
 using elle::prob::InMemoryBeliefPersistence;
@@ -53,6 +56,29 @@ TEST_CASE("ProbabilityHost: useInMemoryBeliefs=true installs an in-memory backen
 
     auto backend = host.beliefPersistence();
     REQUIRE(static_cast<bool>(backend));
+}
+
+TEST_CASE("ProbabilityHost: beliefJsonlMirrorPath wraps the backend in a multiplex") {
+    auto path = std::string("/tmp/elle_host_mirror_") +
+                std::to_string(::getpid()) + ".jsonl";
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    ProbabilityHost host;
+    HostConfig cfg;
+    cfg.autoLoadOnStart       = true;
+    cfg.useInMemoryLanguage   = true;
+    cfg.useInMemoryBeliefs    = true;
+    cfg.beliefJsonlMirrorPath = path;
+
+    REQUIRE(host.start(cfg));
+    CHECK(host.ready());
+
+    auto backend = host.beliefPersistence();
+    REQUIRE(static_cast<bool>(backend));
+    auto mux = std::dynamic_pointer_cast<elle::prob::MultiplexBeliefPersistence>(backend);
+    REQUIRE(static_cast<bool>(mux));
+    CHECK(mux->backendCount() == 2);
 }
 
 TEST_CASE("ProbabilityHost: stop + start round-trip preserves the backend pointer") {

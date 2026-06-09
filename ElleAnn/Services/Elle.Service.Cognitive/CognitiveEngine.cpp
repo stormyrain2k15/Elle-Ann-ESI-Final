@@ -299,6 +299,8 @@ protected:
     bool OnStart() override {
         if (!m_engine.Initialize()) return false;
 
+        ElleConscience::LoadVocabFromSql();
+
         uint32_t poolSize = (uint32_t)ElleConfig::Instance().GetInt(
             "cognitive.chat_workers", 4);
         if (poolSize == 0) poolSize = 1;
@@ -859,6 +861,11 @@ protected:
     }
 
     void OnMessage(const ElleIPCMessage& msg, ELLE_SERVICE_ID sender) override {
+        if ((ELLE_IPC_MSG_TYPE)msg.header.msg_type == IPC_CONFIG_RELOAD) {
+            ELLE_INFO("Cognitive: IPC_CONFIG_RELOAD — reloading intent label vocab");
+            ElleConscience::LoadVocabFromSql();
+            return;
+        }
         switch ((ELLE_IPC_MSG_TYPE)msg.header.msg_type) {
             case IPC_INTENT_REQUEST: {
 

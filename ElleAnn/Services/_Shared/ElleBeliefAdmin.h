@@ -42,4 +42,30 @@ bool FetchBeliefSnapshot(std::vector<BeliefSnapshotRow>& out,
 nlohmann::json BeliefAuditToJson(const std::vector<BeliefAuditRow>& rows);
 nlohmann::json BeliefSnapshotToJson(const std::vector<BeliefSnapshotRow>& rows);
 
+struct BondingDashboardRow {
+    long long updatedMs;
+    double    intimacy, passion, commitment, security, anxiety, avoidance;
+    double    feltUnderstood, feltCaredFor, investment;
+    int       totalInteractions, meaningfulConversations;
+    int       conflictsExperienced, conflictsResolved;
+    double    repairMotivation;
+    bool      unresolvedTension;
+    double    affectionIndex, commitmentIndex, distressIndex;
+    double    meaningfulRatio, conflictResolutionRatio;
+};
+
+struct BondingTrajectoryPoint {
+    long long historyId;
+    long long snapshotMs;
+    std::string snapshotReason;
+    double    affectionIndex, distressIndex;
+    double    intimacy, security, repairMotivation;
+};
+
+bool FetchBondingDashboard(BondingDashboardRow& out);
+bool FetchBondingTrajectory(std::vector<BondingTrajectoryPoint>& out, int limit);
+
+nlohmann::json BondingDashboardToJson(const BondingDashboardRow& row);
+nlohmann::json BondingTrajectoryToJson(const std::vector<BondingTrajectoryPoint>& rows);
+
 }

@@ -1992,8 +1992,72 @@ private:
         }
     }
 
-    void RegisterRoutes() {
+    static int32_t ResolveAuthenticatedUser(const HTTPRequest& req) {
+        auto it = req.headers.find("x-auth-device-id");
+        if (it == req.headers.end()) return 0;
+        const std::string& deviceId = it->second;
+        if (deviceId.empty()) return 0;
 
+        auto rs = ElleSQLPool::Instance().QueryParams(
+            "SELECT TOP 1 nUserNo FROM ElleCore.dbo.PairedDevices "
+            "  WHERE DeviceId = ? AND Revoked = 0;",
+            { deviceId });
+        if (!rs.success || rs.rows.empty()) return 0;
+        int64_t v = 0;
+        return rs.rows[0].TryGetInt(0, v) && v > 0 && v <= INT32_MAX
+                   ? (int32_t)v : 0;
+    }
+
+    static std::optional<HTTPResponse> RequireUserId(const json& body, int32_t& out) {
+        if (!body.contains("user_id"))
+            return HTTPResponse::Err(400, "user_id is required");
+        auto& v = body.at("user_id");
+        int64_t raw = 0;
+        if (v.is_number_integer())      raw = v.get<int64_t>();
+        else if (v.is_number_unsigned()) raw = (int64_t)v.get<uint64_t>();
+        else if (v.is_string()) {
+            if (!HTTPRequest::StrictParseLL(v.get<std::string>(), raw))
+                return HTTPResponse::Err(400, "user_id must be a positive integer");
+        } else {
+            return HTTPResponse::Err(400, "user_id must be a positive integer");
+        }
+        if (raw <= 0 || raw > INT32_MAX)
+            return HTTPResponse::Err(400, "user_id must be a positive integer");
+        out = (int32_t)raw;
+        return std::nullopt;
+    }
+
+    static std::optional<HTTPResponse> RequireAuthOrBodyUser(const HTTPRequest& req,
+                                                             const json& body,
+                                                             int32_t& out) {
+        const int32_t fromJwt = ResolveAuthenticatedUser(req);
+        if (fromJwt > 0) { out = fromJwt; return std::nullopt; }
+        return RequireUserId(body, out);
+    }
+
+    void RegisterRoutes() {
+        RegisterIntroRoutes();
+        RegisterAuthRoutes();
+        RegisterDiagRoutes();
+        RegisterAdminRoutes();
+        RegisterMemoryRoutes();
+        RegisterEmotionRoutes();
+        RegisterMeTokensRoutes();
+        RegisterVideoIdentityRoutes();
+        RegisterAIRoutes();
+        RegisterDictionaryRoutes();
+        RegisterEducationRoutes();
+        RegisterEmotionalContextRoutes();
+        RegisterXLifecycleRoutes();
+        RegisterServerRoutes();
+        RegisterModelsRoutes();
+        RegisterMoralsGoalsRoutes();
+        RegisterMiscRoutes();
+        RegisterSHNRoutes();
+        ELLE_INFO("Registered %zu API routes", m_router.Count());
+    }
+
+    void RegisterIntroRoutes() {
         m_router.Register("GET", "/", [](const HTTPRequest&) {
             json j = {
                 {"name", "Elle-Ann"},
@@ -2015,6 +2079,9 @@ private:
             return HTTPResponse::OK(j);
         }, AUTH_PUBLIC);
 
+    }
+
+    void RegisterAuthRoutes() {
         m_router.Register("POST", "/api/auth/pair-code",
             [](const HTTPRequest&) -> HTTPResponse {
                 return HTTPResponse::Err(410,
@@ -2404,6 +2471,9 @@ private:
                     "pair-QR removed; use POST /api/auth/login with username+password");
             }, AUTH_PUBLIC);
 
+    }
+
+    void RegisterDiagRoutes() {
         m_router.Register("GET", "/api/diag/queues", [](const HTTPRequest&) {
             ElleDB::QueueSnapshot s;
             if (!ElleDB::GetQueueSnapshot(s)) {
@@ -2680,6 +2750,9 @@ private:
             });
         }, AUTH_ADMIN);
 
+    }
+
+    void RegisterAdminRoutes() {
         m_router.Register("POST", "/api/admin/config/reload", [this](const HTTPRequest&) {
             const bool localOk = ElleConfig::Instance().Reload();
             auto msg = ElleIPCMessage::Create(IPC_CONFIG_RELOAD,
@@ -2736,6 +2809,30 @@ private:
                 return HTTPResponse::OK(ElleBeliefAdmin::BeliefSnapshotToJson(rows));
             }, AUTH_ADMIN);
 
+        m_router.Register("GET", "/api/admin/bonding/dashboard",
+            [](const HTTPRequest&) {
+                ElleBeliefAdmin::BondingDashboardRow row;
+                if (!ElleBeliefAdmin::FetchBondingDashboard(row)) {
+                    return HTTPResponse::Err(500, "bonding_dashboard_query_failed");
+                }
+                return HTTPResponse::OK(ElleBeliefAdmin::BondingDashboardToJson(row));
+            }, AUTH_ADMIN);
+
+        m_router.Register("GET", "/api/admin/bonding/trajectory",
+            [](const HTTPRequest& req) {
+                int limit = req.QueryInt("limit", 100);
+                if (limit <= 0)    limit = 100;
+                if (limit > 1000)  limit = 1000;
+                std::vector<ElleBeliefAdmin::BondingTrajectoryPoint> pts;
+                if (!ElleBeliefAdmin::FetchBondingTrajectory(pts, limit)) {
+                    return HTTPResponse::Err(500, "bonding_trajectory_query_failed");
+                }
+                return HTTPResponse::OK(ElleBeliefAdmin::BondingTrajectoryToJson(pts));
+            }, AUTH_ADMIN);
+
+    }
+
+    void RegisterMemoryRoutes() {
         m_router.Register("GET", "/api/memory/why", [](const HTTPRequest& req) {
             int limit = req.QueryInt("limit", 10);
             if (limit <= 0)  limit = 10;
@@ -3008,6 +3105,9 @@ private:
             });
         });
 
+    }
+
+    void RegisterEmotionRoutes() {
         m_router.Register("GET", "/api/emotions", [this](const HTTPRequest&) {
             json j = {
                 {"valence", m_cachedEmotions.valence},
@@ -3089,50 +3189,9 @@ private:
             });
         });
 
-        auto ResolveAuthenticatedUser = [](const HTTPRequest& req) -> int32_t {
-            auto it = req.headers.find("x-auth-device-id");
-            if (it == req.headers.end()) return 0;
-            const std::string& deviceId = it->second;
-            if (deviceId.empty()) return 0;
+    }
 
-            auto rs = ElleSQLPool::Instance().QueryParams(
-                "SELECT TOP 1 nUserNo FROM ElleCore.dbo.PairedDevices "
-                "  WHERE DeviceId = ? AND Revoked = 0;",
-                { deviceId });
-            if (!rs.success || rs.rows.empty()) return 0;
-            int64_t v = 0;
-            return rs.rows[0].TryGetInt(0, v) && v > 0 && v <= INT32_MAX
-                       ? (int32_t)v : 0;
-        };
-
-        auto RequireUserId = [](const json& body, int32_t& out) -> std::optional<HTTPResponse> {
-            if (!body.contains("user_id"))
-                return HTTPResponse::Err(400, "user_id is required");
-            auto& v = body.at("user_id");
-            int64_t raw = 0;
-            if (v.is_number_integer())      raw = v.get<int64_t>();
-            else if (v.is_number_unsigned()) raw = (int64_t)v.get<uint64_t>();
-            else if (v.is_string()) {
-                if (!HTTPRequest::StrictParseLL(v.get<std::string>(), raw))
-                    return HTTPResponse::Err(400, "user_id must be a positive integer");
-            } else {
-                return HTTPResponse::Err(400, "user_id must be a positive integer");
-            }
-            if (raw <= 0 || raw > INT32_MAX)
-                return HTTPResponse::Err(400, "user_id must be a positive integer");
-            out = (int32_t)raw;
-            return std::nullopt;
-        };
-
-        auto RequireAuthOrBodyUser = [&](const HTTPRequest& req,
-                                         const json& body,
-                                         int32_t& out)
-                -> std::optional<HTTPResponse> {
-            const int32_t fromJwt = ResolveAuthenticatedUser(req);
-            if (fromJwt > 0) { out = fromJwt; return std::nullopt; }
-            return RequireUserId(body, out);
-        };
-
+    void RegisterMeTokensRoutes() {
         m_router.Register("GET", "/api/me", [](const HTTPRequest& req) {
             auto it = req.headers.find("x-auth-device-id");
             if (it == req.headers.end() || it->second.empty())
@@ -3266,7 +3325,7 @@ private:
         });
 
         m_router.Register("POST", "/api/tokens/conversations",
-            [RequireAuthOrBodyUser](const HTTPRequest& req) {
+            [](const HTTPRequest& req) {
             json body = req.BodyJSON();
             int32_t userId = 0;
             if (auto err = RequireAuthOrBodyUser(req, body, userId)) return *err;
@@ -3336,7 +3395,7 @@ private:
             return HTTPResponse::OK(j);
         });
         m_router.Register("POST", "/api/tokens/video-calls",
-            [RequireAuthOrBodyUser](const HTTPRequest& req) {
+            [](const HTTPRequest& req) {
             json body = req.BodyJSON();
             int32_t userId = 0;
             if (auto err = RequireAuthOrBodyUser(req, body, userId)) return *err;
@@ -3374,6 +3433,9 @@ private:
             return HTTPResponse::OK({{"call_id", callId}, {"status", "ended"}});
         });
 
+    }
+
+    void RegisterVideoIdentityRoutes() {
         m_router.Register("POST", "/api/video/generate", [](const HTTPRequest& req) {
             try {
                 json body = req.BodyJSON();
@@ -3730,7 +3792,7 @@ private:
         });
 
         m_router.Register("POST", "/api/video/avatar/upload",
-            [RequireAuthOrBodyUser](const HTTPRequest& req) {
+            [](const HTTPRequest& req) {
 
             try {
                 json body = req.BodyJSON();
@@ -3808,7 +3870,7 @@ private:
             }
         });
         m_router.Register("GET", "/api/video/avatar",
-            [ResolveAuthenticatedUser](const HTTPRequest& req) {
+            [](const HTTPRequest& req) {
 
             int32_t userId = ResolveAuthenticatedUser(req);
             if (userId <= 0) userId = req.QueryInt("user_id", 0);
@@ -3827,7 +3889,7 @@ private:
             });
         });
         m_router.Register("GET", "/api/video/avatars",
-            [ResolveAuthenticatedUser](const HTTPRequest& req) {
+            [](const HTTPRequest& req) {
             int32_t userId = ResolveAuthenticatedUser(req);
             if (userId <= 0) userId = req.QueryInt("user_id", 0);
             if (userId <= 0)
@@ -3883,6 +3945,9 @@ private:
             return HTTPResponse::OK({{"job_id", jobId}, {"status", "failed"}});
         });
 
+    }
+
+    void RegisterAIRoutes() {
         m_router.Register("POST", "/api/ai/chat", [this](const HTTPRequest& req) {
             try {
                 json body = req.BodyJSON();
@@ -4262,6 +4327,9 @@ private:
             }
         });
 
+    }
+
+    void RegisterDictionaryRoutes() {
         m_router.Register("POST", "/api/dictionary/load", [](const HTTPRequest& req) {
 
             uint32_t start = 0, limit = 0;
@@ -4375,6 +4443,9 @@ private:
             });
         });
 
+    }
+
+    void RegisterEducationRoutes() {
         auto subjectToJson = [](const ElleDB::LearnedSubject& s) {
             return json{
                 {"id", s.id}, {"subject", s.subject}, {"category", s.category},
@@ -4532,6 +4603,9 @@ private:
             return HTTPResponse::OK({{"skill_name", name}, {"recorded", true}});
         });
 
+    }
+
+    void RegisterEmotionalContextRoutes() {
         m_router.Register("GET", "/api/emotional-context/patterns", [](const HTTPRequest&) {
             auto rs = ElleSQLPool::Instance().Query(
                 "SELECT TOP 50 thread_id, ISNULL(topic,''), ISNULL(emotional_weight, 0), "
@@ -4704,6 +4778,9 @@ private:
             return HTTPResponse::OK(arr);
         });
 
+    }
+
+    void RegisterXLifecycleRoutes() {
         m_router.Register("GET", "/api/x/state", [this](const HTTPRequest&) {
             json out = { {"has_data", false} };
             auto cr = ElleSQLPool::Instance().Query(
@@ -5326,6 +5403,9 @@ private:
             });
         });
 
+    }
+
+    void RegisterServerRoutes() {
         m_router.Register("GET", "/api/server/status", [](const HTTPRequest&) {
             std::vector<ELLE_SERVICE_STATUS> statuses;
             try { ElleDB::GetWorkerStatuses(statuses); }
@@ -5482,6 +5562,9 @@ private:
             return HTTPResponse::OK({{"triggered", ok}});
         });
 
+    }
+
+    void RegisterModelsRoutes() {
         m_router.Register("GET", "/api/models/slots", [](const HTTPRequest&) {
             auto rs = ElleSQLPool::Instance().Query(
                 "SELECT slot_number, name, endpoint, model, enabled, ISNULL(last_ping_ms, 0) "
@@ -5712,6 +5795,9 @@ private:
             });
         });
 
+    }
+
+    void RegisterMoralsGoalsRoutes() {
         m_router.Register("GET", "/api/morals/rules", [](const HTTPRequest& req) {
             std::string category = req.QueryParam("category");
             std::string sql = "SELECT id, principle, ISNULL(category,''), is_hard_rule "
@@ -5784,6 +5870,9 @@ private:
             }
             return HTTPResponse::OK({{"goals", arr}});
         });
+    }
+
+    void RegisterMiscRoutes() {
         m_router.Register("GET", "/api/brain/status", [](const HTTPRequest&) {
             return HTTPResponse::OK({{"status", "active"}});
         }, AUTH_PUBLIC);
@@ -5847,6 +5936,9 @@ private:
             return true;
         };
 
+    }
+
+    void RegisterSHNRoutes() {
         m_router.Register("POST", "/api/shn/save",
             [shnResolveRoot, shnValidateName](const HTTPRequest& req) {
             try {
@@ -6112,8 +6204,8 @@ private:
             });
         }, AUTH_ADMIN);
 
-        ELLE_INFO("Registered %zu API routes", m_router.Count());
     }
+
 };
 
 ELLE_SERVICE_MAIN(ElleHTTPService)

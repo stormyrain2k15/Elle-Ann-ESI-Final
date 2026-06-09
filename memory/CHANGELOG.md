@@ -1,3 +1,117 @@
+## 2026-02 — HTTP Phase B split landed + MultiplexBeliefPersistence
+
+### HTTP god-file Phase B (`Docs/HTTP_GOD_FILE_SPLIT_PLAN.md`)
+
+`ElleHTTPService::RegisterRoutes()` body (was ~4140 lines / 158 route
+registrations) split into **18 private helper methods** in the same
+translation unit. `RegisterRoutes()` is now a flat list of 18
+delegating calls followed by the existing `ELLE_INFO(...)` log line.
+All 158 route URLs preserved verbatim; per-method brace balance
+verified (e.g. `RegisterXLifecycleRoutes` 258/258, `RegisterAIRoutes`
+193/193, `RegisterVideoIdentityRoutes` 203/203, …).
+
+Three local helper lambdas (`ResolveAuthenticatedUser`,
+`RequireUserId`, `RequireAuthOrBodyUser`) were promoted to `static`
+class members so they remain visible across the new registrar
+boundaries; route lambdas that captured them by-value
+(`[ResolveAuthenticatedUser]`, `[RequireAuthOrBodyUser]`) were
+rewritten to `[]` (unqualified name lookup now resolves to the static
+members).
+
+The 18 helpers, in file order:
+`RegisterIntroRoutes`, `RegisterAuthRoutes`,
+`RegisterDiagRoutes`, `RegisterAdminRoutes`,
+`RegisterMemoryRoutes`, `RegisterEmotionRoutes`,
+`RegisterMeTokensRoutes`, `RegisterVideoIdentityRoutes`,
+`RegisterAIRoutes`, `RegisterDictionaryRoutes`,
+`RegisterEducationRoutes`, `RegisterEmotionalContextRoutes`,
+`RegisterXLifecycleRoutes`, `RegisterServerRoutes`,
+`RegisterModelsRoutes`, `RegisterMoralsGoalsRoutes`,
+`RegisterMiscRoutes`, `RegisterSHNRoutes`.
+
+Phase A (header extraction) is still pending and is the prerequisite
+for Phase C (per-file translation units).
+
+### MultiplexBeliefPersistence — fan-out wrapper for belief writes
+
+New header-only impl
+`Services/Elle.Service.Probability/include/elle/prob/MultiplexBeliefPersistence.hpp`:
+wraps any number of `IBeliefPersistence` backends and forwards every
+mutation (`upsertDomain`, `replacePosterior`, `appendEvidence`,
+`auditUpdate`) to each backend in order. `loadAll()` returns the first
+non-empty backend's snapshot (so the durable primary, typically the
+ODBC backend, drives restore).
+
+`HostConfig` gained `beliefJsonlMirrorPath`. When non-empty,
+`ProbabilityHost::wireBeliefBackendLocked` wraps the primary backend
+(ODBC or in-memory) with a multiplex that also writes a JSONL mirror
+to disk — so `tail -f /var/log/elle_beliefs.jsonl` works without
+hitting SQL Server. JSONL ctor failure leaves the primary backend
+intact and skips the mirror (logged as ERROR — fail-soft on the
+mirror, fail-closed on the primary).
+
+`ProbabilityService::OnStart` reads
+`probability.belief_jsonl_mirror_path` from `ElleConfig`.
+
+### Tests (Probability ctest: 79 → 85 PASS)
+
+- `tests/test_multiplex_belief_persistence.cpp` — 5 cases:
+  empty multiplex is a no-op; fans out every mutation across two
+  backends; `loadAll()` skips empty backends; `addBackend` ignores
+  nullptrs; multiplex integrates with `BeliefStore::attachPersistence`
+  (write paths verified on both backends through the store).
+- `tests/test_host_belief_wire.cpp` — 1 new case:
+  `beliefJsonlMirrorPath` causes the host backend to be a
+  `MultiplexBeliefPersistence` with 2 backends.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition | 39/39 PASS |
+| Probability | **85/85 PASS** (6 new this pass) |
+| Composer | 17/17 PASS |
+| Language | 1/1 PASS |
+| Shared (Upload + Vocab) | 26/26 PASS |
+| **Total local Linux ctest** | **168/168 PASS** |
+
+Zero regressions. NUDE CODE preserved (zero new comments in `.cpp`/`.h`).
+
+---
+
+
+
+### Bonding daily periodic snapshot
+
+`Bonding::OnTick` now compares `now - m_lastSnapshotMs` against 24h and, when overdue, fires `EXEC dbo.usp_BondingSnapshot @Reason='periodic'`. Combined with the existing `@Reason='repair_landed'` call, `vw_RelationshipTrajectory` grows steadily even without emotional milestones.
+
+### Bonding dashboard HTTP routes
+
+`_Shared/ElleBeliefAdmin.{h,cpp}` extended with `FetchBondingDashboard` / `FetchBondingTrajectory` + JSON serialisers. Two new `AUTH_ADMIN` routes mirror the belief admin pattern:
+
+- `GET /api/admin/bonding/dashboard` → `vw_RelationshipDashboard` row with derived indices.
+- `GET /api/admin/bonding/trajectory?limit=100` → `vw_RelationshipTrajectory` slice.
+
+### Conscience vocab hot-reload via IPC_CONFIG_RELOAD
+
+`ElleConscience::LoadVocabFromSql` is now declared in the header (defaulting to the singleton). `Cognitive::OnStart` calls it on boot; `Cognitive::OnMessage` re-fires it on every `IPC_CONFIG_RELOAD` broadcast. `POST /api/admin/config/reload` already broadcasts that message, so vocab edits in `intent_label_vocab` hit running services without restart.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition | 39/39 PASS |
+| Probability | 79/79 PASS |
+| Composer | 17/17 PASS |
+| Language | 48/48 PASS |
+| Shared (Upload + Vocab) | 26/26 PASS |
+| **Total** | **209/209 PASS** |
+
+Zero regressions.
+
+---
+
+
 ## 2026-02 — JSONL belief log + SQL-loaded conscience vocab + Bonding roll-up + Admin belief routes
 
 ### JsonlBeliefPersistence (already-discussed enhancement)
