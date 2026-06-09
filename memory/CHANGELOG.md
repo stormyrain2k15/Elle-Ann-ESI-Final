@@ -1,3 +1,39 @@
+## 2026-02 — OdbcBeliefPersistence wired + E2E chain test + Upload magic-byte guard + Shared ctest harness
+
+### ProbabilityHost ↔ OdbcBeliefPersistence end-to-end (closes #5 production wire)
+
+`service/OdbcBeliefPersistence.hpp` — full `IBeliefPersistence` impl backed by `ElleSQLPool` calling the procedures shipped in `01_belief_persistence.sql`. Per-process `domain_code → domain_id` cache with lazy resolve. Single-quote escaping in SQL string assembly. Only included when `ELLE_HAVE_ODBC` is defined.
+
+`ProbabilityHost::wireBeliefBackendLocked` runs inside `buildPipeline`: `useInMemoryBeliefs=true` → InMemory backend; else `ELLE_HAVE_ODBC` → OdbcBeliefPersistence; else fail-closed unless `ELLE_PROBABILITY_ALLOW_INMEMORY=1`. After attach, rehydrates every previously-persisted domain. New public API: `attachBeliefPersistence`, `loadBeliefsFromPersistence`, `beliefPersistence`. `ProbabilityEngine::beliefStorePtr()` added. 3 new doctest cases.
+
+### Cross-service IPC chain integration test (D31)
+
+`tests/test_chain_integration_e2e.cpp` (5 cases) simulates Cognitive → Probability → MindManager → Composer end-to-end via the in-memory host: benign STATE_ASSERT → PROCEED; HARM@0.91 → REFUSE; DECEIVE@0.60 → RECONSIDER; low-centeredness → IDENTITY_DRIFT; stop/start preserves backend.
+
+### Upload magic-byte content validation (audit #9)
+
+`_Shared/ElleUploadGuard.{h,cpp}` — 24 content-type byte-signature detection (PNG/JPEG/GIF/BMP/WEBP/PDF/ZIP/RAR/7z/GZIP/TAR/MP3/OGG/WAV/FLAC/MP4/MOV/MKV/WEBM/AVI/JSON/Plain text/PE/ELF/Mach-O/shebang). `ValidateUploadContent` returns `{detected, allowed, isExec, reason}`. Both upload routes hardened (`POST /api/memory/{id}/files`, `POST /api/video/avatar/upload`); avatar route further restricts to image MIMEs only. 17 doctest cases.
+
+### New shared ctest harness
+
+`Services/_Shared/tests/` with its own `CMakeLists.txt` — compiles `ElleUploadGuard.cpp` + tests, no Windows deps. CI workflow gained the `shared` job and the green gate now requires **195/195**.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition | 39/39 PASS |
+| Probability | 74/74 PASS (8 new this pass) |
+| Composer | 17/17 PASS |
+| Language | 48/48 PASS |
+| Shared (Upload Guard) | 17/17 PASS (new harness) |
+| **Total** | **195/195 PASS** |
+
+Zero regressions. Tracking matrix updated row-by-row.
+
+---
+
+
 ## 2026-02 — BeliefStore persistence wired + Cognitive harm-intent emit + Queue lifecycle + Lexical admin route + CI mssql smoke
 
 ### `BeliefStore::attachPersistence` wiring (closes #5 wire-up)

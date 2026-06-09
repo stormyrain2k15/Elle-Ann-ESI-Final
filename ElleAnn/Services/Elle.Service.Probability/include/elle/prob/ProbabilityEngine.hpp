@@ -70,6 +70,8 @@ public:
 
     [[nodiscard]] const BeliefStore& beliefStore() const noexcept { return *m_store; }
 
+    [[nodiscard]] std::shared_ptr<BeliefStore> beliefStorePtr() const noexcept { return m_store; }
+
     void flush();
 
 private:

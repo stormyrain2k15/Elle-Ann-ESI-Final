@@ -153,7 +153,8 @@ if(ELLE_PROB_WITH_LANGUAGE_ENGINE STREQUAL "ON" OR
     add_executable(prob_proto_smoke service/proto_smoke_test.cpp)
     target_link_libraries(prob_proto_smoke PRIVATE elle_probability_host)
 
-    target_sources(elle_prob_tests PRIVATE tests/test_bridge.cpp)
+    target_sources(elle_prob_tests PRIVATE tests/test_bridge.cpp tests/test_host_belief_wire.cpp tests/test_chain_integration_e2e.cpp)
+    target_link_libraries(elle_prob_tests PRIVATE elle_probability_host)
 else()
     message(STATUS "elle-probability: language-engine bridge disabled "
                    "(headers not found / ELLE_PROB_WITH_LANGUAGE_ENGINE=OFF)")

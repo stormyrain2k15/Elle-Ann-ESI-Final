@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"/app/ElleAnn/Services/_Shared/tests/build/cmake_install.cmake",
+		"/app/ElleAnn/Services/_Shared/tests/build/_deps/doctest-build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

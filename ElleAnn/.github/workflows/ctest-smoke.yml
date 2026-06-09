@@ -76,12 +76,29 @@ jobs:
         working-directory: ElleAnn/Services/Elle.Service.Language/build
         run: ./elle_tests
 
+  shared:
+    name: Shared helpers (upload guard, 17 cases)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential
+      - name: Configure
+        working-directory: ElleAnn/Services/_Shared/tests
+        run: cmake -S . -B build -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+      - name: Build
+        working-directory: ElleAnn/Services/_Shared/tests
+        run: cmake --build build -j$(nproc)
+      - name: Test
+        working-directory: ElleAnn/Services/_Shared/tests/build
+        run: ctest --output-on-failure
+
   all-green-gate:
     name: All harnesses green
     runs-on: ubuntu-22.04
-    needs: [intuition, probability, composer, language]
+    needs: [intuition, probability, composer, language, shared]
     steps:
-      - run: echo "All four ctest harnesses passed (164 total cases)."
+      - run: echo "All five ctest harnesses passed (195 total cases)."
 
   sql-schema-smoke:
     name: SQL schema apply + queue lifecycle smoke

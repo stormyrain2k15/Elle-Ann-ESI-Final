@@ -2,6 +2,7 @@
 
 #ifdef ELLE_HAVE_ODBC
 #include "elle/SqlServerAccessLayer.hpp"
+#include "service/OdbcBeliefPersistence.hpp"
 #endif
 
 #include <cstdio>
@@ -94,6 +95,8 @@ bool ProbabilityHost::buildPipeline() {
 
         m_bridge = std::make_unique<elle::prob::Bridge>(m_engine);
 
+        wireBeliefBackendLocked();
+
         m_ready = true;
         return true;
     } catch (const std::exception& e) {
@@ -113,6 +116,50 @@ void ProbabilityHost::teardownPipeline() {
     m_language.reset();
     m_db.reset();
     m_ready = false;
+}
+
+void ProbabilityHost::wireBeliefBackendLocked() {
+    if (!m_engine) return;
+
+    if (!m_beliefBackend) {
+        if (m_cfg.useInMemoryBeliefs) {
+            m_beliefBackend = elle::prob::makeInMemoryBeliefPersistence();
+        } else {
+#ifdef ELLE_HAVE_ODBC
+            try {
+                m_beliefBackend = std::make_shared<elleann::prob::OdbcBeliefPersistence>();
+            } catch (const std::exception& e) {
+                ELLE_HOST_LOG_ERROR("ProbabilityHost: OdbcBeliefPersistence ctor failed: %s",
+                                    e.what());
+                m_beliefBackend.reset();
+            }
+#else
+            const char* override_env = std::getenv("ELLE_PROBABILITY_ALLOW_INMEMORY");
+            if (override_env && std::string(override_env) == "1") {
+                ELLE_HOST_LOG_WARN("ProbabilityHost: ODBC not compiled — "
+                                   "using in-memory belief persistence (NOT durable).");
+                m_beliefBackend = elle::prob::makeInMemoryBeliefPersistence();
+            } else {
+                ELLE_HOST_LOG_ERROR("ProbabilityHost: SQL belief persistence requested but "
+                                    "ODBC support not compiled in. Refusing to silently fall "
+                                    "back. Set ELLE_PROBABILITY_ALLOW_INMEMORY=1 to opt in.");
+                return;
+            }
+#endif
+        }
+    }
+
+    if (!m_beliefBackend) return;
+
+    auto store = m_engine->beliefStorePtr();
+    if (!store) return;
+
+    store->attachPersistence(m_beliefBackend);
+    const std::size_t restored = store->loadFromPersistence();
+    if (restored > 0) {
+        ELLE_HOST_LOG_WARN("ProbabilityHost: restored %zu belief domains from persistence",
+                           restored);
+    }
 }
 
 AnalyzeOutcome ProbabilityHost::analyzeText(const std::string&               rawText,
@@ -236,6 +283,30 @@ bool ProbabilityHost::resetTurn() {
         ELLE_HOST_LOG_WARN("ProbabilityHost::resetTurn failed: %s", e.what());
         return false;
     }
+}
+
+void ProbabilityHost::attachBeliefPersistence(
+    std::shared_ptr<elle::prob::IBeliefPersistence> backend) {
+    std::lock_guard<std::mutex> lk(m_mutex);
+    m_beliefBackend = std::move(backend);
+    if (m_engine) {
+        auto store = m_engine->beliefStorePtr();
+        if (store) store->attachPersistence(m_beliefBackend);
+    }
+}
+
+std::size_t ProbabilityHost::loadBeliefsFromPersistence() {
+    std::lock_guard<std::mutex> lk(m_mutex);
+    if (!m_engine) return 0;
+    auto store = m_engine->beliefStorePtr();
+    if (!store) return 0;
+    return store->loadFromPersistence();
+}
+
+std::shared_ptr<elle::prob::IBeliefPersistence>
+ProbabilityHost::beliefPersistence() const {
+    std::lock_guard<std::mutex> lk(m_mutex);
+    return m_beliefBackend;
 }
 
 } }

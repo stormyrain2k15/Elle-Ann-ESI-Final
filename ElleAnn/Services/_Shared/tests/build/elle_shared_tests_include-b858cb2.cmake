@@ -1,0 +1,5 @@
+if(EXISTS "/app/ElleAnn/Services/_Shared/tests/build/elle_shared_tests_tests-b858cb2.cmake")
+  include("/app/ElleAnn/Services/_Shared/tests/build/elle_shared_tests_tests-b858cb2.cmake")
+else()
+  add_test(elle_shared_tests_NOT_BUILT-b858cb2 elle_shared_tests_NOT_BUILT-b858cb2)
+endif()

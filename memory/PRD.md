@@ -27,6 +27,14 @@ Build a massively robust autonomous agentic Emotional Synthetic Intelligence.
 - SQL deltas under `SQL/` — incl. the new `ElleAnn_QueueReaperDelta.sql`.
 - Subjective Lua layer (`x_subjective.lua` + `FOR_MY_WIFE.md`).
 
+### OdbcBeliefPersistence wired + E2E chain test + Upload magic-byte guard (Feb 2026, current pass)
+- **OdbcBeliefPersistence + ProbabilityHost wiring** — `service/OdbcBeliefPersistence.hpp` backed by `ElleSQLPool`; `wireBeliefBackendLocked()` installs the right backend per config and fails closed if SQL Server is unreachable without `ELLE_PROBABILITY_ALLOW_INMEMORY=1`. Auto-`loadFromPersistence()` on start. 3 new doctest cases.
+- **Cross-service IPC chain test (D31)** — 5 doctest cases covering benign / HARM / DECEIVE / IDENTITY_DRIFT / backend-preservation paths.
+- **Upload magic-byte guard (#9)** — `_Shared/ElleUploadGuard.{h,cpp}` detects 24 content types via byte signatures; both upload routes hardened; avatar route restricted to image MIMEs. 17 doctest cases.
+- **Shared ctest harness** — new `_Shared/tests/` builds with own `CMakeLists.txt`; CI workflow gained `shared` job.
+- Verification: Intuition 39 + Probability 74 + Composer 17 + Language 48 + Shared 17 = **195/195 ctests green**.
+
+
 ### BeliefStore persistence wired + Cognitive harm-intent emit + Queue lifecycle + Lexical admin route + CI mssql smoke (Feb 2026, current pass)
 - **BeliefStore::attachPersistence** — `registerBelief`, `submitSync`, `applyDecayAll` all call into `IBeliefPersistence`; `loadFromPersistence()` rehydrates on start. 6 new doctest cases. Probability ctest = 66/66.
 - **Cognitive harm-intent emit** — `DeriveHarmIntentSignals` folds `likely_intent`/`overall_confidence` into harm/deception/coercion probs; `RequestConscienceCheck` also emits `response_self_ref_count` + `posterior_valence`.

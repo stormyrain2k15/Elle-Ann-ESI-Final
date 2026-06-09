@@ -1,0 +1,16 @@
+/app/ElleAnn/Services/_Shared/tests/build/CMakeFiles/elle_shared_tests.dir
+/app/ElleAnn/Services/_Shared/tests/build/CMakeFiles/test.dir
+/app/ElleAnn/Services/_Shared/tests/build/CMakeFiles/edit_cache.dir
+/app/ElleAnn/Services/_Shared/tests/build/CMakeFiles/rebuild_cache.dir
+/app/ElleAnn/Services/_Shared/tests/build/CMakeFiles/list_install_components.dir
+/app/ElleAnn/Services/_Shared/tests/build/CMakeFiles/install.dir
+/app/ElleAnn/Services/_Shared/tests/build/CMakeFiles/install/local.dir
+/app/ElleAnn/Services/_Shared/tests/build/CMakeFiles/install/strip.dir
+/app/ElleAnn/Services/_Shared/tests/build/_deps/doctest-build/CMakeFiles/doctest_with_main.dir
+/app/ElleAnn/Services/_Shared/tests/build/_deps/doctest-build/CMakeFiles/test.dir
+/app/ElleAnn/Services/_Shared/tests/build/_deps/doctest-build/CMakeFiles/edit_cache.dir
+/app/ElleAnn/Services/_Shared/tests/build/_deps/doctest-build/CMakeFiles/rebuild_cache.dir
+/app/ElleAnn/Services/_Shared/tests/build/_deps/doctest-build/CMakeFiles/list_install_components.dir
+/app/ElleAnn/Services/_Shared/tests/build/_deps/doctest-build/CMakeFiles/install.dir
+/app/ElleAnn/Services/_Shared/tests/build/_deps/doctest-build/CMakeFiles/install/local.dir
+/app/ElleAnn/Services/_Shared/tests/build/_deps/doctest-build/CMakeFiles/install/strip.dir

@@ -1,0 +1,18 @@
+DetectContent: empty body is EMPTY 3 0.000625105
+DetectContent recognises PNG signature 3 0.000599424
+DetectContent recognises JPEG signature 3 0.000571663
+DetectContent recognises GIF87a and GIF89a 3 0.000639668
+DetectContent recognises RIFF/WEBP, RIFF/WAVE, RIFF/AVI 2 0.000904715
+DetectContent recognises PDF, ZIP, GZIP 3 0.000649128
+DetectContent recognises MP4 ftyp container 2 0.000936389
+DetectContent recognises executable formats as exec 3 0.000560502
+DetectContent treats clean printable bytes as PLAIN_TEXT 3 0.000592876
+DetectContent treats curly-brace start as JSON_TEXT 3 0.000615557
+DetectContent returns UNKNOWN for random binary garbage 3 0.00064529
+ValidateUploadContent rejects executable content 3 0.000614877
+ValidateUploadContent rejects empty body 3 0.000635102
+ValidateUploadContent rejects unknown content signature 2 0.000924676
+ValidateUploadContent honours maxBytes cap 3 0.000623579
+ValidateUploadContent: PNG passes, text refused on binary-only endpoint 3 0.000594544
+ValidateUploadContent: PNG accepted on text-allowing endpoint too 3 0.000597196
+---

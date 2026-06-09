@@ -1,6 +1,7 @@
 #pragma once
 
 #include "elle/prob/Bridge.hpp"
+#include "elle/prob/BeliefPersistence.hpp"
 #include "elle/prob/ProbabilityEngine.hpp"
 #include "elle/prob/Types.hpp"
 #include "elle/prob/SpeakerTrustModel.hpp"
@@ -22,6 +23,7 @@ struct HostConfig {
     std::string probabilityConfigPath;
     bool        autoLoadOnStart      = true;
     bool        useInMemoryLanguage  = false;
+    bool        useInMemoryBeliefs   = false;
 };
 
 struct AnalyzeOutcome {
@@ -69,18 +71,25 @@ public:
     bool resetAll();
     bool resetTurn();
 
+    void attachBeliefPersistence(std::shared_ptr<elle::prob::IBeliefPersistence> backend);
+    std::size_t loadBeliefsFromPersistence();
+
+    [[nodiscard]] std::shared_ptr<elle::prob::IBeliefPersistence> beliefPersistence() const;
+
 private:
     HostConfig                                m_cfg;
     std::shared_ptr<elle::ISqlAccessLayer>    m_db;
     std::unique_ptr<elle::Engine>             m_language;
     std::unique_ptr<elle::prob::Bridge>       m_bridge;
-    std::shared_ptr<elle::prob::ProbabilityEngine> m_engine;
+    std::shared_ptr<elle::prob::ProbabilityEngine>  m_engine;
+    std::shared_ptr<elle::prob::IBeliefPersistence> m_beliefBackend;
 
     mutable std::mutex                        m_mutex;
     bool                                      m_ready = false;
 
     bool buildPipeline();
     void teardownPipeline();
+    void wireBeliefBackendLocked();
 };
 
 } }

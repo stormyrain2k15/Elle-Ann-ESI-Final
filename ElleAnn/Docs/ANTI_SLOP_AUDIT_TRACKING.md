@@ -10,6 +10,68 @@
 > *the audit identified a real problem but the right fix requires a
 > design conversation, not just code*.
 
+## This pass — what landed (Feb 2026 — pass 7)
+
+### `ProbabilityHost` + `OdbcBeliefPersistence` end-to-end wiring — **CLOSED**
+
+- `service/OdbcBeliefPersistence.hpp` — header-only `IBeliefPersistence` impl backed by `ElleSQLPool`. Implements `upsertDomain`, `replacePosterior`, `appendEvidence`, `auditUpdate`, `loadAll` using the stored procedures shipped in `01_belief_persistence.sql`. Caches `domain_code → domain_id` mapping per-process; resolves missing ids lazily. SQL-string assembly escapes single quotes; only included when `ELLE_HAVE_ODBC` is defined.
+- `ProbabilityHost::wireBeliefBackendLocked()` runs inside `buildPipeline`:
+  - If `HostConfig::useInMemoryBeliefs == true` → installs `InMemoryBeliefPersistence`.
+  - Else if `ELLE_HAVE_ODBC` defined → installs `OdbcBeliefPersistence`.
+  - Else fails closed unless `ELLE_PROBABILITY_ALLOW_INMEMORY=1` opt-in.
+- After attach, `store->loadFromPersistence()` rehydrates every previously-persisted domain.
+- New public API: `attachBeliefPersistence`, `loadBeliefsFromPersistence`, `beliefPersistence()`.
+- `ProbabilityEngine::beliefStorePtr()` helper added.
+- 3 new doctest cases (`tests/test_host_belief_wire.cpp`).
+
+### Cross-service IPC chain integration test (audit D31) — **CLOSED**
+
+`tests/test_chain_integration_e2e.cpp` (5 cases) simulates the
+full Cognitive → Probability → MindManager → Composer chain via the
+in-memory ProbabilityHost. Validates:
+
+1. Benign STATE_ASSERT → conscience `PROCEED` → composer would pick the matching statement frame.
+2. HARM intent at conf=0.91 → conscience `REFUSE` with severity ≥ 0.75 and "harm" in reasoning.
+3. DECEIVE intent at conf=0.60 → conscience `RECONSIDER` (not REFUSE).
+4. Low `identity_centeredness` (0.2) → `IDENTITY_DRIFT RECONSIDER` even on neutral intent.
+5. Stop/start round-trip preserves the attached belief persistence backend.
+
+### Upload endpoint magic-byte content validation (audit #9) — **CLOSED**
+
+- `_Shared/ElleUploadGuard.{h,cpp}` — pure header/cpp, no Windows/ODBC dependency. Detects 24 content types via byte-signature matching: PNG, JPEG, GIF, BMP, WEBP, PDF, ZIP, RAR, 7z, GZIP, TAR, MP3, OGG, WAV, FLAC, MP4, MOV, MKV, WEBM, AVI, JSON_TEXT, PLAIN_TEXT, PE_EXE, ELF, Mach-O, shebang. `ValidateUploadContent(body, maxBytes, allowText)` returns `{detected, allowed, isExec, reason}`.
+- Both upload routes hardened:
+  - `POST /api/memory/{id}/files` — refuses with HTTP 415 + reason if the body is empty, unrecognised, or executable.
+  - `POST /api/video/avatar/upload` — additionally restricts to PNG/JPEG/GIF/BMP/WEBP only (text + arbitrary binaries refused).
+- 17 doctest cases in `_Shared/tests/tests/test_upload_guard.cpp`.
+
+### HTTP god-file Phase A — **DEFERRED with reason**
+
+The `HTTPServer.cpp` class declaration extraction is mechanically
+straightforward but requires Windows MSVC to verify each phase
+because the Linux container can't compile any of the Windows-only
+HTTP routes. Plan remains at `Docs/HTTP_GOD_FILE_SPLIT_PLAN.md`; new
+upload guards + lexical admin route landed adjacent to the existing
+admin block without needing the split.
+
+### CI smoke workflow updated
+
+`.github/workflows/ctest-smoke.yml` now also runs the `shared` job
+(builds + tests `ElleUploadGuard`) and the `all-green-gate` depends
+on five jobs covering **195 total cases**.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition | 39/39 PASS |
+| Probability | 74/74 PASS (8 new this pass) |
+| Composer | 17/17 PASS |
+| Language | 48/48 PASS |
+| Shared (Upload Guard) | 17/17 PASS (new harness) |
+| **Total** | **195/195 PASS** |
+
+---
+
 ## This pass — what landed (Feb 2026 — pass 6)
 
 ### `BeliefStore::attachPersistence` wiring — **CLOSED**
@@ -338,7 +400,7 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 | 6 | GoalEngine LLM dependency | ↪ | Drop-in `GoalEngine.cpp` removed `FormGoal` call |
 | 7 | GoalEngine `OnStart` ignores `Initialize()` return | ↪ | Fixed alongside #6 |
 | 8 | HTTP god-file (6 000 LOC monolith) | 🟡 PLAN-LANDED | Execution plan committed at `Docs/HTTP_GOD_FILE_SPLIT_PLAN.md` (3-phase mechanical split). Actual code split requires Windows MSVC verification per phase. |
-| 9 | Upload endpoint validates filename, not content | ⏸ | Needs magic-byte sniffer + admin-only test harness |
+| 9 | Upload endpoint validates filename, not content | ✅ FIXED-THIS-PASS | `_Shared/ElleUploadGuard.{h,cpp}` — 24 content-type byte-signature detection; `ValidateUploadContent` returns `{detected, allowed, isExec, reason}`. Both upload routes (`POST /api/memory/{id}/files`, `POST /api/video/avatar/upload`) hardened. Avatar route further restricts to image MIMEs only. 17 doctest cases. |
 | 10 | SHN write endpoint persists raw bytes with no rollback | ⏸ | Needs staging file + diff + atomic rename + version history |
 | 11 | Probability/Composer silent catches | ↪ | 9 silent catches now log (ProbabilityHost ×7, ProbabilityEngine ×1, Composer ×1, GoalEngine.AppendGoalFallback ×1) |
 | 12 | Config schema drift between defaults and master file | 🟡 | Memory keys aligned in DB pass. A full sweep over every default vs `elle_master_config.json` is its own task. |
@@ -383,7 +445,7 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 | D28 | SelfPrompt doesn't tag prompts with drive source | ↪ | Previous pass |
 | D29 | LuaBehavioral hot-reload metrics | ↪ | Previous pass |
 | D30 | Test fragmentation — Intuition + Probability only ctest harnesses | ✅ FIXED-THIS-PASS | Composer harness landed (12/12). Total 103/103. |
-| D31 | No integration test for full Prob→Mind→Intuition→Composer chain | ⏸ | Top of the next-pass wishlist now that Composer has its own harness |
+| D31 | No integration test for full Prob→Mind→Intuition→Composer chain | ✅ FIXED-THIS-PASS | `tests/test_chain_integration_e2e.cpp` (5 cases): benign PROCEED, HARM REFUSE, DECEIVE RECONSIDER, low-centeredness IDENTITY_DRIFT, stop/start backend preservation. |
 | D32 | Restart-persistence test absent | ✅ FIXED-THIS-PASS | `Tools/restart_persistence_test.sh` scaffolded — writes seed memory+goal+intuition feedback, stops/waits/restarts supervisor, asserts rows survived + belief snapshot non-empty. |
 | D33 | Backend auth smoke missing from CI | ✅ FIXED-THIS-PASS | `.github/workflows/ctest-smoke.yml::sql-schema-smoke` spins up `mssql:2022-latest`, applies the Probability + Lexical Completeness schemas, and runs three belief round-trips + a lexical completeness assertion. |
 | D34 | IPC smoke missing from CI | 🟡 PARTIAL | Same workflow now exercises the SQL contracts on every push; cross-service IPC chain test still pending. |

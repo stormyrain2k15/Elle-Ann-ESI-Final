@@ -12,6 +12,7 @@
 #include "../_Shared/ElleGameAccountDB.h"
 #include "../_Shared/ElleUserContinuity.h"
 #include "../_Shared/ElleLexicalAdmin.h"
+#include "../_Shared/ElleUploadGuard.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -2947,6 +2948,17 @@ private:
                 return HTTPResponse::Err(413, "payload too large");
             }
 
+            auto vr = ElleUpload::ValidateUploadContent(
+                req.body, static_cast<size_t>(capBytes), /*allowText=*/true);
+            if (!vr.allowed) {
+                ELLE_WARN("Upload refused (detected=%s reason=%s, %zu bytes)",
+                          ElleUpload::DetectedContentName(vr.detected),
+                          vr.reason.c_str(), req.body.size());
+                return HTTPResponse::Err(415, std::string("upload rejected: ") + vr.reason);
+            }
+            ELLE_INFO("Upload accepted (detected=%s, %zu bytes)",
+                      ElleUpload::DetectedContentName(vr.detected), req.body.size());
+
             auto idIt = req.headers.find("x-path-id");
             if (idIt == req.headers.end() || idIt->second.empty())
                 return HTTPResponse::Err(400, "missing memory id");
@@ -3724,6 +3736,25 @@ private:
                     }
                     std::ofstream out(filePath, std::ios::binary);
                     if (!out) return HTTPResponse::Err(500, "cannot open avatar path for write");
+
+                    auto vr = ElleUpload::ValidateUploadContent(
+                        decoded, /*maxBytes=*/(size_t)(20ULL * 1024 * 1024), /*allowText=*/false);
+                    if (!vr.allowed) {
+                        ELLE_WARN("Avatar upload refused (detected=%s reason=%s, %zu bytes)",
+                                  ElleUpload::DetectedContentName(vr.detected),
+                                  vr.reason.c_str(), decoded.size());
+                        return HTTPResponse::Err(415,
+                            std::string("avatar rejected: ") + vr.reason);
+                    }
+                    if (vr.detected != ElleUpload::DetectedContent::PNG &&
+                        vr.detected != ElleUpload::DetectedContent::JPEG &&
+                        vr.detected != ElleUpload::DetectedContent::GIF &&
+                        vr.detected != ElleUpload::DetectedContent::BMP &&
+                        vr.detected != ElleUpload::DetectedContent::WEBP) {
+                        return HTTPResponse::Err(415,
+                            std::string("avatar must be PNG/JPEG/GIF/BMP/WEBP — got ") +
+                            ElleUpload::DetectedContentName(vr.detected));
+                    }
                     out.write(decoded.data(), (std::streamsize)decoded.size());
                 }
                 if (filePath.empty())
