@@ -20,7 +20,10 @@ public:
 
 protected:
     bool OnStart() override {
-        ElleIdentityCore::Instance().Initialize();
+        if (!ElleIdentityCore::Instance().Initialize()) {
+            ELLE_ERROR("Consent: ElleIdentityCore Initialize failed — refusing to start");
+            return false;
+        }
         SetTickInterval(30000);
         ELLE_INFO("Consent service started");
         return true;

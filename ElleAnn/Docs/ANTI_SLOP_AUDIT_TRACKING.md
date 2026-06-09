@@ -81,7 +81,7 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 | 14 | Comments admit "test mode" / "no auth" in production code | ↪ | Removed via fail-closed defaults |
 | 15 | Direct SQL scattered across services | ⏸ | Same as #8 — cosmetic restructuring |
 | 16 | In-memory source of truth | 🟡 | Memory tier pipeline now SQL-authoritative. Probability still in-memory (see #5). |
-| 17 | Service-health optimism: `OnStart` always returns true | 🟡 | GoalEngine fixed; global sweep over every other `OnStart` queued. |
+| 17 | Service-health optimism: `OnStart` always returns true | ✅ FIXED-THIS-PASS | 7 more services now fail-on-init: WorldModel, InnerLife, Action, Bonding, Consent, Continuity, IdentityGuard. Total now: Memory + Emotional + Cognitive + LuaBehavioral + XChromosome + Composer + GoalEngine + 7 just fixed = **14 of 25**. Remaining 11 have void `Initialize()`s (legitimately can't fail-out) or no init phase. |
 | 18 | Tests fragmented / no tier structure | ⏸ | Per-service ctest harnesses are the seed; cross-service integration tier proposed. |
 
 ### `deeper_anti_slop_audit.md` (second audit — items not covered above)

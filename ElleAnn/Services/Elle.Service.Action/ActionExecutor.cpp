@@ -684,7 +684,10 @@ public:
 
 protected:
     bool OnStart() override {
-        m_executor.Initialize();
+        if (!m_executor.Initialize()) {
+            ELLE_ERROR("Action: executor Initialize failed — refusing to start");
+            return false;
+        }
         ElleDB::GetTrustState(m_trust);
         ELLE_INFO("Action service started (trust: %d/%d)", m_trust.score, TRUST_MAX);
         return true;

@@ -20,7 +20,10 @@ public:
 protected:
     bool OnStart() override {
         auto& identity = ElleIdentityCore::Instance();
-        identity.Initialize();
+        if (!ElleIdentityCore::Instance().Initialize()) {
+            ELLE_ERROR("Continuity: ElleIdentityCore Initialize failed — refusing to start");
+            return false;
+        }
 
         auto snapshot = identity.TakeSnapshot();
         ELLE_INFO("Personality snapshot: warmth=%.2f curiosity=%.2f trust_self=%.2f",

@@ -345,7 +345,10 @@ public:
 
 protected:
     bool OnStart() override {
-        m_engine.Initialize();
+        if (!m_engine.Initialize()) {
+            ELLE_ERROR("InnerLife: Initialize failed — refusing to start");
+            return false;
+        }
         m_engine.PersistContextToDatabase();
         SetTickInterval(10000);
         ELLE_INFO("Inner Life service started — inner weather: %s",

@@ -505,7 +505,10 @@ public:
 
 protected:
     bool OnStart() override {
-        m_engine.Initialize();
+        if (!m_engine.Initialize()) {
+            ELLE_ERROR("Bonding: Initialize failed — refusing to start");
+            return false;
+        }
         m_engine.PersistContextToDatabase();
         ElleIdentityCore::Instance().OnSessionStart();
         SetTickInterval(30000);

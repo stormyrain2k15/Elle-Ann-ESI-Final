@@ -49,7 +49,10 @@ public:
 protected:
     bool OnStart() override {
 
-        ElleIdentityCore::Instance().Initialize();
+        if (!ElleIdentityCore::Instance().Initialize()) {
+            ELLE_ERROR("IdentityGuard: ElleIdentityCore Initialize failed — refusing to start");
+            return false;
+        }
         ElleIdentityCore::Instance().BecomeAuthoritative();
         ELLE_INFO("Identity service is now AUTHORITATIVE (single-writer fabric)");
 

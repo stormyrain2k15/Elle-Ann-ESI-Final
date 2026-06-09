@@ -108,7 +108,10 @@ public:
 
 protected:
     bool OnStart() override {
-        m_model.Initialize();
+        if (!m_model.Initialize()) {
+            ELLE_ERROR("WorldModel: Initialize failed — refusing to start");
+            return false;
+        }
         SetTickInterval(60000);
         ELLE_INFO("World model service started");
         return true;
