@@ -1,4 +1,44 @@
-## 2026-02 — DB consumption foundation fix (memory tiers + all hollow funcs wired)
+## 2026-02 — Sloppy-work / quality audit foundation pass
+
+Reaction to `broad_code_quality_audit.md` + `Elle_Sloppy_Work_Audit_Jun9.md`. Skipped what was already in the DB pass. Full breakdown: `Docs/SLOPPY_WORK_FIX.md`.
+
+### Safety
+- **Auth defaults fail-closed**. `bind_address=127.0.0.1`, `auth_enabled=true`, `no_auth=0`, CORS whitelist replaces wildcard. Runtime guard in `HTTPServer::OnStart` refuses to bind publicly with no-auth unless `ELLE_UNSAFE_ALLOW_PUBLIC_NO_AUTH=1` is set.
+- **Probability ODBC fail-closed**. Silently falling back to in-memory when `ELLE_HAVE_ODBC` wasn't compiled is now an error — set `ELLE_PROBABILITY_ALLOW_INMEMORY=1` to explicitly opt in.
+
+### Reliability
+- **SQL pool reconnect-failure repair**. `Acquire()` no longer permanently shrinks the pool on a failed reconnect — the slot is pushed back to `m_available` and `m_cv.notify_one()` is called.
+
+### Honesty (silent catches → logged)
+- `ProbabilityHost.cpp`: 7 silent catches now log via portable stderr macros (`ELLE_HOST_LOG_ERROR/WARN`).
+- `ProbabilityEngine.cpp`: malformed-weights `catch (...)` now writes WARN to stderr.
+- `Composer.cpp`: log-id parse failure now logs the offending row + request_id.
+- `GoalEngine.cpp` (new drop-in): `AppendGoalFallback`'s `catch (...) {}` now logs exception type and message.
+
+### GoalEngine — drop-in applied + 3 audit fixes
+- Applied the user-supplied replacement (LLM `FormGoal` removed; deterministic dedupe added).
+- NUDE-CODE stripped (789 → 457 lines, 0 comment lines).
+- `OnStart` now returns false on `Initialize()` failure (was ignored — service was marking itself healthy on partial init).
+
+### Documentation (NUDE CODE leaves the source untouched)
+- `Docs/SLOPPY_WORK_FIX.md`: full per-fix breakdown.
+- Bonding-coefficient rationale documented in the same file — every magic number in `intimacy/commitment/investment/security` increments and the `0.45/0.30/0.25/-0.35` composite formula now has a citation-grounded justification.
+
+### Deferred (with reasoning, not skipped)
+- SQL fallback queue redesign (broad #3) — full re-architecture, needs its own pass.
+- Probability belief persistence (broad #5) — same.
+- HTTP god-file split (broad #8) — cosmetic; planned.
+- Committed-artifact cleanup (broad #13) — `.gitignore` + LFS work.
+- MindManager keyword conscience (sloppy #1) + identity drift check (sloppy #4) — **need design conversation** before rebuilding; placeholder is to wire Probability's intent-distribution + EmotionalPosteriorBuilder as the semantic signal.
+
+### Verification (Linux container)
+- Probability ctest: **52/52 PASS** (bridge tests now also exercised)
+- Intuition ctest: **39/39 PASS**
+- Combined: **91/91 ctests green**, no regression.
+
+---
+
+
 
 Reaction to the June 9, 2026 DB Consumption Audit. Every flagged
 "HOLLOW / DEAD / BLOCKER" function is now consumed by an autonomous

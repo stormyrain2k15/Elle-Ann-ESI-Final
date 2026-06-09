@@ -996,6 +996,29 @@ protected:
 
         auto& cfg = ElleConfig::Instance().GetHTTP();
 
+        {
+            bool noAuth = (ElleConfig::Instance().GetInt("http_server.no_auth", 0) != 0)
+                       || !cfg.auth_enabled;
+            bool publicBind = (cfg.bind_address != "127.0.0.1"
+                            && cfg.bind_address != "localhost"
+                            && cfg.bind_address != "::1");
+            if (noAuth && publicBind) {
+                const char* override_env = std::getenv("ELLE_UNSAFE_ALLOW_PUBLIC_NO_AUTH");
+                bool allowed = (override_env && std::string(override_env) == "1");
+                if (!allowed) {
+                    ELLE_ERROR("HTTP service refusing to start: bind_address=%s "
+                               "with no_auth/!auth_enabled is unsafe. "
+                               "Bind to 127.0.0.1 OR enable auth OR set "
+                               "ELLE_UNSAFE_ALLOW_PUBLIC_NO_AUTH=1 to proceed.",
+                               cfg.bind_address.c_str());
+                    return false;
+                }
+                ELLE_WARN("HTTP service starting in UNSAFE MODE: bind=%s no_auth=1 "
+                          "(ELLE_UNSAFE_ALLOW_PUBLIC_NO_AUTH=1 override)",
+                          cfg.bind_address.c_str());
+            }
+        }
+
         m_listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (m_listenSocket == INVALID_SOCKET) {
             ELLE_ERROR("socket() failed: %d", WSAGetLastError());

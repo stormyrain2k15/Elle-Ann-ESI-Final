@@ -58,7 +58,9 @@ static int64_t PersistLog(const std::string& requestId,
     if (rs.rows.empty()) return 0;
     try {
         return std::stoll(rs.rows[0][0]);
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
+        ELLE_WARN("Composer: could not parse log row id '%s' for rid=%s: %s",
+                  rs.rows[0][0].c_str(), requestId.c_str(), e.what());
         return 0;
     }
 }

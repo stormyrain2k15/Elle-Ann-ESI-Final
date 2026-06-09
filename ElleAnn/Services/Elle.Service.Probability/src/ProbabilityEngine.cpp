@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <cstdio>
 
 namespace elle { namespace prob {
 
@@ -74,8 +75,13 @@ ProbabilityEngine::ProbabilityEngine(ProbabilityEngineConfig config)
             readD("posNegDrawAlignment", w.posNegDrawAlignment);
             readD("conversationHint",    w.conversationHint);
             m_senseResolver->seedWeights(w);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr,
+                "[WARN]  ProbabilityEngine: malformed seed weights skipped: %s\n",
+                e.what());
         } catch (...) {
-
+            std::fprintf(stderr,
+                "[WARN]  ProbabilityEngine: malformed seed weights skipped (unknown)\n");
         }
     } else {
 

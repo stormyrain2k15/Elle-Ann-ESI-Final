@@ -4,8 +4,18 @@
 #include "elle/SqlServerAccessLayer.hpp"
 #endif
 
+#include <cstdio>
+#include <cstdlib>
 #include <exception>
+#include <string>
 #include <utility>
+
+#ifndef ELLE_HOST_LOG_ERROR
+#define ELLE_HOST_LOG_ERROR(...) do { fprintf(stderr, "[ERROR] " __VA_ARGS__); fprintf(stderr, "\n"); } while(0)
+#endif
+#ifndef ELLE_HOST_LOG_WARN
+#define ELLE_HOST_LOG_WARN(...)  do { fprintf(stderr, "[WARN]  " __VA_ARGS__); fprintf(stderr, "\n"); } while(0)
+#endif
 
 namespace elleann { namespace prob {
 
@@ -53,7 +63,21 @@ bool ProbabilityHost::buildPipeline() {
 #ifdef ELLE_HAVE_ODBC
             m_db = std::make_shared<elle::SqlServerAccessLayer>(ec.database);
 #else
-            m_db.reset(elle::makeInMemoryAccessLayer().release());
+            const char* override_env = std::getenv("ELLE_PROBABILITY_ALLOW_INMEMORY");
+            if (override_env && std::string(override_env) == "1") {
+                ELLE_HOST_LOG_WARN("ProbabilityHost: ELLE_HAVE_ODBC not defined — "
+                          "falling back to in-memory because "
+                          "ELLE_PROBABILITY_ALLOW_INMEMORY=1 is set. "
+                          "This is NOT durable; learned beliefs will be lost on restart.");
+                m_db.reset(elle::makeInMemoryAccessLayer().release());
+            } else {
+                ELLE_HOST_LOG_ERROR("ProbabilityHost: SQL backend requested but ODBC support "
+                           "(ELLE_HAVE_ODBC) was not compiled in. Refusing to silently "
+                           "fall back to in-memory. Set ELLE_PROBABILITY_ALLOW_INMEMORY=1 "
+                           "to opt in, or rebuild with ODBC.");
+                teardownPipeline();
+                return false;
+            }
 #endif
         }
 
@@ -72,7 +96,12 @@ bool ProbabilityHost::buildPipeline() {
 
         m_ready = true;
         return true;
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
+        ELLE_HOST_LOG_ERROR("ProbabilityHost::buildPipeline failed: %s", e.what());
+        teardownPipeline();
+        return false;
+    } catch (...) {
+        ELLE_HOST_LOG_ERROR("ProbabilityHost::buildPipeline failed with unknown exception");
         teardownPipeline();
         return false;
     }
@@ -134,7 +163,8 @@ bool ProbabilityHost::feedback(std::size_t        unitIndex,
     try {
         m_bridge->feedback(unitIndex, confirmedId, isPhrase, confidence, speakerId);
         return true;
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
+        ELLE_HOST_LOG_WARN("ProbabilityHost::feedback failed: %s", e.what());
         return false;
     }
 }
@@ -147,7 +177,8 @@ bool ProbabilityHost::recordTrust(const std::string&         speakerId,
     try {
         m_bridge->recordTrust(speakerId, signal, strength);
         return true;
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
+        ELLE_HOST_LOG_WARN("ProbabilityHost::recordTrust failed: %s", e.what());
         return false;
     }
 }
@@ -159,7 +190,8 @@ bool ProbabilityHost::injectHormonalState(
     try {
         m_bridge->injectHormonalState(state);
         return true;
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
+        ELLE_HOST_LOG_WARN("ProbabilityHost::injectHormonalState failed: %s", e.what());
         return false;
     }
 }
@@ -176,7 +208,8 @@ bool ProbabilityHost::seedWeights(const elle::prob::WeightVector& w) {
     try {
         m_engine->seedWeights(w);
         return true;
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
+        ELLE_HOST_LOG_WARN("ProbabilityHost::seedWeights failed: %s", e.what());
         return false;
     }
 }
@@ -187,7 +220,8 @@ bool ProbabilityHost::resetAll() {
     try {
         m_engine->resetAll();
         return true;
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
+        ELLE_HOST_LOG_WARN("ProbabilityHost::resetAll failed: %s", e.what());
         return false;
     }
 }
@@ -198,7 +232,8 @@ bool ProbabilityHost::resetTurn() {
     try {
         m_engine->resetTurn();
         return true;
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
+        ELLE_HOST_LOG_WARN("ProbabilityHost::resetTurn failed: %s", e.what());
         return false;
     }
 }

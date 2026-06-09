@@ -361,14 +361,14 @@ void ElleConfig::LoadDefaults() {
         "emotions": { "decay_rate": 0.05, "tick_interval_ms": 1000 },
         "memory":   { "short_term_capacity": 256, "consolidation_interval_ms": 60000 },
         "http_server": {
-            "bind_address": "0.0.0.0",
+            "bind_address": "127.0.0.1",
             "port": 8000,
             "websocket_path": "/command",
             "max_connections": 256,
             "cors_enabled": true,
-            "cors_origins": ["*"],
-            "no_auth": 1,
-            "auth_enabled": false,
+            "cors_origins": ["http://127.0.0.1", "http://localhost"],
+            "no_auth": 0,
+            "auth_enabled": true,
             "admin_auth_id_threshold": 9,
             "rate_limit_rpm": 0,
             "max_upload_bytes": 10485760

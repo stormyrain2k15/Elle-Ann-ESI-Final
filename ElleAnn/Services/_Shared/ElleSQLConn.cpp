@@ -501,14 +501,20 @@ std::shared_ptr<SQLConnection> ElleSQLPool::Acquire(uint32_t timeoutMs) {
 
     auto conn = m_available.front();
     m_available.pop();
+    lock.unlock();
 
     if (!conn->Ping()) {
         ELLE_WARN("SQL pool: Stale connection, reconnecting...");
         ELLE_LOG_SQL("pool: stale conn, reconnecting");
         conn->Disconnect();
         if (!conn->Connect(m_connStr)) {
-            ELLE_ERROR("SQL pool: Reconnection failed");
-            ELLE_LOG_SQL("pool: reconnect FAILED");
+            ELLE_ERROR("SQL pool: Reconnection failed — returning slot to pool as disconnected placeholder");
+            ELLE_LOG_SQL("pool: reconnect FAILED (slot preserved)");
+            {
+                std::lock_guard<std::mutex> rl(m_mutex);
+                m_available.push(conn);
+            }
+            m_cv.notify_one();
             return nullptr;
         }
         ELLE_LOG_SQL("pool: reconnect OK");
