@@ -1,3 +1,69 @@
+## 2026-02 — Lexical Completeness audit (findings #181/#182) + D1/D3 structured signals
+
+### Closed findings #181 / #182 — Lexical Completeness
+
+User-supplied audit flagged (a) missing anagram representation in the
+Language schema and (b) absence of any lexical-completeness audit.
+Both closed in this pass:
+
+- **Anagram support as a first-class field.** New `dbo.Word.AnagramKey`
+  column + SQL function `dbo.fn_AnagramKey` + AFTER INSERT/UPDATE
+  trigger + index + `dbo.vw_AnagramGroups` view + `dbo.fn_Anagrams`
+  TVF + `dbo.usp_RebuildAnagramKeys` bulk procedure.
+- **Required-attribute contract.** New `dbo.LexicalRequirement` table
+  declares the nine attributes Elle needs per word (definition, POS,
+  usage example, context example, emotion weighting, valence pull,
+  relation, concept, anagram key).
+- **Reporting views.** `dbo.vw_LexicalCompleteness` (per-Word BIT
+  flags) and `dbo.vw_LexicalCompletenessVerdict` (adds
+  `IsCognitivelyComplete`, `CompletenessScore` 0–1,
+  `MissingRequirements` string).
+- **Hard ingestion gate.** `dbo.usp_AssertWordCompleteness` THROWs on
+  missing or incomplete entries when `@StrictMode=1`.
+- **Audit procedure.** `dbo.usp_LexicalAuditReport` returns worst-rows
+  + a summary.
+- **C++ surface.** `WordRecord.anagramKey` field, header-only
+  `LexicalCompleteness.hpp` with `computeAnagramKey`,
+  `isPalindromeNormalized`, and `evaluate(EvaluateInputs)`. Same
+  algorithm in SQL and C++.
+- **Tests.** 10 new doctest cases in
+  `Services/Elle.Service.Language/tests/test_lexical_completeness.cpp`.
+  Language ctest binary now 48/48.
+
+Full design doc: `Docs/LEXICAL_COMPLETENESS.md`.
+
+### D1 / D3 — MindManager + Identity-drift structured signals
+
+`ConscienceCheck` now carries five new optional fields parsed from the
+IPC payload: `identity_centeredness`, `intent_dist_entropy`,
+`top_intent_prob`, `posterior_valence`, `response_self_ref_count`.
+`CheckIdentityDrift` triggers on EITHER keyword match OR structured
+evidence:
+
+- `identity_centeredness < 0.35` (probabilistic identity-thread weight),
+- `response_self_ref_count < 1 && responseLen > 80` (response is long but never says "I/me/mine"),
+- `|posterior_valence| < 0.05 && emotion_intensity > 0.4` (flat affect under high-intensity context).
+
+When the structured path fires, the reasoning string includes the
+exact signal values so the conscience log can be audited later. This
+is a layered improvement, not a full semantic rebuild — that remains
+deferred until Probability emits a stable harm-intent label.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition | 39/39 PASS |
+| Probability | 52/52 PASS |
+| Composer | 17/17 PASS |
+| Language | 48/48 PASS (10 new this pass) |
+| **Total** | **156/156 PASS** |
+
+Tracking matrix `Docs/ANTI_SLOP_AUDIT_TRACKING.md` updated.
+
+---
+
+
 ## 2026-02 — OnStart sweep closure + audit-misattribution conversion + Composer ctest harness
 
 ### Closed #17 OnStart sweep — 27/27 services now fail-on-init

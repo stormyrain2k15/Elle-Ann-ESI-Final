@@ -10,6 +10,45 @@
 > *the audit identified a real problem but the right fix requires a
 > design conversation, not just code*.
 
+## This pass — what landed (Feb 2026 — pass 4)
+
+### Findings #181 / #182 — Lexical Completeness — **CLOSED**
+
+User-supplied audit named two gaps: (a) anagram representation was
+missing entirely from the Language schema; (b) the system answered
+"does the word exist?" but not "does the word have enough semantic
+information to reason about it?"
+
+Landed:
+
+- **Anagram support as first-class.** New `dbo.Word.AnagramKey`
+  column, SQL function `dbo.fn_AnagramKey`, AFTER INSERT/UPDATE trigger,
+  index, group view `dbo.vw_AnagramGroups`, and inline TVF
+  `dbo.fn_Anagrams(@lemma)`. Bulk-populated for existing rows via
+  `dbo.usp_RebuildAnagramKeys`.
+- **Required-attribute contract.** New `dbo.LexicalRequirement` table
+  declares the nine attributes Elle needs per word (definition, POS,
+  usage example, context example, emotion weighting, valence pull,
+  relation, concept, anagram key).
+- **Reporting views.** `dbo.vw_LexicalCompleteness` and
+  `dbo.vw_LexicalCompletenessVerdict` give a per-Word BIT-flag report
+  plus `CompletenessScore` (0–1) and `MissingRequirements` string.
+- **Hard ingestion gate.** `dbo.usp_AssertWordCompleteness` THROWs
+  51001/51002 on missing or incomplete entries when `@StrictMode=1`.
+- **Audit report procedure.** `dbo.usp_LexicalAuditReport` returns
+  the worst rows + a summary (TotalWords / CompleteWords / IncompleteWords / AvgScore).
+- **C++ surface.** `WordRecord.anagramKey` field, header-only
+  `LexicalCompleteness.hpp` with `computeAnagramKey`,
+  `isPalindromeNormalized`, and `evaluate(EvaluateInputs) →
+  CompletenessReport`. Same algorithm runs in SQL and in C++.
+- **Tests.** 10 new doctest cases under
+  `Services/Elle.Service.Language/tests/test_lexical_completeness.cpp`.
+  Language ctests now 48/48. Combined harness total **156/156**.
+
+Full design doc: `Docs/LEXICAL_COMPLETENESS.md`.
+
+---
+
 ## This pass — what landed (Feb 2026 — pass 3)
 
 ### 1. Global #17 OnStart sweep — **CLOSED 27/27**
@@ -139,9 +178,9 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| D1 | MindManager conscience keyword-match | 🟣 | Real fix is semantic — wire Probability's intent-distribution + EmotionalPosteriorBuilder as the conscience signal. Tracked in PRD as P0 for the next conscience pass. |
+| D1 | MindManager conscience keyword-match | 🟡 IMPROVED-THIS-PASS | `CheckIdentityDrift` now uses structured signals (`identity_centeredness`, `response_self_ref_count`, `posterior_valence`) layered on top of keyword matches. ConscienceCheck IPC payload extended with five new optional fields. Full semantic rebuild of `CheckEthicalViolation` still needs a Probability harm-intent label (deferred). |
 | D2 | Bonding magic numbers without rationale | ↪ | Documented in `SLOPPY_WORK_FIX.md` |
-| D3 | Identity drift check is keyword `lowered.find("you are not")` | 🟣 | Same fix vector as D1 — semantic rebuild |
+| D3 | Identity drift check is keyword `lowered.find("you are not")` | 🟡 IMPROVED-THIS-PASS | Folded into D1's structured-signal augmentation — `CheckIdentityDrift` now triggers on either keyword OR structured-signal evidence. |
 | D4 | GoalEngine had LLM dependency | ↪ | Replaced |
 | D5 | Composer `catch (const std::exception&) { return 0; }` swallow | ↪ | Now logs row + request_id |
 | D6 | Cognitive→Composer cutover for LLM purge | ↪ | Complete (`Docs/LLM_AUDIT.md`) |
@@ -174,6 +213,13 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 | D33 | Backend auth smoke missing from CI | ⏸ | GitHub Actions: spin up HTTP, POST login |
 | D34 | IPC smoke missing from CI | ⏸ | Cognitive + Composer + Probability chain test |
 | D35 | Queue lifecycle test absent | ⏸ | Submit→Lock→Execute→Complete chain |
+
+### User-supplied audit (Feb 2026)
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| 181 | Language schema incomplete — no anagram representation, distributed lexical metadata, no completeness validation | ✅ FIXED-THIS-PASS | `AnagramKey` column + trigger + index + view + TVF; `LexicalRequirement` contract; `vw_LexicalCompleteness*` views; `usp_AssertWordCompleteness` hard gate; `usp_LexicalAuditReport`. See `Docs/LEXICAL_COMPLETENESS.md`. |
+| 182 | No lexical completeness audit — system asks "does word exist?" not "does word have enough info to reason?" | ✅ FIXED-THIS-PASS | Nine-attribute completeness contract; per-Word `CompletenessScore` 0–1; `MissingRequirements` string; `IsCognitivelyComplete` BIT. Same algorithm in SQL and C++ (`LexicalCompleteness.hpp`). |
 
 ---
 

@@ -20,7 +20,7 @@ std::optional<WordRecord>
 SqlServerAccessLayer::findWordByNormalizedLemma(std::string_view normalized) {
     std::lock_guard<std::mutex> lock(m_mutex);
     odbc::Connection::Statement st(m_conn->dbc(),
-        "SELECT WordID, Lemma, NormalizedLemma, IsPalindrome, Frequency "
+        "SELECT WordID, Lemma, NormalizedLemma, IsPalindrome, ISNULL(AnagramKey,N''), Frequency "
         "FROM dbo.Word WHERE NormalizedLemma = ?");
     st.bindUtf8(normalized);
     st.execute();
@@ -30,14 +30,15 @@ SqlServerAccessLayer::findWordByNormalizedLemma(std::string_view normalized) {
     w.lemma           = st.getString(2);
     w.normalizedLemma = st.getString(3);
     w.isPalindrome    = st.getBool(4);
-    w.frequency       = st.getInt64(5);
+    w.anagramKey      = st.getString(5);
+    w.frequency       = st.getInt64(6);
     return w;
 }
 
 std::optional<WordRecord> SqlServerAccessLayer::findWordById(WordID id) {
     std::lock_guard<std::mutex> lock(m_mutex);
     odbc::Connection::Statement st(m_conn->dbc(),
-        "SELECT WordID, Lemma, NormalizedLemma, IsPalindrome, Frequency "
+        "SELECT WordID, Lemma, NormalizedLemma, IsPalindrome, ISNULL(AnagramKey,N''), Frequency "
         "FROM dbo.Word WHERE WordID = ?");
     st.bindInt64(id.value());
     st.execute();
@@ -47,7 +48,8 @@ std::optional<WordRecord> SqlServerAccessLayer::findWordById(WordID id) {
     w.lemma           = st.getString(2);
     w.normalizedLemma = st.getString(3);
     w.isPalindrome    = st.getBool(4);
-    w.frequency       = st.getInt64(5);
+    w.anagramKey      = st.getString(5);
+    w.frequency       = st.getInt64(6);
     return w;
 }
 

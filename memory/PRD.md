@@ -27,6 +27,13 @@ Build a massively robust autonomous agentic Emotional Synthetic Intelligence.
 - SQL deltas under `SQL/` — incl. the new `ElleAnn_QueueReaperDelta.sql`.
 - Subjective Lua layer (`x_subjective.lua` + `FOR_MY_WIFE.md`).
 
+### Lexical Completeness audit + structured conscience signals (Feb 2026, current pass)
+- **Findings #181/#182 closed.** Language schema now carries `Word.AnagramKey`, an AFTER INSERT/UPDATE trigger, `vw_AnagramGroups`, `fn_Anagrams` TVF, and a nine-attribute lexical-completeness contract enforced by `usp_AssertWordCompleteness`. Same algorithm in SQL (`fn_AnagramKey`) and C++ (`LexicalCompleteness.hpp`).
+- **D1/D3 structured-signal augmentation.** `ConscienceCheck` now carries five new optional fields; `CheckIdentityDrift` triggers on keyword match OR structured evidence (identity-centeredness threshold, response self-ref count, posterior-valence flatness under high intensity). Conscience reasoning string includes exact signal values for audit.
+- Verification: Intuition 39 + Probability 52 + Composer 17 + Language 48 = **156/156 ctests green**.
+- Docs: `Docs/LEXICAL_COMPLETENESS.md` new; `Docs/ANTI_SLOP_AUDIT_TRACKING.md` updated.
+
+
 ### Anti-slop audit pass 3 (Feb 2026, current pass)
 - **#17 OnStart fail-on-init sweep: CLOSED 27/27.** Final 10 services wired (Intellect, Intuition, Imagination, Family, MindManager, Heartbeat, Dream, QueueWorker, SelfPrompt, Solitude, Fiesta). Every service now refuses to start on real init failure.
 - **D17 / D18 / D22 / D25** audit-misattributions converted to `RecordMetric` writes on the natural event paths (Identity tamper, Continuity session start/stop, Dream cycle dispatch/complete, Bonding repair attempts/completions).

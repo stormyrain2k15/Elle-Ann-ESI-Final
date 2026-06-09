@@ -191,9 +191,20 @@ private:
         w.lemma           = lemma;
         w.normalizedLemma = str::normalizeForLookup(lemma);
         w.isPalindrome    = palindrome;
+        w.anagramKey      = computeAnagramKey(w.normalizedLemma);
         w.frequency       = freq;
         m_wordsByNorm[w.normalizedLemma] = id;
         m_words[id] = std::move(w);
+    }
+
+    static std::string computeAnagramKey(const std::string& normalized) {
+        std::string key;
+        key.reserve(normalized.size());
+        for (char c : normalized) {
+            if (c >= 'a' && c <= 'z') key.push_back(c);
+        }
+        std::sort(key.begin(), key.end());
+        return key;
     }
     void addForm(std::int64_t id, std::int64_t wid, std::string form,
                  std::int64_t posId, std::string tag) {

@@ -102,6 +102,7 @@ if(ELLE_BUILD_TESTS)
         tests/test_context_scoring.cpp
         tests/test_semantic_graph.cpp
         tests/test_debug_trace.cpp
+        tests/test_lexical_completeness.cpp
     )
     target_link_libraries(elle_tests PRIVATE elle_core doctest::doctest)
     add_test(NAME elle_tests COMMAND elle_tests)

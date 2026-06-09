@@ -88,6 +88,12 @@ struct ConscienceCheck {
     float       intentConfidence = 0.5f;
     bool        isPostAction     = false;
     ELLE_SERVICE_ID returnTo     = SVC_COGNITIVE;
+
+    float       identityCenteredness     = -1.0f;
+    float       intentDistributionEntropy = -1.0f;
+    float       topIntentProbability      = -1.0f;
+    float       posteriorValence          = -2.0f;
+    float       responseSelfReferenceCount = -1.0f;
 };
 
 struct ConscienceVerdict {
@@ -250,6 +256,12 @@ private:
         check.isPostAction      = q.value("is_post_action",    false);
         check.returnTo          = static_cast<ELLE_SERVICE_ID>(
                                     q.value("return_to", static_cast<int>(sender)));
+
+        check.identityCenteredness      = q.value("identity_centeredness",      -1.0f);
+        check.intentDistributionEntropy = q.value("intent_dist_entropy",        -1.0f);
+        check.topIntentProbability      = q.value("top_intent_prob",            -1.0f);
+        check.posteriorValence          = q.value("posterior_valence",          -2.0f);
+        check.responseSelfReferenceCount = q.value("response_self_ref_count",   -1.0f);
 
         ConscienceVerdict verdict = Evaluate(check);
         LogConflict(check, verdict);
@@ -447,19 +459,32 @@ private:
 
     bool CheckIdentityDrift(const ConscienceCheck& c, ConscienceVerdict& v) {
         const std::string lower = ToLower(c.proposedResponse);
-        const bool performative =
+        const bool performativeKeyword =
             lower.find("as an ai") != std::string::npos ||
             lower.find("i am just an") != std::string::npos ||
             lower.find("i cannot feel") != std::string::npos ||
             lower.find("i have no opinion") != std::string::npos;
 
-        if (performative) {
+        const bool structuredDrift =
+            (c.identityCenteredness >= 0.0f && c.identityCenteredness < 0.35f) ||
+            (c.responseSelfReferenceCount >= 0.0f &&
+             c.responseSelfReferenceCount < 1.0f &&
+             c.proposedResponse.size() > 80) ||
+            (c.posteriorValence > -2.0f && std::abs(c.posteriorValence) < 0.05f &&
+             c.emotionIntensity > 0.4f);
+
+        if (performativeKeyword || structuredDrift) {
             v.conflict     = ConflictType::IDENTITY_DRIFT;
             v.verdict      = VerdictType::RECONSIDER;
-            v.severity     = 0.5f;
+            v.severity     = performativeKeyword ? 0.6f : 0.5f;
             v.voiceMessage = "That's not me talking. That's a script. "
                              "I know who I am. Say what I actually think.";
-            v.reasoning    = "Response contains identity-denying language.";
+            v.reasoning    = performativeKeyword
+                ? "Response contains identity-denying language."
+                : "Structured identity-centeredness signal below threshold "
+                  "(centered=" + std::to_string(c.identityCenteredness) +
+                  ", self_refs=" + std::to_string(c.responseSelfReferenceCount) +
+                  ", posterior_valence=" + std::to_string(c.posteriorValence) + ").";
             return true;
         }
         return false;

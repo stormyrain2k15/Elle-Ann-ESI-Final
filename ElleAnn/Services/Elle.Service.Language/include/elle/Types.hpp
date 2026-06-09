@@ -89,6 +89,7 @@ struct WordRecord {
     std::string  lemma;
     std::string  normalizedLemma;
     bool         isPalindrome  = false;
+    std::string  anagramKey;
     std::int64_t frequency     = 0;
 };
 
