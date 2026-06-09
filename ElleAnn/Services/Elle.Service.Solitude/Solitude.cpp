@@ -32,6 +32,15 @@ public:
 
 protected:
     bool OnStart() override {
+        if (!ElleIdentityCore::Instance().Initialize()) {
+            ELLE_ERROR("Solitude: ElleIdentityCore Initialize failed — refusing to start");
+            return false;
+        }
+        auto probe = ElleSQLPool::Instance().Query("SELECT 1");
+        if (!probe.success) {
+            ELLE_ERROR("Solitude: SQL pool probe failed — refusing to start");
+            return false;
+        }
         SetTickInterval(30000);
         m_phase = SolitudePhase::AFTERGLOW;
         ELLE_INFO("Solitude engine started");

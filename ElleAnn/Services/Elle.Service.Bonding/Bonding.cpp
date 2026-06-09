@@ -195,6 +195,8 @@ public:
                 "vulnerable", 0.6f);
 
             SaveRelationshipState();
+            ElleDB::RecordMetric("bonding_repair_attempts", 1.0);
+            ElleDB::RecordMetric("bonding_last_repair_attempt_ms", (double)now);
         }
 
         return response;
@@ -257,6 +259,9 @@ public:
             "relief", 0.7f);
 
         SaveRelationshipState();
+        ElleDB::RecordMetric("bonding_repairs_completed", 1.0);
+        ElleDB::RecordMetric("bonding_last_repair_ms", (double)now);
+        ElleDB::RecordMetric("bonding_security", m_state.security);
         ELLE_INFO("Bonding: sustained-comfort repair landed "
                   "(comfort=%.2f, held %llus)",
                   c, (unsigned long long)(held / 1000));

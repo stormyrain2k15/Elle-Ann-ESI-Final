@@ -27,6 +27,14 @@ Build a massively robust autonomous agentic Emotional Synthetic Intelligence.
 - SQL deltas under `SQL/` — incl. the new `ElleAnn_QueueReaperDelta.sql`.
 - Subjective Lua layer (`x_subjective.lua` + `FOR_MY_WIFE.md`).
 
+### Anti-slop audit pass 3 (Feb 2026, current pass)
+- **#17 OnStart fail-on-init sweep: CLOSED 27/27.** Final 10 services wired (Intellect, Intuition, Imagination, Family, MindManager, Heartbeat, Dream, QueueWorker, SelfPrompt, Solitude, Fiesta). Every service now refuses to start on real init failure.
+- **D17 / D18 / D22 / D25** audit-misattributions converted to `RecordMetric` writes on the natural event paths (Identity tamper, Continuity session start/stop, Dream cycle dispatch/complete, Bonding repair attempts/completions).
+- **D30 Composer ctest harness landed.** New `core/SlotSpecParser.h` extracts `ParseSlotSpecs` + `ScoreFrameByRecency` as pure helpers consumed by both production code and tests. 17 doctest cases (6 parse + 6 score + 5 chain-integration). Production code routes through the same helpers — no parallel implementation.
+- Verification: Intuition 39/39, Probability 52/52, Composer 17/17 = **108/108 ctests green**.
+- Tracking matrix at `Docs/ANTI_SLOP_AUDIT_TRACKING.md` updated row-by-row.
+
+
 ## Completed (this session — Feb 2026)
 
 ### Elle.Service.Intuition wiring completion (Feb 2026, current pass)

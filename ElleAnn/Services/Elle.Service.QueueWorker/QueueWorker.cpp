@@ -16,6 +16,11 @@ public:
 
 protected:
     bool OnStart() override {
+        auto probe = ElleSQLPool::Instance().Query("SELECT 1");
+        if (!probe.success) {
+            ELLE_ERROR("Queue worker: SQL pool probe failed — refusing to start");
+            return false;
+        }
         SetTickInterval(500);
         ELLE_INFO("Queue worker started (poll interval: 500ms)");
         return true;

@@ -16,6 +16,18 @@ public:
 protected:
     bool OnStart() override {
         auto& cfg = ElleConfig::Instance().GetService();
+        if (cfg.heartbeat_ms == 0 || cfg.heartbeat_timeout_ms == 0 ||
+            cfg.dead_man_timeout_ms == 0) {
+            ELLE_ERROR("Heartbeat: invalid timing config (interval=%d, timeout=%d, deadman=%d) — refusing to start",
+                       cfg.heartbeat_ms, cfg.heartbeat_timeout_ms, cfg.dead_man_timeout_ms);
+            return false;
+        }
+        if (cfg.heartbeat_timeout_ms <= cfg.heartbeat_ms ||
+            cfg.dead_man_timeout_ms <= cfg.heartbeat_timeout_ms) {
+            ELLE_ERROR("Heartbeat: timing ordering invalid (must have interval < timeout < deadman; got %d/%d/%d)",
+                       cfg.heartbeat_ms, cfg.heartbeat_timeout_ms, cfg.dead_man_timeout_ms);
+            return false;
+        }
         SetTickInterval(cfg.heartbeat_ms);
         m_timeoutMs = cfg.heartbeat_timeout_ms;
         m_deadManMs = cfg.dead_man_timeout_ms;

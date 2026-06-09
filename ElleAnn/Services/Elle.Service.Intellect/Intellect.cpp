@@ -7,31 +7,28 @@
 #include <algorithm>
 #include <chrono>
 
-static void EnsureIntellectSchema() {
+static bool EnsureIntellectSchema() {
     auto& pool = ElleSQLPool::Instance();
 
-    pool.Exec(
+    const char* stmts[] = {
         "IF NOT EXISTS (SELECT 1 FROM sys.columns "
         "  WHERE object_id = OBJECT_ID('ElleCore.dbo.learned_subjects') "
         "  AND name = 'last_accessed_ms') "
         "ALTER TABLE ElleCore.dbo.learned_subjects "
-        "ADD last_accessed_ms BIGINT NOT NULL DEFAULT 0;");
+        "ADD last_accessed_ms BIGINT NOT NULL DEFAULT 0;",
 
-    pool.Exec(
         "IF NOT EXISTS (SELECT 1 FROM sys.columns "
         "  WHERE object_id = OBJECT_ID('ElleCore.dbo.learned_subjects') "
         "  AND name = 'confidence') "
         "ALTER TABLE ElleCore.dbo.learned_subjects "
-        "ADD confidence FLOAT NOT NULL DEFAULT 0.5;");
+        "ADD confidence FLOAT NOT NULL DEFAULT 0.5;",
 
-    pool.Exec(
         "IF NOT EXISTS (SELECT 1 FROM sys.columns "
         "  WHERE object_id = OBJECT_ID('ElleCore.dbo.skills') "
         "  AND name = 'last_reviewed_ms') "
         "ALTER TABLE ElleCore.dbo.skills "
-        "ADD last_reviewed_ms BIGINT NOT NULL DEFAULT 0;");
+        "ADD last_reviewed_ms BIGINT NOT NULL DEFAULT 0;",
 
-    pool.Exec(
         "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
         "  JOIN sys.schemas s ON s.schema_id = t.schema_id "
         "  WHERE t.name = 'intellect_connections' AND s.name = 'dbo') "
@@ -43,9 +40,8 @@ static void EnsureIntellectSchema() {
         "  strength        FLOAT NOT NULL DEFAULT 0.5,"
         "  source          NVARCHAR(256) NULL,"
         "  noted_ms        BIGINT NOT NULL DEFAULT 0"
-        ");");
+        ");",
 
-    pool.Exec(
         "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
         "  JOIN sys.schemas s ON s.schema_id = t.schema_id "
         "  WHERE t.name = 'intellect_log' AND s.name = 'dbo') "
@@ -57,9 +53,18 @@ static void EnsureIntellectSchema() {
         "  trigger_source  NVARCHAR(64) NULL,"
         "  detail          NVARCHAR(MAX) NULL,"
         "  logged_ms       BIGINT NOT NULL DEFAULT 0"
-        ");");
+        ");"
+    };
+
+    for (const char* s : stmts) {
+        if (!pool.Exec(s)) {
+            ELLE_ERROR("Intellect: schema bootstrap failed on statement — refusing to start");
+            return false;
+        }
+    }
 
     ELLE_INFO("Intellect: schema delta applied");
+    return true;
 }
 
 class IntellectEngine {
@@ -333,7 +338,7 @@ public:
 
 protected:
     bool OnStart() override {
-        EnsureIntellectSchema();
+        if (!EnsureIntellectSchema()) return false;
         SetTickInterval(60000);
         ELLE_INFO("Intellect engine started");
         return true;

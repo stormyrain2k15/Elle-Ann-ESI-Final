@@ -1,5 +1,6 @@
 #include "SlotPlanner.h"
 #include "InflectionTables.h"
+#include "core/SlotSpecParser.h"
 #include "../_Shared/ElleLogger.h"
 #include <algorithm>
 #include <cctype>
@@ -13,17 +14,15 @@
 // Parses "[NAME:POS:form]" and "[NAME:POS:form]?" tokens from a frame template.
 // ---------------------------------------------------------------------------
 std::vector<SlotSpec> SlotPlanner::ParseTemplate(const std::string& tmpl) {
+    auto parsed = elle::composer::core::ParseSlotSpecs(tmpl);
     std::vector<SlotSpec> slots;
-    std::regex slotRe(R"(\[([A-Z_]+):([A-Z_]+)(?::([A-Za-z0-9_]+))?\](\?)?)");
-    auto begin = std::sregex_iterator(tmpl.begin(), tmpl.end(), slotRe);
-    auto end   = std::sregex_iterator();
-
-    for (auto it = begin; it != end; ++it) {
+    slots.reserve(parsed.size());
+    for (auto& p : parsed) {
         SlotSpec s;
-        s.name     = (*it)[1].str();
-        s.posTag   = (*it)[2].str();
-        s.form     = (*it)[3].matched ? (*it)[3].str() : "-";
-        s.optional = (*it)[4].matched;
+        s.name     = std::move(p.name);
+        s.posTag   = std::move(p.posTag);
+        s.form     = std::move(p.form);
+        s.optional = p.optional;
         slots.push_back(std::move(s));
     }
     return slots;

@@ -41,8 +41,8 @@ public:
 protected:
 
     bool OnStart() override {
+        if (!EnsureTables()) return false;
         LoadPatterns();
-        EnsureTables();
         SetTickInterval(300000);
         ELLE_INFO("Intuition service started — %zu instinct patterns loaded",
                   m_engine.PatternCount());
@@ -286,8 +286,9 @@ private:
         m_engine.Decay();
     }
 
-    void EnsureTables() {
-        ElleSQLPool::Instance().Exec(R"(
+    bool EnsureTables() {
+        auto& pool = ElleSQLPool::Instance();
+        if (!pool.Exec(R"(
             IF NOT EXISTS (SELECT 1 FROM sys.tables t
                 JOIN sys.schemas s ON s.schema_id = t.schema_id
                 WHERE t.name = 'intuition_pattern' AND s.name = 'dbo')
@@ -301,9 +302,12 @@ private:
                 urgent       BIT           NOT NULL DEFAULT 0,
                 active       BIT           NOT NULL DEFAULT 1
             )
-        )");
+        )")) {
+            ELLE_ERROR("Intuition: failed to ensure intuition_pattern table");
+            return false;
+        }
 
-        ElleSQLPool::Instance().Exec(R"(
+        if (!pool.Exec(R"(
             IF NOT EXISTS (SELECT 1 FROM sys.tables t
                 JOIN sys.schemas s ON s.schema_id = t.schema_id
                 WHERE t.name = 'intuition_log' AND s.name = 'dbo')
@@ -322,15 +326,22 @@ private:
                 instinct_count INT          NOT NULL,
                 basis         NVARCHAR(512) NOT NULL
             )
-        )");
+        )")) {
+            ELLE_ERROR("Intuition: failed to ensure intuition_log table");
+            return false;
+        }
 
-        ElleSQLPool::Instance().Exec(R"(
+        if (!pool.Exec(R"(
             IF NOT EXISTS (SELECT 1 FROM sys.indexes
                 WHERE name = 'IX_intuition_log_recorded'
                 AND object_id = OBJECT_ID('ElleHeart.dbo.intuition_log'))
             CREATE INDEX IX_intuition_log_recorded
                 ON ElleHeart.dbo.intuition_log (recorded_ms DESC)
-        )");
+        )")) {
+            ELLE_ERROR("Intuition: failed to ensure intuition_log index");
+            return false;
+        }
+        return true;
     }
 
     void LogFiring(const IntuitRequest& req, const IntuitResult& result) {

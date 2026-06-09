@@ -1,0 +1,5 @@
+if(EXISTS "/app/ElleAnn/Services/Elle.Service.Composer/build/elle_composer_tests_tests-b858cb2.cmake")
+  include("/app/ElleAnn/Services/Elle.Service.Composer/build/elle_composer_tests_tests-b858cb2.cmake")
+else()
+  add_test(elle_composer_tests_NOT_BUILT-b858cb2 elle_composer_tests_NOT_BUILT-b858cb2)
+endif()

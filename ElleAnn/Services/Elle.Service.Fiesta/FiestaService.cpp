@@ -75,6 +75,11 @@ protected:
         m_autoLogin  = cfg.GetBool("fiesta.auto_login", false);
         m_nUserNo    = (int64_t)cfg.GetInt("fiesta.user_no", 0);
 
+        if (m_loginPort == 0) {
+            ELLE_ERROR("Fiesta: fiesta.port=0 — refusing to start");
+            return false;
+        }
+
         {
             char exePath[MAX_PATH] = {0};
             GetModuleFileNameA(nullptr, exePath, MAX_PATH);

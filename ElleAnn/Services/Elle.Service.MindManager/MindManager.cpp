@@ -125,7 +125,7 @@ public:
 protected:
     bool OnStart() override {
         LoadCoreValues();
-        EnsureLogTable();
+        if (!EnsureLogTable()) return false;
         SetTickInterval(60000);
         ELLE_INFO("Mind Manager started — conscience is active.");
         return true;
@@ -200,9 +200,9 @@ private:
         ELLE_INFO("Core values loaded: %zu", m_values.size());
     }
 
-    void EnsureLogTable() {
+    bool EnsureLogTable() {
         try {
-            ElleSQLPool::Instance().Exec(
+            if (!ElleSQLPool::Instance().Exec(
                 "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
                 "  JOIN sys.schemas s ON s.schema_id = t.schema_id "
                 "  WHERE t.name = 'conscience_log' AND s.name = 'dbo') "
@@ -217,10 +217,15 @@ private:
                 "  reasoning NVARCHAR(MAX) NULL,"
                 "  is_post_action BIT NOT NULL,"
                 "  entry_json NVARCHAR(MAX) NOT NULL"
-                ");");
+                ");")) {
+                ELLE_ERROR("MindManager: conscience_log bootstrap failed");
+                return false;
+            }
         } catch (const std::exception& e) {
-            ELLE_WARN("MindManager: conscience_log table init failed: %s", e.what());
+            ELLE_ERROR("MindManager: conscience_log table init exception: %s", e.what());
+            return false;
         }
+        return true;
     }
 
     void HandleConscienceCheck(const ElleIPCMessage& msg, ELLE_SERVICE_ID sender) {

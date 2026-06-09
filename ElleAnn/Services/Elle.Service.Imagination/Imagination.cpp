@@ -76,7 +76,7 @@ public:
 
 protected:
     bool OnStart() override {
-        EnsureTable();
+        if (!EnsureTable()) return false;
         m_rng.seed((uint64_t)std::chrono::steady_clock::now()
                    .time_since_epoch().count());
         m_maxIters = (uint32_t)ElleConfig::Instance().GetInt(
@@ -116,9 +116,9 @@ private:
     bool            m_useLLM         = true;
     uint64_t        m_scenariosScored = 0;
 
-    void EnsureTable() {
+    bool EnsureTable() {
         try {
-            ElleSQLPool::Instance().Exec(
+            if (!ElleSQLPool::Instance().Exec(
                 "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
                 "  JOIN sys.schemas s ON s.schema_id = t.schema_id "
                 "  WHERE t.name = 'imagined_scenarios' AND s.name = 'dbo') "
@@ -131,10 +131,15 @@ private:
                 "  created_ms BIGINT NOT NULL,"
                 "  source_memory_ids_json NVARCHAR(MAX) NOT NULL,"
                 "  refined NVARCHAR(MAX) NULL"
-                ");");
+                ");")) {
+                ELLE_ERROR("Imagination: imagined_scenarios bootstrap failed");
+                return false;
+            }
         } catch (const std::exception& e) {
-            ELLE_WARN("imagined_scenarios init failed: %s", e.what());
+            ELLE_ERROR("imagined_scenarios init exception: %s", e.what());
+            return false;
         }
+        return true;
     }
 
     void HandleRequest(const ElleIPCMessage& msg, ELLE_SERVICE_ID sender) {

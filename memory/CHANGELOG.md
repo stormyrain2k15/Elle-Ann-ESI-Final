@@ -1,3 +1,52 @@
+## 2026-02 — OnStart sweep closure + audit-misattribution conversion + Composer ctest harness
+
+### Closed #17 OnStart sweep — 27/27 services now fail-on-init
+
+Final batch wired in this pass (10 services):
+
+- **Intellect** — `EnsureIntellectSchema()` now returns bool; each schema statement checked.
+- **Intuition** — `EnsureTables()` now returns bool; 3 statements checked.
+- **Imagination** — `EnsureTable()` returns bool; `imagined_scenarios` create surfaces failure.
+- **Family** — `EnsureSchema()` + `ComputeRootPaths()` both return bool; filesystem errors refuse start.
+- **MindManager** — `EnsureLogTable()` returns bool; `conscience_log` create failure refuses.
+- **Heartbeat** — Validates `heartbeat_ms`, `heartbeat_timeout_ms`, `dead_man_timeout_ms` are non-zero AND properly ordered.
+- **Dream** — Refuses if `dream_interval_min <= 0`.
+- **QueueWorker** — `SELECT 1` SQL probe at start.
+- **SelfPrompt** — `SELECT 1` SQL probe at start.
+- **Solitude** — `ElleIdentityCore::Initialize()` + `SELECT 1` SQL probe.
+- **Fiesta** — Refuses if `fiesta.port == 0` (preserves graceful-degrade for missing host by design).
+
+Combined with prior-pass wires, every one of the 27 services now has a meaningful fail-on-init contract.
+
+### Closed D17, D18, D22, D25 — audit-misattribution conversions to `RecordMetric`
+
+- **D17 (Identity drift):** `IdentityGuard` writes `identity_tamper_events`, `identity_last_tamper_ms`, `identity_file_missing_events`, `identity_integrity_checks_passed` on the tick-time integrity check.
+- **D18 (Continuity session):** `Continuity` writes `continuity_sessions_started`, `continuity_current_session`, `continuity_last_session_start_ms` on start; `continuity_sessions_ended`, `continuity_last_session_end_ms` on stop.
+- **D22 (Dream cycle):** `Dream` writes `dream_cycles_started`, `dream_last_fragment_count`, `dream_last_cycle_ms` on dispatch; `dream_cycles_completed`, `dream_last_overall_score` on completion.
+- **D25 (Bonding bursts):** Investigation showed `SaveRelationshipState` already persists state. Added discrete `bonding_repair_attempts`, `bonding_last_repair_attempt_ms`, `bonding_repairs_completed`, `bonding_last_repair_ms`, `bonding_security` metric writes for observers.
+
+### Closed D30 — Composer ctest harness
+
+New `Services/Elle.Service.Composer/`:
+
+- `core/SlotSpecParser.h` — extracted `ParseSlotSpecs()` + `ScoreFrameByRecency()` as pure header-only helpers with no Windows/ODBC dependency. Production code (`SlotPlanner::ParseTemplate`, `FrameLibrary::Score`) now routes through these helpers — single source of truth, no parallel test implementation.
+- `tests/test_main.cpp`, `tests/test_parse_slots.cpp` (6 cases), `tests/test_score_frame.cpp` (6 cases), `tests/test_chain_integration.cpp` (5 cases — Prob act → frame pick → slot parse).
+- `CMakeLists.txt` with doctest FetchContent and ctest discovery.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition | 39/39 PASS |
+| Probability | 52/52 PASS |
+| Composer | 17/17 PASS (new this pass) |
+| **Total** | **108/108 PASS** |
+
+Build green, zero regressions. Tracking matrix `Docs/ANTI_SLOP_AUDIT_TRACKING.md` updated accordingly.
+
+---
+
+
 ## 2026-02 — OnStart fail-on-init sweep
 
 Wired return-value checking around `Initialize()` on 7 more services. Each now refuses to start (returns false from `OnStart`) and logs `ELLE_ERROR` if its engine's `Initialize()` returns false:

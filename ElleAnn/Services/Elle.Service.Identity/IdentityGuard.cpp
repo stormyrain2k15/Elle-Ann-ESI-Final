@@ -181,15 +181,21 @@ protected:
                 ELLE_FATAL("  Expected (SQL): %s", expected.c_str());
                 ELLE_FATAL("  Got (file):     %s", currentHash.c_str());
 
+                ElleDB::RecordMetric("identity_tamper_events", 1.0);
+                ElleDB::RecordMetric("identity_last_tamper_ms", (double)ELLE_MS_NOW());
+
                 auto msg = ElleIPCMessage::Create(IPC_SHUTDOWN, SVC_IDENTITY, (ELLE_SERVICE_ID)0);
                 msg.SetStringPayload("IDENTITY_TAMPER_DETECTED");
                 msg.header.flags = ELLE_IPC_FLAG_BROADCAST | ELLE_IPC_FLAG_URGENT;
                 GetIPCHub().Broadcast(msg);
 
                 Running().store(false);
+            } else {
+                ElleDB::RecordMetric("identity_integrity_checks_passed", 1.0);
             }
         } else {
             ELLE_ERROR("Identity file missing or unreadable — failing closed.");
+            ElleDB::RecordMetric("identity_file_missing_events", 1.0);
             Running().store(false);
         }
 

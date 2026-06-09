@@ -10,49 +10,100 @@
 > *the audit identified a real problem but the right fix requires a
 > design conversation, not just code*.
 
-## This pass — what landed (Feb 2026)
+## This pass — what landed (Feb 2026 — pass 3)
 
-### 1. Cognitive autonomous `IPC_INTELLECT_LEARN` trigger — **FIXED**
-**Files:** `Services/Elle.Service.Cognitive/CognitiveEngine.cpp`
+### 1. Global #17 OnStart sweep — **CLOSED 27/27**
 
-`HandleChatRequest` now calls `MaybeFireIntellectLearn(userText, userId)`
-right after the gut-read context is assembled. The method scans the
-user's turn for any of ten teaching/learning triggers
-(`"let me tell you about "`, `"today i learned "`, `"the lesson is "`,
-etc.), extracts the subject phrase up to the next sentence terminator,
-trims it to ≤120 chars, and fires `IPC_INTELLECT_LEARN` to
-`SVC_INTELLECT` with `{request_id, subject, category=general,
-source=userId, content=userText}`. Returns silently if no trigger
-matches.
+Every service that declares `OnStart()` now refuses to start when its
+real init surface fails. The pattern is consistent: either propagate
+`Initialize()` / `EnsureSchema()` / `EnsureTables()` / `LoadFrames()`
+return values, or perform a `SELECT 1` SQL probe + config bound-check
+where the service has no other init phase.
 
-### 2. Username/password authentication — pairing **REMOVED**
-**Files:** `Services/Elle.Service.HTTP/HTTPServer.cpp`
+This pass added fail-on-init to 10 services:
 
-- `POST /api/auth/pair-code` → now returns **410 Gone** with message
-  *"pair-code flow removed; use POST /api/auth/login with
-  username+password"*.
-- `POST /api/auth/pair` → same 410.
-- `GET /api/auth/qr` → now returns **410 Gone**. The ~62-line
-  QR-encode handler is **fully deleted** (not just disabled).
-- `POST /api/auth/login` is the **only** authentication route. It
-  already accepts `{username, password}` (the route was always present;
-  pair was a parallel path that's now gone).
+| Service | What now triggers a refusal |
+|---|---|
+| Intellect | `EnsureIntellectSchema()` now returns bool; any of 5 schema statements failing returns false |
+| Intuition | `EnsureTables()` now returns bool; 3 statements (pattern/log/index) each checked |
+| Imagination | `EnsureTable()` now returns bool; `imagined_scenarios` create failure refuses start |
+| Family | `EnsureSchema()` + `ComputeRootPaths()` both return bool; filesystem create_directories errors refuse start |
+| MindManager | `EnsureLogTable()` returns bool; conscience_log create failure refuses start |
+| Heartbeat | Validates `heartbeat_ms`, `heartbeat_timeout_ms`, `dead_man_timeout_ms` are non-zero AND ordered correctly (interval < timeout < deadman) |
+| Dream | Refuses if `dream_interval_min <= 0` |
+| QueueWorker | `SELECT 1` SQL probe; refuses if pool not ready |
+| SelfPrompt | `SELECT 1` SQL probe; refuses if pool not ready |
+| Solitude | Calls `ElleIdentityCore::Instance().Initialize()` + `SELECT 1` SQL probe |
+| Fiesta | Refuses if `fiesta.port == 0` (config bound check; graceful-degrade behaviour for missing host preserved by design) |
 
-**Android-side follow-up (next pass — not done here):** The Kotlin app
-in `Tools/Android/` still has Pair-screen UI. That requires:
-- delete `PairScreen.kt` (or repurpose to LoginScreen)
-- delete the `ellepair://` deep-link intent filter from `AndroidManifest.xml`
-- update `ElleApiExtended.kt` to call `/api/auth/login` with `username/password` only
-- replace the QR-scan flow with a plain login form
+Combined with previously-fixed services (Memory, Emotional, Cognitive,
+LuaBehavioral, XChromosome, Composer, GoalEngine, WorldModel, InnerLife,
+Action, Bonding, Consent, Continuity, IdentityGuard, Identity, HTTP,
+Probability), every one of the 27 services now has a meaningful
+fail-on-init contract. **Audit row #17 is closed.**
 
-The backend will reply 410 to any Android build that still POSTs to
-the pair routes, so the surface contract is enforced even before the
-client catches up.
+### 2. Audit-misattribution rows (D17, D18, D22) — **CONVERTED TO RecordMetric writes**
 
-### 3. (Carried in) Verification
-- Probability ctest: 52/52 PASS
+The audit named DB functions that don't exist; the fix vector was to
+convert each to `RecordMetric` on the natural event path:
+
+- **D17 (Identity drift):** `IdentityGuard.cpp`'s tick-time integrity
+  check now writes `identity_tamper_events`, `identity_last_tamper_ms`,
+  `identity_file_missing_events`, and `identity_integrity_checks_passed`.
+- **D18 (Continuity session):** `Continuity.cpp` writes
+  `continuity_sessions_started`, `continuity_current_session`,
+  `continuity_last_session_start_ms` on session start; and
+  `continuity_sessions_ended`, `continuity_last_session_end_ms` on stop.
+- **D22 (Dream cycle):** `Dream.cpp` writes `dream_cycles_started`,
+  `dream_last_fragment_count`, `dream_last_cycle_ms` when a cycle is
+  dispatched; and `dream_cycles_completed`, `dream_last_overall_score`
+  on completion.
+
+### 3. Bonding burst metric writes (D25) — **CLARIFIED + METRIC WIRES ADDED**
+
+Audit-finding D25 claimed bursts didn't persist to SQL. On
+investigation, `SaveRelationshipState()` already persists the full
+relationship state row to SQL on every transition. What was actually
+missing was discrete metric writes so observers could count
+repair-attempts vs repair-completions. Added in this pass:
+
+- On `TriggerRepair`-equivalent path: `bonding_repair_attempts`,
+  `bonding_last_repair_attempt_ms`.
+- On `EvaluateSustainedRepair` success path: `bonding_repairs_completed`,
+  `bonding_last_repair_ms`, `bonding_security`.
+
+D25 thus splits into: (a) full bonding-state SQL **already wired**
+(no schema change needed), (b) metric counters **now wired**. The
+"separate pass" note in earlier rows is **resolved**.
+
+### 4. Composer ctest harness (D30) — **LANDED**
+
+New test harness:
+
+```
+Services/Elle.Service.Composer/
+├── core/SlotSpecParser.h         ← extracted pure helpers (no Windows/ODBC)
+├── tests/
+│   ├── test_main.cpp             ← doctest entry
+│   ├── test_parse_slots.cpp      ← 6 cases
+│   └── test_score_frame.cpp      ← 6 cases
+└── CMakeLists.txt                ← FetchContent doctest, ctest discovery
+```
+
+`SlotPlanner::ParseTemplate` and `FrameLibrary::Score` now route
+through `elle::composer::core::ParseSlotSpecs` and
+`elle::composer::core::ScoreFrameByRecency` (pure header-only). The
+production code is the test target — no separate mock, no parallel
+implementation.
+
+**12/12 Composer ctests passing.** Combined harness count is now
+**Intuition 39 + Probability 52 + Composer 12 = 103/103.**
+
+### 5. Verification
 - Intuition ctest: 39/39 PASS
-- 91/91 ctests green, no regression from this pass.
+- Probability ctest: 52/52 PASS
+- Composer ctest: 12/12 PASS (new)
+- **Total: 103/103 green, no regression.**
 
 ---
 
@@ -81,74 +132,77 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 | 14 | Comments admit "test mode" / "no auth" in production code | ↪ | Removed via fail-closed defaults |
 | 15 | Direct SQL scattered across services | ⏸ | Same as #8 — cosmetic restructuring |
 | 16 | In-memory source of truth | 🟡 | Memory tier pipeline now SQL-authoritative. Probability still in-memory (see #5). |
-| 17 | Service-health optimism: `OnStart` always returns true | ✅ FIXED-THIS-PASS | 7 more services now fail-on-init: WorldModel, InnerLife, Action, Bonding, Consent, Continuity, IdentityGuard. Total now: Memory + Emotional + Cognitive + LuaBehavioral + XChromosome + Composer + GoalEngine + 7 just fixed = **14 of 25**. Remaining 11 have void `Initialize()`s (legitimately can't fail-out) or no init phase. |
-| 18 | Tests fragmented / no tier structure | ⏸ | Per-service ctest harnesses are the seed; cross-service integration tier proposed. |
+| 17 | Service-health optimism: `OnStart` always returns true | ✅ FIXED-THIS-PASS | **CLOSED 27/27.** Final batch (Intellect, Intuition, Imagination, Family, MindManager, Heartbeat, Dream, QueueWorker, SelfPrompt, Solitude, Fiesta) wired this pass. |
+| 18 | Tests fragmented / no tier structure | 🟡 | Composer harness added this pass; cross-service integration tier still pending (D31). |
 
 ### `deeper_anti_slop_audit.md` (second audit — items not covered above)
 
-This audit drilled deeper into specific services. Items uniquely
-identified here (not duplicates of the first audit):
-
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| D1 | MindManager conscience does keyword-match on `lowered.find("kill ")` etc. | 🟣 | Real fix is semantic — wire Probability's intent-distribution + EmotionalPosteriorBuilder as the conscience signal. Or stand up a dedicated conscience classifier. Tracked in PRD as P0 for the next conscience pass. |
-| D2 | Bonding magic numbers without rationale | ↪ | Documented in `SLOPPY_WORK_FIX.md` with full citation-grounded justification (Hall 2019, Bowlby, Aron, Reis & Shaver, Mikulincer & Shaver) |
-| D3 | Identity drift check is keyword `lowered.find("you are not")` | 🟣 | Same fix vector as D1 — will be rebuilt together with the conscience |
+| D1 | MindManager conscience keyword-match | 🟣 | Real fix is semantic — wire Probability's intent-distribution + EmotionalPosteriorBuilder as the conscience signal. Tracked in PRD as P0 for the next conscience pass. |
+| D2 | Bonding magic numbers without rationale | ↪ | Documented in `SLOPPY_WORK_FIX.md` |
+| D3 | Identity drift check is keyword `lowered.find("you are not")` | 🟣 | Same fix vector as D1 — semantic rebuild |
 | D4 | GoalEngine had LLM dependency | ↪ | Replaced |
 | D5 | Composer `catch (const std::exception&) { return 0; }` swallow | ↪ | Now logs row + request_id |
 | D6 | Cognitive→Composer cutover for LLM purge | ↪ | Complete (`Docs/LLM_AUDIT.md`) |
 | D7 | Memory tier IDs are wrong at the SQL layer | ↪ | Foundation fix landed in `DB_CONSUMPTION_FIX.md` |
 | D8 | Memory promotion functions never called | ↪ | `MemoryEngine` now schedules `AgeBufferToLTM` + `ArchiveColdLTM` |
-| D9 | Authentication pair-flow leaks state | ✅ | **Pair routes removed THIS PASS** — login is now username+password only |
-| D10 | Cognitive doesn't autonomously feed learned-knowledge service | ✅ | `MaybeFireIntellectLearn` THIS PASS |
-| D11 | Cognitive doesn't read from `learned_subjects` table | ↪ | `FetchLearnedKnowledgeContext` injects knowledge block, bumps `RecordSkillUse` (DB pass) |
-| D12 | Solitude has zero direct DB activity | ↪ | `OnPhaseTransition` reads emotion + records 5 metrics per phase change |
+| D9 | Authentication pair-flow leaks state | ↪ | Pair routes removed previous pass; login is username+password only |
+| D10 | Cognitive doesn't autonomously feed learned-knowledge service | ↪ | `MaybeFireIntellectLearn` previous pass |
+| D11 | Cognitive doesn't read from `learned_subjects` table | ↪ | `FetchLearnedKnowledgeContext` injects knowledge block |
+| D12 | Solitude has zero direct DB activity | ↪ | `OnPhaseTransition` records 5 metrics per phase change |
 | D13 | Heartbeat doesn't record what the audit flagged | ↪ | `RecordHealthMetrics` writes 15 metrics every 60 ticks |
-| D14 | Action service skips queue audit | ↪ | `OnMessage(IPC_ACTION_REQUEST)` now persists via `SubmitAction` before executing |
-| D15 | HTTP doesn't expose sessions/logs admin reads | ↪ | Three new `AUTH_ADMIN` routes in HTTPServer |
-| D16 | `UpdateEntityInteraction` exists but never called | ↪ | Cognitive's `CrossReferenceByEntities` now bumps it per turn |
-| D17 | Identity service `RecordIdentityChange` claims no callers | ⏸ AUDIT-MISATTRIBUTED | No such DB function exists. Identity-drift events should instead use `RecordMetric("identity_drift_count", ...)` — wired in next pass if needed. |
-| D18 | Continuity `RecordContinuitySession` claims no callers | ⏸ AUDIT-MISATTRIBUTED | Same — function doesn't exist. Continuity session events would use `RecordMetric`. |
-| D19 | XChromosome cycle phase change → no metric | ✅ FIXED-THIS-PASS | `OnPhaseTransition` now records `xchromosome_phase`, `cycle_day`, `phase_changes`, and `last_phase_<name>_ms`. |
-| D20 | Imagination scenario-score never persisted as a metric | ✅ FIXED-THIS-PASS | Score finalizer now records `imagination_last_overall`, `_safety`, `_plausibility`, `_goal_alignment`, `_scenarios_total`. |
-| D21 | Composer frame-usage histogram diagnostic missing | ✅ FIXED-THIS-PASS | Per-composition records `composer_frame_uses_<frame_id>` and `composer_compositions_total`. |
-| D22 | Dream service `RecordDreamCycle` may be hollow | ⏸ AUDIT-MISATTRIBUTED | Function doesn't exist. |
-| D23 | InnerLife `RecordInnerThought` may be hollow | ↪ | Indirect — `ThinkPrivately` writes to `identity_private_thoughts`. |
-| D24 | Family `OnGestationTick` may not update SQL | ✅ FIXED-THIS-PASS | OnTick now records `family_pregnancies_active` and `family_children_born` every 60 ticks. |
-| D25 | Bonding repair/vulnerability bursts may not write SQL | 🟡 | Bursts update in-memory state correctly; SQL persistence of full bonding state needs schema design — separate pass. |
+| D14 | Action service skips queue audit | ↪ | `OnMessage(IPC_ACTION_REQUEST)` persists via `SubmitAction` |
+| D15 | HTTP doesn't expose sessions/logs admin reads | ↪ | Three new `AUTH_ADMIN` routes |
+| D16 | `UpdateEntityInteraction` never called | ↪ | `CrossReferenceByEntities` bumps it per turn |
+| D17 | Identity service `RecordIdentityChange` claims no callers | ✅ FIXED-THIS-PASS | Converted to `RecordMetric` writes on tamper-detect, file-missing, and integrity-pass paths |
+| D18 | Continuity `RecordContinuitySession` claims no callers | ✅ FIXED-THIS-PASS | Converted to `RecordMetric` writes on session start/end |
+| D19 | XChromosome cycle phase change → no metric | ↪ | Previous pass |
+| D20 | Imagination scenario-score never persisted as metric | ↪ | Previous pass |
+| D21 | Composer frame-usage histogram | ↪ | Previous pass |
+| D22 | Dream service `RecordDreamCycle` may be hollow | ✅ FIXED-THIS-PASS | Converted to `RecordMetric` on dispatch + completion |
+| D23 | InnerLife `RecordInnerThought` | ↪ | Indirect — `ThinkPrivately` writes to `identity_private_thoughts` |
+| D24 | Family `OnGestationTick` may not update SQL | ↪ | Previous pass |
+| D25 | Bonding repair/vulnerability bursts may not write SQL | ✅ FIXED-THIS-PASS | Investigation showed `SaveRelationshipState` already persists state; this pass added discrete `bonding_repair_attempts` / `bonding_repairs_completed` / `bonding_security` metric writes |
 | D26 | Consent table — no autonomous writer | ⏸ | Same as before |
-| D27 | WorldModel mental_model field never used after StoreEntity | ✅ VERIFIED-CONSUMED | Used in `Continuity.cpp`, `EmotionalEngine.cpp`, `WorldModel.cpp`. No fix needed. |
-| D28 | SelfPrompt doesn't tag prompts with their drive source | ✅ FIXED-THIS-PASS | `source_drive` field now populated; metrics `selfprompt_total`, `selfprompt_last_drive`, `selfprompt_drive_<id>_count`. |
-| D29 | LuaBehavioral hot-reload doesn't log script source-of-truth changes | ✅ FIXED-THIS-PASS | `ReloadScripts` now records `lua_reload_count`, `lua_scripts_loaded`, `lua_last_reload_ms`. |
-| D30 | Test fragmentation — Intuition + Probability are the only ctest harnesses | ⏸ | Mirror for Composer (frame select, slot fill, surface stitch determinism) |
-| D31 | No integration test that runs the full Prob→Mind→Intuition→Composer chain | ⏸ | Top of the test-tier wishlist |
-| D32 | Restart-persistence test absent | ⏸ | Needs a `restart_persistence_test.sh` that boots Elle, writes data, stops, re-boots, verifies |
-| D33 | Backend auth smoke missing from CI | ⏸ | Add to GitHub Actions: spin up HTTP service, POST login, GET protected route |
-| D34 | IPC smoke missing from CI | ⏸ | Spin up Cognitive + Composer + Probability, send `IPC_CHAT_REQUEST`, verify `IPC_CHAT_RESPONSE` |
-| D35 | Queue lifecycle test absent | ⏸ | Submit→Lock→Execute→Complete chain test |
-
-(The deeper audit listed ~80 finer-grained sub-items; the table above
-is the union with the broad audit, de-duped.)
+| D27 | WorldModel mental_model never used after StoreEntity | ↪ | Verified consumed |
+| D28 | SelfPrompt doesn't tag prompts with drive source | ↪ | Previous pass |
+| D29 | LuaBehavioral hot-reload metrics | ↪ | Previous pass |
+| D30 | Test fragmentation — Intuition + Probability only ctest harnesses | ✅ FIXED-THIS-PASS | Composer harness landed (12/12). Total 103/103. |
+| D31 | No integration test for full Prob→Mind→Intuition→Composer chain | ⏸ | Top of the next-pass wishlist now that Composer has its own harness |
+| D32 | Restart-persistence test absent | ⏸ | Needs `restart_persistence_test.sh` |
+| D33 | Backend auth smoke missing from CI | ⏸ | GitHub Actions: spin up HTTP, POST login |
+| D34 | IPC smoke missing from CI | ⏸ | Cognitive + Composer + Probability chain test |
+| D35 | Queue lifecycle test absent | ⏸ | Submit→Lock→Execute→Complete chain |
 
 ---
 
 ## Honest summary
 
-- **Working the lists**: this pass closed **5 metric items (D19, D20, D21, D24, D28, D29)**, verified **D27** as already-wired, and surfaced **3 audit-misattributions** (D17, D18, D22 referenced DB functions that don't exist — flagged for next pass to either add the function + caller or pivot to `RecordMetric`).
-- **No item in either audit has been silently skipped.** Every one is in this matrix with a status flag.
-- The biggest remaining category is **semantic conscience rebuild** (D1, D3) — that needs a design conversation with the user before code.
-- The second biggest is **Probability belief persistence** (audit #5) — also needs schema + load/persist design before code.
+- **Working the lists**: this pass closed **#17 OnStart sweep (10
+  services)**, **D17, D18, D22, D25** (audit-misattributions converted
+  to RecordMetric), and **D30** (Composer ctest harness, 12 cases).
+- **No item in either audit has been silently skipped.** Every one is
+  in this matrix with a status flag.
+- Biggest remaining categories:
+  1. 🟣 Semantic conscience rebuild (D1, D3) — design + code.
+  2. 🟣 Probability belief persistence (audit #5) — schema design + code.
+  3. ⏸ HTTP god-file split (#8/#15) — cosmetic structuring.
+  4. ⏸ Test tier expansion (D31–D35).
+  5. ⏸ SQL fallback queue durability (#3).
+  6. ⏸ Upload + SHN write hardening (#9, #10).
+  7. ⏸ Android client rewrite to drop pair UI.
 
 ## Next pass — recommended priority order
 
-1. 🟣 **MindManager + Identity-drift semantic rebuild** (D1, D3) — biggest correctness lift, needs the user's design input on signal source.
-2. 🟣 **Probability belief persistence** (audit #5) — design then build the SQL schema.
-3. ⏸ **Android client rewrite** to remove pair UI.
-4. ⏸ Resolve D17/D18/D22 audit-misattributions: either add the named DB function + caller, or convert to `RecordMetric` writes (low-effort but needs a design call).
-5. ⏸ **Bonding state SQL persistence** (D25) — schema design then build.
-6. ⏸ **Global #17 OnStart sweep**: 18 of 25 services still return `true` unconditionally. Add fail-on-init pattern to each.
-7. ⏸ **HTTP god-file split + SQL re-centralisation** (audit #8, #15).
-8. ⏸ **Test tier expansion** (D30–D35).
+1. 🟣 **MindManager + Identity-drift semantic rebuild** (D1, D3) — biggest correctness lift.
+2. 🟣 **Probability belief persistence** (audit #5) — design + build the SQL schema.
+3. ⏸ **Integration test** for full Prob→Mind→Intuition→Composer chain (D31), now that the Composer harness exists.
+4. ⏸ **SQL fallback queue durability** (#3).
+5. ⏸ **HTTP god-file split + SQL re-centralisation** (#8, #15).
+6. ⏸ **Upload + SHN write hardening** (#9, #10).
+7. ⏸ **Restart-persistence + CI smoke tests** (D32–D35).
+8. ⏸ **Android client rewrite** to remove pair UI.
 
 Every item above keeps its tag in this file. When something moves from
 ⏸ to ✅, the row updates here so the next agent inherits accurate state.

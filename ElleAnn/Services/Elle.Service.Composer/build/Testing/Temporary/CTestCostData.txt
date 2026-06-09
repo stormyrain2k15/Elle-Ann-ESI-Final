@@ -1,0 +1,18 @@
+ParseSlotSpecs returns empty vector for templates without slots 2 0.00108959
+ParseSlotSpecs extracts name and posTag from a simple slot 2 0.0011356
+ParseSlotSpecs marks optional slots with trailing ? 2 0.00160843
+ParseSlotSpecs ignores malformed slot syntax 2 0.00112412
+ParseSlotSpecs is deterministic across repeated calls 2 0.00122711
+ParseSlotSpecs preserves left-to-right slot order 2 0.00114366
+ScoreFrameByRecency returns base weight when frame never used 2 0.000833014
+ScoreFrameByRecency penalises freshly-used frames more than stale ones 2 0.00101973
+ScoreFrameByRecency converges to base weight as elapsed time grows 2 0.000967299
+ScoreFrameByRecency at exactly one half-life applies expected penalty 2 0.000795345
+ScoreFrameByRecency is deterministic 2 0.000896312
+ScoreFrameByRecency: heavier baseWeight beats lighter even after penalty 2 0.00090398
+Chain: probability act + frame library + slot parse all wire deterministically 1 0.00228747
+Chain: recently-used frame is downranked vs equally-weighted fresh frame 1 0.00204046
+Chain: question act routes to question-kind frame, not statement 1 0.00222853
+Chain: wildcard-act frame matches any act for its kind 1 0.00176441
+Chain: no matching frame yields null pick 1 0.00179503
+---

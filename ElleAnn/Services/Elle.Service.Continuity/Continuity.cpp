@@ -43,6 +43,10 @@ protected:
 
         GenerateReconnectionGreeting();
 
+        ElleDB::RecordMetric("continuity_sessions_started", 1.0);
+        ElleDB::RecordMetric("continuity_current_session", (double)identity.GetFeltTime().session_count);
+        ElleDB::RecordMetric("continuity_last_session_start_ms", (double)ELLE_MS_NOW());
+
         ELLE_INFO("Continuity service started — session #%d",
                   identity.GetFeltTime().session_count);
         return true;
@@ -59,6 +63,9 @@ protected:
         if (identity.GetLastAutobiographyEntry() != endLine) {
             identity.AppendToAutobiography(endLine);
         }
+
+        ElleDB::RecordMetric("continuity_sessions_ended", 1.0);
+        ElleDB::RecordMetric("continuity_last_session_end_ms", (double)ELLE_MS_NOW());
 
         identity.Shutdown();
         ELLE_INFO("Continuity service stopped");

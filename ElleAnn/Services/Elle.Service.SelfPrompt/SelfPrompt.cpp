@@ -20,6 +20,11 @@ public:
 
 protected:
     bool OnStart() override {
+        auto probe = ElleSQLPool::Instance().Query("SELECT 1");
+        if (!probe.success) {
+            ELLE_ERROR("Self-Prompt: SQL pool probe failed — refusing to start");
+            return false;
+        }
         SetTickInterval(5000);
         m_lastPromptMs = ELLE_MS_NOW();
         ELLE_INFO("Self-Prompt service started");

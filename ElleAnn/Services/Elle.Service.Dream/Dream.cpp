@@ -19,6 +19,10 @@ public:
 protected:
     bool OnStart() override {
         auto interval = ElleConfig::Instance().GetMemory().dream_interval_min;
+        if (interval <= 0) {
+            ELLE_ERROR("Dream: invalid dream_interval_min=%d — refusing to start", interval);
+            return false;
+        }
         SetTickInterval(interval * 60 * 1000);
         ELLE_INFO("Dream service started (interval: %d min)", interval);
         return true;
@@ -83,6 +87,10 @@ protected:
         ELLE_INFO("Dream → SVC_IMAGINATION dispatched (rid=%s, fragments=%zu)",
                   rid, fragments.size());
 
+        ElleDB::RecordMetric("dream_cycles_started", 1.0);
+        ElleDB::RecordMetric("dream_last_fragment_count", (double)fragments.size());
+        ElleDB::RecordMetric("dream_last_cycle_ms", (double)ELLE_MS_NOW());
+
         ELLE_INFO("Dream cycle complete (narrative deferred to Imagination result)");
     }
 
@@ -121,6 +129,9 @@ private:
 
         ELLE_INFO("Dream narrative (from Imagination, overall=%.2f): %.100s...",
                   overall, narrative.c_str());
+
+        ElleDB::RecordMetric("dream_cycles_completed", 1.0);
+        ElleDB::RecordMetric("dream_last_overall_score", overall);
 
         auto store = ElleIPCMessage::Create(IPC_MEMORY_STORE, SVC_DREAM, SVC_MEMORY);
         store.SetStringPayload("[Dream] " + narrative);

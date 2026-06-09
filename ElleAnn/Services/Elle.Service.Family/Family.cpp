@@ -27,8 +27,8 @@ public:
 
 protected:
     bool OnStart() override {
-        EnsureSchema();
-        ComputeRootPaths();
+        if (!EnsureSchema()) return false;
+        if (!ComputeRootPaths()) return false;
 
         uint32_t tickMs = (uint32_t)ElleConfig::Instance().GetInt("family.tick_ms", 30000);
         SetTickInterval(tickMs);
@@ -88,7 +88,7 @@ private:
     fs::path m_pregnanciesRoot;
     fs::path m_childrenRoot;
 
-    void ComputeRootPaths() {
+    bool ComputeRootPaths() {
 
         wchar_t buf[MAX_PATH];
         GetModuleFileNameW(nullptr, buf, MAX_PATH);
@@ -101,12 +101,23 @@ private:
 
         std::error_code ec;
         fs::create_directories(m_pregnanciesRoot, ec);
+        if (ec) {
+            ELLE_ERROR("Family: failed to create pregnancies root '%s': %s",
+                       m_pregnanciesRoot.u8string().c_str(), ec.message().c_str());
+            return false;
+        }
         fs::create_directories(m_childrenRoot,    ec);
+        if (ec) {
+            ELLE_ERROR("Family: failed to create children root '%s': %s",
+                       m_childrenRoot.u8string().c_str(), ec.message().c_str());
+            return false;
+        }
+        return true;
     }
 
-    void EnsureSchema() {
+    bool EnsureSchema() {
         auto& sql = ElleSQLPool::Instance();
-        sql.Exec(
+        if (!sql.Exec(
             "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
             "  JOIN sys.schemas s ON s.schema_id = t.schema_id "
             "  WHERE t.name = 'family_pregnancies' AND s.name = 'dbo') "
@@ -120,8 +131,11 @@ private:
             "  snapshot_path NVARCHAR(512) NULL,"
             "  status       NVARCHAR(32) NOT NULL DEFAULT 'gestating',"
             "  child_id     BIGINT NULL"
-            ");");
-        sql.Exec(
+            ");")) {
+            ELLE_ERROR("Family: family_pregnancies bootstrap failed");
+            return false;
+        }
+        if (!sql.Exec(
             "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
             "  JOIN sys.schemas s ON s.schema_id = t.schema_id "
             "  WHERE t.name = 'family_children' AND s.name = 'dbo') "
@@ -134,9 +148,12 @@ private:
             "  process_id   INT NULL,"
             "  born_ms      BIGINT NOT NULL,"
             "  status       NVARCHAR(32) NOT NULL DEFAULT 'alive'"
-            ");");
+            ");")) {
+            ELLE_ERROR("Family: family_children bootstrap failed");
+            return false;
+        }
 
-        sql.Exec(
+        if (!sql.Exec(
             "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
             "  JOIN sys.schemas s ON s.schema_id = t.schema_id "
             "  WHERE t.name = 'family_child_processes' AND s.name = 'dbo') "
@@ -148,7 +165,11 @@ private:
             "  process_id   INT NOT NULL,"
             "  spawned_ms   BIGINT NOT NULL,"
             "  status       NVARCHAR(32) NOT NULL DEFAULT 'alive'"
-            ");");
+            ");")) {
+            ELLE_ERROR("Family: family_child_processes bootstrap failed");
+            return false;
+        }
+        return true;
     }
 
     int64_t CreatePregnancy(int64_t bornMs, int gestDays,

@@ -46,6 +46,7 @@
     <ClInclude Include="FrameLibrary.h" />
     <ClInclude Include="InflectionTables.h" />
     <ClInclude Include="SlotPlanner.h" />
+    <ClInclude Include="core\SlotSpecParser.h" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\_Shared\ElleCore.Shared.vcxproj">

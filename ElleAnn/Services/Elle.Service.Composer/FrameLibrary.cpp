@@ -1,4 +1,5 @@
 #include "FrameLibrary.h"
+#include "core/SlotSpecParser.h"
 #include "../_Shared/ElleSQLConn.h"
 #include "../_Shared/ElleLogger.h"
 #include <algorithm>
@@ -36,20 +37,11 @@ bool FrameLibrary::Load() {
 }
 
 float FrameLibrary::Score(const ComposerFrame& f) const {
-    float s = f.weight;
-
-    // Recency penalty: exponential decay, half-life 5 minutes.
-    if (f.lastUsedMs > 0) {
-        using namespace std::chrono;
-        int64_t nowMs = duration_cast<milliseconds>(
-            system_clock::now().time_since_epoch()).count();
-        double elapsedSec = static_cast<double>(nowMs - f.lastUsedMs) / 1000.0;
-        double halfLife   = 300.0;
-        double penalty    = std::pow(0.5, elapsedSec / halfLife);
-        s *= static_cast<float>(1.0 - 0.6 * penalty);
-    }
-
-    return s;
+    using namespace std::chrono;
+    int64_t nowMs = duration_cast<milliseconds>(
+        system_clock::now().time_since_epoch()).count();
+    return elle::composer::core::ScoreFrameByRecency(
+        f.weight, f.lastUsedMs, nowMs);
 }
 
 const ComposerFrame* FrameLibrary::Pick(const std::string& kind,
