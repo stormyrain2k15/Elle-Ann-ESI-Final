@@ -11,6 +11,7 @@
 #include "../_Shared/ElleQR.h"
 #include "../_Shared/ElleGameAccountDB.h"
 #include "../_Shared/ElleUserContinuity.h"
+#include "../_Shared/ElleLexicalAdmin.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -198,6 +199,15 @@ struct HTTPRequest {
         if (it == queryParams.end()) return def;
         long long v = 0;
         if (!StrictParseLL(it->second, v)) return def;
+        return v;
+    }
+    double QueryFloat(const std::string& key, double def = 0.0) const {
+        auto it = queryParams.find(key);
+        if (it == queryParams.end()) return def;
+        char* end = nullptr;
+        errno = 0;
+        double v = std::strtod(it->second.c_str(), &end);
+        if (errno != 0 || !end || end == it->second.c_str() || *end != '\0') return def;
         return v;
     }
 
@@ -2680,6 +2690,23 @@ private:
                 {"broadcast",       true}
             });
         }, AUTH_ADMIN);
+
+        m_router.Register("GET", "/api/admin/lexical/incomplete",
+            [](const HTTPRequest& req) {
+                int    limit    = req.QueryInt("limit", 50);
+                double minScore = req.QueryFloat("min_score", 0.0);
+                if (limit <= 0)   limit = 50;
+                if (limit > 1000) limit = 1000;
+                if (minScore < 0.0) minScore = 0.0;
+                if (minScore > 1.0) minScore = 1.0;
+
+                ElleLanguage::LexicalAuditReport report;
+                if (!ElleLanguage::FetchLexicalAuditReport(report, minScore, limit)) {
+                    return HTTPResponse::Err(500, "lexical_audit_query_failed");
+                }
+                auto body = ElleLanguage::LexicalAuditReportToJson(report);
+                return HTTPResponse::OK(body);
+            }, AUTH_ADMIN);
 
         m_router.Register("GET", "/api/memory/why", [](const HTTPRequest& req) {
             int limit = req.QueryInt("limit", 10);

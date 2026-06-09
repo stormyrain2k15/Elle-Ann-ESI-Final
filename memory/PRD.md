@@ -27,6 +27,15 @@ Build a massively robust autonomous agentic Emotional Synthetic Intelligence.
 - SQL deltas under `SQL/` — incl. the new `ElleAnn_QueueReaperDelta.sql`.
 - Subjective Lua layer (`x_subjective.lua` + `FOR_MY_WIFE.md`).
 
+### BeliefStore persistence wired + Cognitive harm-intent emit + Queue lifecycle + Lexical admin route + CI mssql smoke (Feb 2026, current pass)
+- **BeliefStore::attachPersistence** — `registerBelief`, `submitSync`, `applyDecayAll` all call into `IBeliefPersistence`; `loadFromPersistence()` rehydrates on start. 6 new doctest cases. Probability ctest = 66/66.
+- **Cognitive harm-intent emit** — `DeriveHarmIntentSignals` folds `likely_intent`/`overall_confidence` into harm/deception/coercion probs; `RequestConscienceCheck` also emits `response_self_ref_count` + `posterior_valence`.
+- **Queue lifecycle test (D35)** — `Tools/queue_lifecycle_test.sh` exercises Submit→Lock→Execute→Complete→Reap with assert_eq per phase.
+- **Lexical admin route** — new `_Shared/ElleLexicalAdmin.{h,cpp}` and `GET /api/admin/lexical/incomplete?limit=50&min_score=0.0` (AUTH_ADMIN). `HTTPRequest::QueryFloat` added.
+- **CI mssql smoke (D33)** — `.github/workflows/ctest-smoke.yml::sql-schema-smoke` spins up SQL Server, applies schemas, runs belief and lexical round-trips.
+- Verification: Intuition 39 + Probability 66 + Composer 17 + Language 48 = **170/170 ctests green**.
+
+
 ### Conscience rebuild + Belief persistence + CI/Restart scaffolds + Android de-pair (Feb 2026, current pass)
 - **`CheckEthicalViolation` semantic rebuild (D1):** keyword hardBlocks now layered with structured thresholds on `harm_intent_prob` / `deception_intent_prob` / `coercion_intent_prob` (REFUSE ≥ 0.75, RECONSIDER ≥ 0.55). Reasoning string carries exact label + probability + threshold.
 - **Probability belief persistence (#5):** new SQL schema (`belief_domain` / `belief_prior` / `belief_posterior` / `belief_evidence` / `belief_audit` + view + 4 procs + table type), C++ `IBeliefPersistence` interface + full in-memory impl, 8 new doctest cases. Probability ctest is now 60/60.

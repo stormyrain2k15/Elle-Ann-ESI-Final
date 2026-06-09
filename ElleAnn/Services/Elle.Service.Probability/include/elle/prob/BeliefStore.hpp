@@ -1,6 +1,7 @@
 #pragma once
 
 #include "elle/prob/BayesianUpdater.hpp"
+#include "elle/prob/BeliefPersistence.hpp"
 #include "elle/prob/Types.hpp"
 
 #include <atomic>
@@ -64,6 +65,10 @@ public:
 
     void flush();
 
+    void attachPersistence(std::shared_ptr<IBeliefPersistence> backend);
+
+    std::size_t loadFromPersistence();
+
 private:
 
     void applyUpdateLocked(const std::string& domain,
@@ -90,6 +95,9 @@ private:
     std::mutex                m_decayMutex;
 
     BayesianUpdater           m_updater;
+
+    std::shared_ptr<IBeliefPersistence> m_persistence;
+    mutable std::mutex                  m_persistenceMutex;
 };
 
 } }

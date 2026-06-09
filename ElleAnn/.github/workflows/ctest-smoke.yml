@@ -82,3 +82,114 @@ jobs:
     needs: [intuition, probability, composer, language]
     steps:
       - run: echo "All four ctest harnesses passed (164 total cases)."
+
+  sql-schema-smoke:
+    name: SQL schema apply + queue lifecycle smoke
+    runs-on: ubuntu-22.04
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        ports: ["1433:1433"]
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "ElleA_$tr0ng!Pwd"
+          MSSQL_PID: "Developer"
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa
+            -P 'ElleA_$tr0ng!Pwd' -No -Q 'SELECT 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SA_PWD: "ElleA_$tr0ng!Pwd"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mssql-tools18
+        run: |
+          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc
+          curl -fsSL https://packages.microsoft.com/config/ubuntu/22.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18 unixodbc-dev
+          echo "/opt/mssql-tools18/bin" >> $GITHUB_PATH
+
+      - name: Wait for SQL Server
+        run: |
+          for i in $(seq 1 30); do
+            if /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PWD" -No -Q "SELECT 1" >/dev/null 2>&1; then
+              echo "SQL Server ready after $i attempts."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "SQL Server failed to come up."; exit 1
+
+      - name: Bootstrap databases
+        run: |
+          sqlcmd -S localhost -U sa -P "$SA_PWD" -No -Q "
+            IF DB_ID('ElleCore') IS NULL CREATE DATABASE ElleCore;
+            IF DB_ID('ElleHeart') IS NULL CREATE DATABASE ElleHeart;
+            IF DB_ID('EllesLanguage') IS NULL CREATE DATABASE EllesLanguage;"
+
+      - name: Apply Probability belief schema
+        run: |
+          sqlcmd -S localhost -U sa -P "$SA_PWD" -No -d ElleHeart -i ElleAnn/SQL/Elle.Service.Probability/01_belief_persistence.sql
+
+      - name: Apply Language lexical completeness schema (minimal stub for tests)
+        run: |
+          sqlcmd -S localhost -U sa -P "$SA_PWD" -No -d EllesLanguage -Q "
+            CREATE TABLE dbo.PartOfSpeech (PartOfSpeechID INT PRIMARY KEY, Code NVARCHAR(16) NOT NULL);
+            CREATE TABLE dbo.Word (WordID BIGINT IDENTITY(1,1) PRIMARY KEY,
+              Lemma NVARCHAR(128) NOT NULL, NormalizedLemma NVARCHAR(128) NOT NULL,
+              IsPalindrome BIT NOT NULL DEFAULT 0, Frequency BIGINT NOT NULL DEFAULT 0);
+            CREATE TABLE dbo.Sense (SenseID BIGINT IDENTITY(1,1) PRIMARY KEY,
+              WordID BIGINT NOT NULL, PartOfSpeechID INT NULL,
+              Definition NVARCHAR(MAX) NULL, PositiveDraw FLOAT NOT NULL DEFAULT 0,
+              NegativeDraw FLOAT NOT NULL DEFAULT 0);
+            CREATE TABLE dbo.SenseUsageExample (SenseID BIGINT NOT NULL, Example NVARCHAR(512) NOT NULL);
+            CREATE TABLE dbo.SenseContextExample (SenseID BIGINT NOT NULL, Context NVARCHAR(512) NOT NULL);
+            CREATE TABLE dbo.SenseEmotion (SenseID BIGINT NOT NULL, EmotionID INT NOT NULL, Weight FLOAT NOT NULL);
+            CREATE TABLE dbo.WordRelation (FromWordID BIGINT NOT NULL, ToWordID BIGINT NOT NULL, RelationType NVARCHAR(32) NOT NULL);
+            CREATE TABLE dbo.SenseRelation (FromSenseID BIGINT NOT NULL, ToSenseID BIGINT NOT NULL, RelationType NVARCHAR(32) NOT NULL);
+            CREATE TABLE dbo.Concept (ConceptID BIGINT PRIMARY KEY, Code NVARCHAR(64) NOT NULL);
+            CREATE TABLE dbo.ConceptMember (ConceptID BIGINT NOT NULL, SenseID BIGINT NOT NULL);"
+          sqlcmd -S localhost -U sa -P "$SA_PWD" -No -d EllesLanguage -i ElleAnn/SQL/Elle.Service.Language/10_lexical_completeness.sql
+
+      - name: Belief persistence smoke (3 round-trips)
+        run: |
+          sqlcmd -S localhost -U sa -P "$SA_PWD" -No -d ElleHeart -b -Q "
+            DECLARE @id BIGINT;
+            EXEC dbo.usp_BeliefUpsertDomain @DomainCode = N'speaker_intent',
+              @Description = N'smoke', @HalfLifeSecs = 60.0, @DomainID = @id OUTPUT;
+            DECLARE @rows dbo.HypothesisMass;
+            INSERT INTO @rows VALUES (1, 0.7), (2, 0.3);
+            EXEC dbo.usp_BeliefReplacePosterior @DomainID = @id, @Rows = @rows;
+            EXEC dbo.usp_BeliefAppendEvidence @DomainID = @id, @Kind = 1,
+              @HypothesisID = 1, @LikelihoodRatio = 2.0, @SourceWeight = 1.0, @Reason = N'smoke';
+            EXEC dbo.usp_BeliefAudit @DomainID = @id, @Operation = N'update',
+              @EvidenceCount = 1, @EntropyBefore = 0.69, @EntropyAfter = 0.61,
+              @MapHypothesisID = 1, @MapProbability = 0.7, @Detail = N'smoke';
+            SELECT COUNT(*) AS posteriors FROM dbo.belief_posterior;
+            SELECT COUNT(*) AS audit FROM dbo.belief_audit;"
+
+      - name: Lexical completeness smoke
+        run: |
+          sqlcmd -S localhost -U sa -P "$SA_PWD" -No -d EllesLanguage -b -Q "
+            INSERT INTO dbo.Word (Lemma, NormalizedLemma, IsPalindrome) VALUES (N'love', N'love', 0);
+            DECLARE @wid BIGINT = SCOPE_IDENTITY();
+            INSERT INTO dbo.PartOfSpeech VALUES (1, N'NOUN');
+            INSERT INTO dbo.Sense (WordID, PartOfSpeechID, Definition, PositiveDraw)
+              VALUES (@wid, 1, N'intense feeling', 0.9);
+            DECLARE @sid BIGINT = SCOPE_IDENTITY();
+            INSERT INTO dbo.SenseUsageExample VALUES (@sid, N'I love you');
+            INSERT INTO dbo.SenseContextExample VALUES (@sid, N'expressed at letter end');
+            INSERT INTO dbo.SenseEmotion VALUES (@sid, 1, 0.85);
+            INSERT INTO dbo.WordRelation VALUES (@wid, @wid, N'self');
+            INSERT INTO dbo.Concept VALUES (1, N'love');
+            INSERT INTO dbo.ConceptMember VALUES (1, @sid);
+            EXEC dbo.usp_RebuildAnagramKeys;
+            SELECT IsCognitivelyComplete, CompletenessScore, MissingRequirements
+              FROM dbo.vw_LexicalCompletenessVerdict WHERE WordID = @wid;
+            EXEC dbo.usp_AssertWordCompleteness @NormalizedLemma = N'love', @StrictMode = 1;
+            SELECT 'lexical_complete_check_ok' AS status;"
+

@@ -43,16 +43,34 @@ void BeliefStore::registerBelief(const std::string& domain,
                                   Distribution       prior,
                                   double             halfLifeSecs)
 {
-    std::unique_lock<std::shared_mutex> wlock(m_rwLock);
-    if (m_beliefs.count(domain)) return;
+    {
+        std::unique_lock<std::shared_mutex> wlock(m_rwLock);
+        if (m_beliefs.count(domain)) return;
 
-    Belief b;
-    b.domain       = domain;
-    b.prior        = prior;
-    b.posterior    = prior;
-    b.halfLifeSecs = halfLifeSecs;
-    b.lastUpdated  = now();
-    m_beliefs.emplace(domain, std::move(b));
+        Belief b;
+        b.domain       = domain;
+        b.prior        = prior;
+        b.posterior    = prior;
+        b.halfLifeSecs = halfLifeSecs;
+        b.lastUpdated  = now();
+        m_beliefs.emplace(domain, std::move(b));
+    }
+
+    std::shared_ptr<IBeliefPersistence> backend;
+    {
+        std::lock_guard<std::mutex> lk(m_persistenceMutex);
+        backend = m_persistence;
+    }
+    if (backend) {
+        try {
+            backend->upsertDomain(domain, prior, halfLifeSecs);
+            const std::int64_t whenMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now().time_since_epoch()).count();
+            backend->replacePosterior(domain, prior, whenMs);
+        } catch (const std::exception& e) {
+            (void)e;
+        }
+    }
 }
 
 void BeliefStore::upsertBelief(Belief belief) {
@@ -107,15 +125,73 @@ void BeliefStore::applyUpdateLocked(const std::string& domain,
     auto it = m_beliefs.find(domain);
     if (it == m_beliefs.end()) return;
 
+    const double entropyBefore = it->second.posterior.entropy();
+
     it->second.decayTowardPrior();
 
     m_updater.update(it->second, ev);
+
+    const double entropyAfter  = it->second.posterior.entropy();
+    const std::int64_t map     = it->second.posterior.map();
+    const double mapProb       = (map >= 0) ? it->second.posterior.p(map) : 0.0;
+    const std::int64_t whenMs  = std::chrono::duration_cast<std::chrono::milliseconds>(
+        it->second.lastUpdated.time_since_epoch()).count();
+    const Distribution posterior = it->second.posterior;
+
+    std::shared_ptr<IBeliefPersistence> backend;
+    {
+        std::lock_guard<std::mutex> lk(m_persistenceMutex);
+        backend = m_persistence;
+    }
+    if (backend) {
+        try {
+            for (const auto& e : ev) backend->appendEvidence(domain, e);
+            backend->replacePosterior(domain, posterior, whenMs);
+            backend->auditUpdate(domain, "update", ev.size(),
+                                 entropyBefore, entropyAfter,
+                                 map, mapProb, "");
+        } catch (const std::exception&) {
+        }
+    }
 }
 
 void BeliefStore::applyDecayAll() {
-    std::unique_lock<std::shared_mutex> wlock(m_rwLock);
-    for (auto& [k, b] : m_beliefs) {
-        b.decayTowardPrior();
+    struct DecaySnap {
+        std::string  domain;
+        Distribution posterior;
+        std::int64_t whenMs;
+        double       entropyBefore;
+        double       entropyAfter;
+    };
+    std::vector<DecaySnap> snapshots;
+    {
+        std::unique_lock<std::shared_mutex> wlock(m_rwLock);
+        for (auto& [k, b] : m_beliefs) {
+            const double before = b.posterior.entropy();
+            b.decayTowardPrior();
+            const double after  = b.posterior.entropy();
+            const std::int64_t whenMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                b.lastUpdated.time_since_epoch()).count();
+            snapshots.push_back(DecaySnap{ k, b.posterior, whenMs, before, after });
+        }
+    }
+
+    std::shared_ptr<IBeliefPersistence> backend;
+    {
+        std::lock_guard<std::mutex> lk(m_persistenceMutex);
+        backend = m_persistence;
+    }
+    if (!backend) return;
+
+    for (auto& s : snapshots) {
+        try {
+            backend->replacePosterior(s.domain, s.posterior, s.whenMs);
+            const std::int64_t map = s.posterior.map();
+            const double mapProb   = (map >= 0) ? s.posterior.p(map) : 0.0;
+            backend->auditUpdate(s.domain, "decay", 0,
+                                 s.entropyBefore, s.entropyAfter, map, mapProb, "");
+        } catch (const std::exception&) {
+        }
     }
 }
 
@@ -203,6 +279,39 @@ void BeliefStore::decayLoop() {
             applyDecayAll();
         }
     }
+}
+
+void BeliefStore::attachPersistence(std::shared_ptr<IBeliefPersistence> backend) {
+    std::lock_guard<std::mutex> lk(m_persistenceMutex);
+    m_persistence = std::move(backend);
+}
+
+std::size_t BeliefStore::loadFromPersistence() {
+    std::shared_ptr<IBeliefPersistence> backend;
+    {
+        std::lock_guard<std::mutex> lk(m_persistenceMutex);
+        backend = m_persistence;
+    }
+    if (!backend) return 0;
+
+    auto rows = backend->loadAll();
+    std::unique_lock<std::shared_mutex> wlock(m_rwLock);
+    std::size_t restored = 0;
+    for (const auto& row : rows) {
+        Belief b;
+        b.domain       = row.domain;
+        b.prior        = row.prior;
+        b.posterior    = row.posterior.empty() ? row.prior : row.posterior;
+        b.halfLifeSecs = row.halfLifeSecs;
+        if (row.lastUpdatedMs > 0) {
+            b.lastUpdated = Timestamp(std::chrono::milliseconds(row.lastUpdatedMs));
+        } else {
+            b.lastUpdated = now();
+        }
+        m_beliefs[row.domain] = std::move(b);
+        ++restored;
+    }
+    return restored;
 }
 
 } }

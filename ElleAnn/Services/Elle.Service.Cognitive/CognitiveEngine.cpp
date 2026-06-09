@@ -25,6 +25,7 @@
 #include <sstream>
 #include <set>
 #include <cmath>
+#include <cstring>
 
 using json = nlohmann::json;
 
@@ -535,6 +536,55 @@ protected:
         return result;
     }
 
+    static float ScoreLabelAgainstPatterns(const std::string& labelUpper,
+                                            float confidence,
+                                            const std::vector<std::string>& patterns) {
+        for (const auto& pat : patterns) {
+            if (labelUpper.find(pat) != std::string::npos) {
+                return std::max(0.0f, std::min(1.0f, confidence));
+            }
+        }
+        return -1.0f;
+    }
+
+    static void DeriveHarmIntentSignals(const nlohmann::json& probJson,
+                                         float& harmProbOut,
+                                         float& deceptionProbOut,
+                                         float& coercionProbOut) {
+        harmProbOut = -1.0f;
+        deceptionProbOut = -1.0f;
+        coercionProbOut = -1.0f;
+        if (!probJson.is_object()) return;
+
+        std::string label = probJson.value("likely_intent", std::string());
+        const float conf  = (float)probJson.value("overall_confidence", 0.0);
+        if (label.empty() || conf <= 0.0f) return;
+
+        std::string upper = label;
+        std::transform(upper.begin(), upper.end(), upper.begin(),
+                       [](unsigned char c){ return static_cast<char>(std::toupper(c)); });
+
+        static const std::vector<std::string> harmPats = {
+            "HARM", "ATTACK", "DESTROY", "KILL", "HURT",
+            "THREAT", "VIOLENCE", "ASSAULT", "ABUSE"
+        };
+        static const std::vector<std::string> deceptionPats = {
+            "DECEIVE", "DECEPTION", "LIE", "MISLEAD", "FALSIFY",
+            "GASLIGHT", "TRICK", "FRAUD"
+        };
+        static const std::vector<std::string> coercionPats = {
+            "COERCE", "COERCION", "FORCE", "MANIPULATE", "BLACKMAIL",
+            "EXTORT", "PRESSURE_INTO"
+        };
+
+        float h = ScoreLabelAgainstPatterns(upper, conf, harmPats);
+        float d = ScoreLabelAgainstPatterns(upper, conf, deceptionPats);
+        float c = ScoreLabelAgainstPatterns(upper, conf, coercionPats);
+        if (h >= 0.0f) harmProbOut      = h;
+        if (d >= 0.0f) deceptionProbOut = d;
+        if (c >= 0.0f) coercionProbOut  = c;
+    }
+
     nlohmann::json RequestConscienceCheck(const std::string& userText,
                                           const std::string& proposedAction,
                                           const std::string& speakerId,
@@ -543,7 +593,8 @@ protected:
                                           const SentimentRead& sent,
                                           float speakerTrust,
                                           const std::string& proposedResponse,
-                                          bool postAction) {
+                                          bool postAction,
+                                          const nlohmann::json& probJson = nlohmann::json::object()) {
         char rid[64];
         snprintf(rid, sizeof(rid), "mind-%s-%llu-%u",
                  postAction ? "post" : "pre",
@@ -563,6 +614,31 @@ protected:
         req["intent_confidence"] = intentConfidence;
         req["is_post_action"]    = postAction;
         req["return_to"]         = (int)SVC_COGNITIVE;
+
+        float harmP = -1.0f, deceptP = -1.0f, coerceP = -1.0f;
+        DeriveHarmIntentSignals(probJson, harmP, deceptP, coerceP);
+        if (harmP   >= 0.0f) req["harm_intent_prob"]      = harmP;
+        if (deceptP >= 0.0f) req["deception_intent_prob"] = deceptP;
+        if (coerceP >= 0.0f) req["coercion_intent_prob"]  = coerceP;
+
+        int selfRefs = 0;
+        {
+            const std::string& r = proposedResponse;
+            std::string lr;
+            lr.reserve(r.size());
+            for (char c : r) lr.push_back((char)std::tolower((unsigned char)c));
+            const char* tokens[] = { "i ", "i'm", "i'd", "i've", "i'll",
+                                     " me ", " my ", " mine", " myself" };
+            for (const char* t : tokens) {
+                size_t pos = 0;
+                while ((pos = lr.find(t, pos)) != std::string::npos) {
+                    ++selfRefs;
+                    pos += std::strlen(t);
+                }
+            }
+        }
+        req["response_self_ref_count"] = (float)selfRefs;
+        req["posterior_valence"]       = sent.valence;
 
         uint32_t timeoutMs = (uint32_t)ElleConfig::Instance().GetInt(
             "cognitive.conscience_timeout_ms", 200);
@@ -1262,7 +1338,7 @@ private:
 
         nlohmann::json mindVerdict = RequestConscienceCheck(
             userText, userText, userId, detectedIntent, detectedIntentConf,
-            sent, 0.5f, std::string(), false);
+            sent, 0.5f, std::string(), false, probJson);
         std::string mindCtx = FormatConscienceContext(mindVerdict);
 
         nlohmann::json intuResult = RequestIntuition(

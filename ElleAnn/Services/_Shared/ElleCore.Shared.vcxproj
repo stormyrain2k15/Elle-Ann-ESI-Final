@@ -76,6 +76,7 @@
     <ClCompile Include="ElleDB_Content.cpp" />
     <ClCompile Include="ElleGameAccountDB.cpp" />
     <ClCompile Include="ElleUserContinuity.cpp" />
+    <ClCompile Include="ElleLexicalAdmin.cpp" />
     <ClCompile Include="ElleTypes.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -96,6 +97,7 @@
     <ClInclude Include="ElleLuaScalarReader.h" />
     <ClInclude Include="ElleGameAccountDB.h" />
     <ClInclude Include="ElleUserContinuity.h" />
+    <ClInclude Include="ElleLexicalAdmin.h" />
     <ClInclude Include="ElleTypes.h" />
     <ClInclude Include="ElleWait.h" />
     <ClInclude Include="json.hpp" />

@@ -1,3 +1,40 @@
+## 2026-02 — BeliefStore persistence wired + Cognitive harm-intent emit + Queue lifecycle + Lexical admin route + CI mssql smoke
+
+### `BeliefStore::attachPersistence` wiring (closes #5 wire-up)
+
+`BeliefStore` now holds `std::shared_ptr<IBeliefPersistence>` and calls into it on every state-changing path: `registerBelief` writes `upsertDomain` + seed `replacePosterior`; `submitSync` writes one `appendEvidence` per row + `replacePosterior` + `auditUpdate(operation="update")` with entropy before/after, MAP hypothesis, MAP probability; `applyDecayAll` writes `replacePosterior` + `auditUpdate(operation="decay")` per domain; `loadFromPersistence()` rehydrates all domains on start (Timestamp converted from int64 ms). 6 new doctest cases. Probability ctest now **66/66**.
+
+### Cognitive harm-intent emit path (closes D1 end-to-end)
+
+`CognitiveEngine::DeriveHarmIntentSignals` folds Probability's `likely_intent` + `overall_confidence` into three scalars via case-insensitive label-pattern matching across harm/deception/coercion vocabularies. `RequestConscienceCheck` now also computes `response_self_ref_count` (count of "I / I'm / I'd / I've / I'll / me / my / mine / myself" tokens) and emits `posterior_valence` from `SentimentRead.valence`. The full set of structured fields MindManager's rebuild parses is now end-to-end live.
+
+### Queue lifecycle test (closes D35)
+
+`Tools/queue_lifecycle_test.sh` drives `dbo.IntentQueue` through Submit → Lock (PENDING→PROCESSING with `ProcessingMs` stamp) → Complete (`sp_SubmitIntentResponse` to COMPLETED with `CompletedMs` + `Response`) → Reap (stale row + timeout sweep to TIMED-OUT). Five `assert_eq` checks per phase, cleanup trap removes canary rows.
+
+### Lexical Completeness admin route (drop-in without HTTP split)
+
+New `_Shared/ElleLexicalAdmin.{h,cpp}` ships `FetchLexicalAuditReport(report, minScore, limit)` and `LexicalAuditReportToJson(report)`. New `HTTPRequest::QueryFloat`. New route `GET /api/admin/lexical/incomplete?limit=50&min_score=0.0` (AUTH_ADMIN) returns `{ rows, summary }`. `_Shared/ElleCore.Shared.vcxproj` updated.
+
+### CI SQL Server smoke (closes D33, partial D34)
+
+`.github/workflows/ctest-smoke.yml` now also runs `sql-schema-smoke`: spins up `mcr.microsoft.com/mssql/server:2022-latest`, installs `mssql-tools18`, applies Probability belief schema + Language lexical-completeness schema, runs three belief round-trips and a `usp_AssertWordCompleteness @StrictMode=1` smoke for `love`.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition | 39/39 PASS |
+| Probability | 66/66 PASS (6 new this pass) |
+| Composer | 17/17 PASS |
+| Language | 48/48 PASS |
+| **Total** | **170/170 PASS** |
+
+Zero regressions. Tracking matrix updated row-by-row.
+
+---
+
+
 ## 2026-02 — Conscience structured rebuild + Probability belief persistence + CI/Restart scaffolds + Android de-pair
 
 ### `CheckEthicalViolation` semantic rebuild (audit D1) — closed
