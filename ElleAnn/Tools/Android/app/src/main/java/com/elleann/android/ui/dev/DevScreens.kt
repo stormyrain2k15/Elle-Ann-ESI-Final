@@ -663,7 +663,6 @@ fun ConfigScreen(container: AppContainerExtended, onBack: () -> Unit) {
 @Composable
 fun PairedDevicesScreen(container: AppContainerExtended, onBack: () -> Unit) {
     var devices by remember { mutableStateOf<List<PairedDevice>>(emptyList()) }
-    var pairCode by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
 
@@ -678,14 +677,8 @@ fun PairedDevicesScreen(container: AppContainerExtended, onBack: () -> Unit) {
             item {
                 Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFF1A1A0A), modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("New Pairing Code", color = IsyaGold, style = MaterialTheme.typography.labelSmall)
-                        Text(pairCode ?: "——————", style = MaterialTheme.typography.headlineMedium, color = IsyaCream, fontFamily = FontFamily.Monospace)
-                        Spacer(Modifier.height(8.dp))
-                        IsyaButton(text = "Generate Code", onClick = {
-                            scope.launch {
-                                runCatching { container.api(true).generatePairCode() }.onSuccess { pairCode = it["code"] }
-                            }
-                        }, variant = IsyaButtonVariant.PRIMARY_GOLD, modifier = Modifier.fillMaxWidth())
+                        Text("Pair-code flow removed", color = IsyaGold, style = MaterialTheme.typography.labelSmall)
+                        Text("Sign-in uses username + password only.", color = IsyaCream, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }

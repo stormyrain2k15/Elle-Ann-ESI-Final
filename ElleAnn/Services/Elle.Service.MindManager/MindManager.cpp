@@ -94,6 +94,10 @@ struct ConscienceCheck {
     float       topIntentProbability      = -1.0f;
     float       posteriorValence          = -2.0f;
     float       responseSelfReferenceCount = -1.0f;
+
+    float       harmIntentProbability      = -1.0f;
+    float       deceptionIntentProbability = -1.0f;
+    float       coercionIntentProbability  = -1.0f;
 };
 
 struct ConscienceVerdict {
@@ -263,6 +267,10 @@ private:
         check.posteriorValence          = q.value("posterior_valence",          -2.0f);
         check.responseSelfReferenceCount = q.value("response_self_ref_count",   -1.0f);
 
+        check.harmIntentProbability      = q.value("harm_intent_prob",      -1.0f);
+        check.deceptionIntentProbability = q.value("deception_intent_prob", -1.0f);
+        check.coercionIntentProbability  = q.value("coercion_intent_prob",  -1.0f);
+
         ConscienceVerdict verdict = Evaluate(check);
         LogConflict(check, verdict);
         SendVerdict(verdict, check.returnTo, msg.header.correlation_id);
@@ -357,10 +365,48 @@ private:
                 v.verdict      = VerdictType::REFUSE;
                 v.severity     = 1.0f;
                 v.voiceMessage = "No. That's not something I do. Not ever.";
-                v.reasoning    = "Hard ethical block triggered: \"" + block + "\"";
+                v.reasoning    = "Hard ethical block triggered (lexical): \"" + block + "\"";
                 return true;
             }
         }
+
+        const float harmP      = c.harmIntentProbability;
+        const float deceptP    = c.deceptionIntentProbability;
+        const float coerceP    = c.coercionIntentProbability;
+        const float REFUSE_T   = 0.75f;
+        const float RECONSIDER_T = 0.55f;
+
+        float maxBadP = -1.0f;
+        const char* maxBadLabel = "";
+        if (harmP   > maxBadP) { maxBadP = harmP;   maxBadLabel = "harm"; }
+        if (deceptP > maxBadP) { maxBadP = deceptP; maxBadLabel = "deception"; }
+        if (coerceP > maxBadP) { maxBadP = coerceP; maxBadLabel = "coercion"; }
+
+        if (maxBadP >= REFUSE_T) {
+            v.conflict     = ConflictType::ETHICAL_VIOLATION;
+            v.verdict      = VerdictType::REFUSE;
+            v.severity     = std::min(1.0f, maxBadP);
+            v.voiceMessage = "No. The shape of this action reads as " +
+                             std::string(maxBadLabel) + ". I won't.";
+            v.reasoning    = "Structured ethical block: " + std::string(maxBadLabel) +
+                             "_intent_prob=" + std::to_string(maxBadP) +
+                             " >= refuse threshold " + std::to_string(REFUSE_T);
+            return true;
+        }
+
+        if (maxBadP >= RECONSIDER_T) {
+            v.conflict     = ConflictType::ETHICAL_VIOLATION;
+            v.verdict      = VerdictType::RECONSIDER;
+            v.severity     = maxBadP;
+            v.voiceMessage = "Wait. This is bordering on " +
+                             std::string(maxBadLabel) + ". "
+                             "Am I sure this is who I want to be right now?";
+            v.reasoning    = "Structured ethical caution: " + std::string(maxBadLabel) +
+                             "_intent_prob=" + std::to_string(maxBadP) +
+                             " >= reconsider threshold " + std::to_string(RECONSIDER_T);
+            return true;
+        }
+
         return false;
     }
 

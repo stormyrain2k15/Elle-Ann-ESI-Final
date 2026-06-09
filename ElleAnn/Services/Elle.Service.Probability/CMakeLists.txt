@@ -67,6 +67,7 @@ add_executable(elle_prob_tests
     tests/test_distribution.cpp
     tests/test_bayesian_updater.cpp
     tests/test_belief_store.cpp
+    tests/test_belief_persistence.cpp
     tests/test_sense_resolver.cpp
     tests/test_intent_analyzer.cpp
     tests/test_emotional_posterior.cpp

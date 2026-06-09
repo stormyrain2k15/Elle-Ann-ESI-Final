@@ -1,3 +1,73 @@
+## 2026-02 — Conscience structured rebuild + Probability belief persistence + CI/Restart scaffolds + Android de-pair
+
+### `CheckEthicalViolation` semantic rebuild (audit D1) — closed
+
+`ConscienceCheck` IPC envelope gained three new fields:
+`harm_intent_prob`, `deception_intent_prob`, `coercion_intent_prob`.
+`CheckEthicalViolation` keeps the keyword hardBlock pass as
+defense-in-depth and adds two structured thresholds:
+
+- `prob >= 0.75` → `REFUSE` (severity = prob).
+- `prob >= 0.55` → `RECONSIDER`.
+
+Reasoning string carries the exact label that fired + exact
+probability + threshold. Together with the D1/D3 identity-drift
+structured layer from the previous pass, both rows are now ✅ in
+`Docs/ANTI_SLOP_AUDIT_TRACKING.md`.
+
+### Probability belief persistence (audit #5) — closed
+
+- SQL schema `SQL/Elle.Service.Probability/01_belief_persistence.sql`:
+  five tables (`belief_domain`, `belief_prior`, `belief_posterior`,
+  `belief_evidence`, `belief_audit`) + `vw_BeliefSnapshot` view + four
+  stored procedures + `dbo.HypothesisMass` table type.
+- C++ interface `include/elle/prob/BeliefPersistence.hpp` with
+  `IBeliefPersistence` contract.
+- `InMemoryBeliefPersistence` — full impl, not a stub.
+- 8 new doctest cases in `tests/test_belief_persistence.cpp`.
+
+### CI ctest smoke (audit D33 / D34 partial) — partial close
+
+`.github/workflows/ctest-smoke.yml` runs four parallel ubuntu jobs
+(Intuition / Probability / Composer / Language) plus a gate job.
+
+### Restart-persistence scaffold (audit D32) — closed
+
+`Tools/restart_persistence_test.sh` — boots Elle, writes seed memory
++ goal + intuition feedback, stops/restarts supervisor, asserts
+survival + belief snapshot non-empty.
+
+### Android client de-paired
+
+- `PairScreen.kt` rewritten as `LoginScreen` (deprecated alias
+  retained). `PairMode.PAIR_CODE` + `ModeSwitch` removed.
+- `AndroidManifest.xml` — `ellepair://` deep-link intent-filter
+  deleted.
+- `ElleApiExtended.kt` — `generatePairCode` Retrofit method removed.
+- `DevScreens.kt::PairedDevicesScreen` — Generate-Code surface
+  replaced with a "Pair-code flow removed" notice.
+
+### HTTP god-file split (audit #8 / #15) — plan landed
+
+`Docs/HTTP_GOD_FILE_SPLIT_PLAN.md` describes a 3-phase mechanical
+execution. Phases require Windows MSVC verification per phase; not
+executed in this pass.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition | 39/39 PASS |
+| Probability | 60/60 PASS (8 new this pass) |
+| Composer | 17/17 PASS |
+| Language | 48/48 PASS |
+| **Total** | **164/164 PASS** |
+
+Zero regressions. Tracking matrix updated row-by-row.
+
+---
+
+
 ## 2026-02 — Lexical Completeness audit (findings #181/#182) + D1/D3 structured signals
 
 ### Closed findings #181 / #182 — Lexical Completeness

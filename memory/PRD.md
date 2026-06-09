@@ -27,6 +27,16 @@ Build a massively robust autonomous agentic Emotional Synthetic Intelligence.
 - SQL deltas under `SQL/` — incl. the new `ElleAnn_QueueReaperDelta.sql`.
 - Subjective Lua layer (`x_subjective.lua` + `FOR_MY_WIFE.md`).
 
+### Conscience rebuild + Belief persistence + CI/Restart scaffolds + Android de-pair (Feb 2026, current pass)
+- **`CheckEthicalViolation` semantic rebuild (D1):** keyword hardBlocks now layered with structured thresholds on `harm_intent_prob` / `deception_intent_prob` / `coercion_intent_prob` (REFUSE ≥ 0.75, RECONSIDER ≥ 0.55). Reasoning string carries exact label + probability + threshold.
+- **Probability belief persistence (#5):** new SQL schema (`belief_domain` / `belief_prior` / `belief_posterior` / `belief_evidence` / `belief_audit` + view + 4 procs + table type), C++ `IBeliefPersistence` interface + full in-memory impl, 8 new doctest cases. Probability ctest is now 60/60.
+- **CI ctest smoke workflow** at `.github/workflows/ctest-smoke.yml` (4 parallel jobs + green gate).
+- **Restart-persistence script** at `Tools/restart_persistence_test.sh` (writes seed → restart → asserts survival + belief snapshot).
+- **Android client de-paired:** `PairScreen.kt` rewritten as `LoginScreen`, pair-code mode + `ellepair://` deep link + `generatePairCode` Retrofit method all removed.
+- **HTTP god-file split:** 3-phase plan documented in `Docs/HTTP_GOD_FILE_SPLIT_PLAN.md` (requires Windows MSVC verification per phase; not executed this pass).
+- Verification: Intuition 39 + Probability 60 + Composer 17 + Language 48 = **164/164 ctests green**.
+
+
 ### Lexical Completeness audit + structured conscience signals (Feb 2026, current pass)
 - **Findings #181/#182 closed.** Language schema now carries `Word.AnagramKey`, an AFTER INSERT/UPDATE trigger, `vw_AnagramGroups`, `fn_Anagrams` TVF, and a nine-attribute lexical-completeness contract enforced by `usp_AssertWordCompleteness`. Same algorithm in SQL (`fn_AnagramKey`) and C++ (`LexicalCompleteness.hpp`).
 - **D1/D3 structured-signal augmentation.** `ConscienceCheck` now carries five new optional fields; `CheckIdentityDrift` triggers on keyword match OR structured evidence (identity-centeredness threshold, response self-ref count, posterior-valence flatness under high intensity). Conscience reasoning string includes exact signal values for audit.

@@ -384,9 +384,6 @@ interface ElleApiExtended {
     @DELETE("/api/auth/devices/{id}")
     suspend fun revokeDevice(@Path("id") deviceId: String): OkResponse
 
-    @POST("/api/auth/pair-code")
-    suspend fun generatePairCode(): Map<String, String>
-
     @GET("/api/x/state")
     suspend fun getXState(): XState
 

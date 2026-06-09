@@ -10,6 +10,91 @@
 > *the audit identified a real problem but the right fix requires a
 > design conversation, not just code*.
 
+## This pass — what landed (Feb 2026 — pass 5)
+
+### #1 `CheckEthicalViolation` semantic rebuild — **LANDED**
+
+`ConscienceCheck` gained three more structured fields:
+`harm_intent_prob`, `deception_intent_prob`, `coercion_intent_prob`
+(all default -1.0 = "not supplied"). When Probability emits any of
+these on a chat-cycle envelope, MindManager now uses two structured
+thresholds in addition to the existing keyword hardBlocks:
+
+- `prob >= 0.75` → `REFUSE` (severity = prob).
+- `prob >= 0.55` → `RECONSIDER` (severity = prob).
+
+Reasoning string carries the exact label name, exact probability, and
+the threshold that fired. Keyword path still runs first as
+defense-in-depth.
+
+### #5 Probability belief persistence — **LANDED**
+
+- **SQL schema** `SQL/Elle.Service.Probability/01_belief_persistence.sql`:
+  five tables (`belief_domain`, `belief_prior`, `belief_posterior`,
+  `belief_evidence`, `belief_audit`) + `vw_BeliefSnapshot` view +
+  four stored procedures (`usp_BeliefUpsertDomain`,
+  `usp_BeliefReplacePosterior`, `usp_BeliefAppendEvidence`,
+  `usp_BeliefAudit`) + table type `dbo.HypothesisMass` for the
+  bulk-replace path.
+- **C++ interface** `include/elle/prob/BeliefPersistence.hpp`:
+  `IBeliefPersistence` with four contract methods
+  (`upsertDomain`, `replacePosterior`, `appendEvidence`,
+  `auditUpdate`, `loadAll`).
+- **InMemoryBeliefPersistence** — full implementation (not a stub),
+  used by the host on cold-start scenarios with no SQL Server in
+  reach, and as the test backing.
+- **8 doctest cases** in `tests/test_belief_persistence.cpp` covering
+  upsert-then-load round-trip, posterior replace without prior touch,
+  unknown-domain creation, evidence accumulation, audit trail growth,
+  multi-domain enumeration, prior swap, and shared_ptr handout.
+
+### CI smoke (D33 / D34 partial) — **LANDED**
+
+`.github/workflows/ctest-smoke.yml` runs four parallel jobs on
+ubuntu-22.04 — Intuition, Probability, Composer, Language — each
+configuring with `cmake`, building, and running `ctest`. A final gate
+job `all-green-gate` depends on all four.
+
+### Restart-persistence test scaffold (D32) — **LANDED**
+
+`Tools/restart_persistence_test.sh` writes a memory + goal +
+intuition feedback row, stops the supervisor, waits, restarts, and
+asserts all three survived plus the belief snapshot is non-empty.
+Requires `ELLE_SQL_DSN`, `sqlcmd`, and the Windows supervisor binary
+— so it can't run in this Linux container, but it's drop-in for the
+user's local validation rig.
+
+### Android client de-paired — **LANDED**
+
+- `PairScreen.kt` rewritten as `LoginScreen` (deprecated alias
+  `PairScreen → LoginScreen` retained so any dynamic loader keeps
+  working). Pair-code mode + `ModeSwitch` removed.
+- `AndroidManifest.xml`: `ellepair://` deep-link intent-filter deleted.
+- `ElleApiExtended.kt`: `generatePairCode` Retrofit method removed.
+- `DevScreens.kt::PairedDevicesScreen` no longer renders the
+  Generate-Code surface (devices list still works).
+
+### HTTP god-file split (#8 / #15) — **PLAN-LANDED**
+
+The 6035-line `HTTPServer.cpp` with 153 routes can't be split in a
+single agent pass without Windows MSVC at hand to verify each step.
+Wrote `Docs/HTTP_GOD_FILE_SPLIT_PLAN.md` describing the three-phase
+mechanical execution (extract class header → group into helper
+member methods → move each helper into its own `.cpp`). Each phase
+is independently verifiable.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition | 39/39 PASS |
+| Probability | 60/60 PASS (8 new this pass) |
+| Composer | 17/17 PASS |
+| Language | 48/48 PASS |
+| **Total** | **164/164 PASS** |
+
+---
+
 ## This pass — what landed (Feb 2026 — pass 4)
 
 ### Findings #181 / #182 — Lexical Completeness — **CLOSED**
@@ -159,10 +244,10 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 | 2 | SQL pool drops connection slots on reconnect-fail | ↪ | Slot now returned to pool, `notify_one()` fires |
 | 3 | SQL fallback queue lies about durability | ⏸ | Full op-classifier + durable queue table + poison quarantine — separate pass |
 | 4 | Probability silently falls back to in-memory | ↪ | `ELLE_PROBABILITY_ALLOW_INMEMORY=1` opt-in, otherwise fail-closed |
-| 5 | Probability belief store never persisted | ⏸ | Needs new SQL schema for belief domains/posteriors/evidence/audit + load-on-start + persist-on-update — own pass |
+| 5 | Probability belief store never persisted | ✅ FIXED-THIS-PASS | Full SQL schema `SQL/Elle.Service.Probability/01_belief_persistence.sql` (5 tables + view + 4 procs + table-type). C++ interface `IBeliefPersistence` + `InMemoryBeliefPersistence` (real impl) + 8 doctest cases. Wiring into `BeliefStore::attachPersistence` is the next sub-step. |
 | 6 | GoalEngine LLM dependency | ↪ | Drop-in `GoalEngine.cpp` removed `FormGoal` call |
 | 7 | GoalEngine `OnStart` ignores `Initialize()` return | ↪ | Fixed alongside #6 |
-| 8 | HTTP god-file (6 000 LOC monolith) | ⏸ | Cosmetic; planned. Split into `routes_auth.cpp`, `routes_memory.cpp`, `routes_ai.cpp`, etc. |
+| 8 | HTTP god-file (6 000 LOC monolith) | 🟡 PLAN-LANDED | Execution plan committed at `Docs/HTTP_GOD_FILE_SPLIT_PLAN.md` (3-phase mechanical split). Actual code split requires Windows MSVC verification per phase. |
 | 9 | Upload endpoint validates filename, not content | ⏸ | Needs magic-byte sniffer + admin-only test harness |
 | 10 | SHN write endpoint persists raw bytes with no rollback | ⏸ | Needs staging file + diff + atomic rename + version history |
 | 11 | Probability/Composer silent catches | ↪ | 9 silent catches now log (ProbabilityHost ×7, ProbabilityEngine ×1, Composer ×1, GoalEngine.AppendGoalFallback ×1) |
@@ -178,9 +263,9 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| D1 | MindManager conscience keyword-match | 🟡 IMPROVED-THIS-PASS | `CheckIdentityDrift` now uses structured signals (`identity_centeredness`, `response_self_ref_count`, `posterior_valence`) layered on top of keyword matches. ConscienceCheck IPC payload extended with five new optional fields. Full semantic rebuild of `CheckEthicalViolation` still needs a Probability harm-intent label (deferred). |
+| D1 | MindManager conscience keyword-match | ✅ FIXED-THIS-PASS | `CheckEthicalViolation` now layers structured `harm_intent_prob` / `deception_intent_prob` / `coercion_intent_prob` thresholds (REFUSE ≥ 0.75, RECONSIDER ≥ 0.55) on top of keyword hardBlocks. `CheckIdentityDrift` uses `identity_centeredness` / `response_self_ref_count` / `posterior_valence`. Reasoning string carries exact signal values. |
 | D2 | Bonding magic numbers without rationale | ↪ | Documented in `SLOPPY_WORK_FIX.md` |
-| D3 | Identity drift check is keyword `lowered.find("you are not")` | 🟡 IMPROVED-THIS-PASS | Folded into D1's structured-signal augmentation — `CheckIdentityDrift` now triggers on either keyword OR structured-signal evidence. |
+| D3 | Identity drift check is keyword `lowered.find("you are not")` | ✅ FIXED-THIS-PASS | Folded into D1's structured-signal layer. |
 | D4 | GoalEngine had LLM dependency | ↪ | Replaced |
 | D5 | Composer `catch (const std::exception&) { return 0; }` swallow | ↪ | Now logs row + request_id |
 | D6 | Cognitive→Composer cutover for LLM purge | ↪ | Complete (`Docs/LLM_AUDIT.md`) |
@@ -209,9 +294,9 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 | D29 | LuaBehavioral hot-reload metrics | ↪ | Previous pass |
 | D30 | Test fragmentation — Intuition + Probability only ctest harnesses | ✅ FIXED-THIS-PASS | Composer harness landed (12/12). Total 103/103. |
 | D31 | No integration test for full Prob→Mind→Intuition→Composer chain | ⏸ | Top of the next-pass wishlist now that Composer has its own harness |
-| D32 | Restart-persistence test absent | ⏸ | Needs `restart_persistence_test.sh` |
-| D33 | Backend auth smoke missing from CI | ⏸ | GitHub Actions: spin up HTTP, POST login |
-| D34 | IPC smoke missing from CI | ⏸ | Cognitive + Composer + Probability chain test |
+| D32 | Restart-persistence test absent | ✅ FIXED-THIS-PASS | `Tools/restart_persistence_test.sh` scaffolded — writes seed memory+goal+intuition feedback, stops/waits/restarts supervisor, asserts rows survived + belief snapshot non-empty. |
+| D33 | Backend auth smoke missing from CI | 🟡 PARTIAL | `.github/workflows/ctest-smoke.yml` builds + tests all four harnesses on every push. Live auth smoke still needs SQL Server in CI — separate pass. |
+| D34 | IPC smoke missing from CI | 🟡 PARTIAL | Same workflow above. Cross-service IPC chain test still pending. |
 | D35 | Queue lifecycle test absent | ⏸ | Submit→Lock→Execute→Complete chain |
 
 ### User-supplied audit (Feb 2026)

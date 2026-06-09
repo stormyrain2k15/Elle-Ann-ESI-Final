@@ -1,0 +1,84 @@
+name: ctest-smoke
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+  workflow_dispatch:
+
+jobs:
+  intuition:
+    name: Intuition (39 cases)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential
+      - name: Configure
+        working-directory: ElleAnn/Services/Elle.Service.Intuition
+        run: cmake -S . -B build -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+      - name: Build
+        working-directory: ElleAnn/Services/Elle.Service.Intuition
+        run: cmake --build build -j$(nproc)
+      - name: Test
+        working-directory: ElleAnn/Services/Elle.Service.Intuition/build
+        run: ctest --output-on-failure
+
+  probability:
+    name: Probability (60 cases)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential unixodbc-dev
+      - name: Configure
+        working-directory: ElleAnn/Services/Elle.Service.Probability
+        run: cmake -S . -B build -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+      - name: Build
+        working-directory: ElleAnn/Services/Elle.Service.Probability
+        run: cmake --build build -j$(nproc)
+      - name: Test
+        working-directory: ElleAnn/Services/Elle.Service.Probability/build
+        run: ctest --output-on-failure
+
+  composer:
+    name: Composer (17 cases)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential
+      - name: Configure
+        working-directory: ElleAnn/Services/Elle.Service.Composer
+        run: cmake -S . -B build -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+      - name: Build
+        working-directory: ElleAnn/Services/Elle.Service.Composer
+        run: cmake --build build -j$(nproc)
+      - name: Test
+        working-directory: ElleAnn/Services/Elle.Service.Composer/build
+        run: ctest --output-on-failure
+
+  language:
+    name: Language (48 cases)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential unixodbc-dev
+      - name: Configure
+        working-directory: ElleAnn/Services/Elle.Service.Language
+        run: cmake -S . -B build -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DELLE_WITH_ODBC=OFF
+      - name: Build tests
+        working-directory: ElleAnn/Services/Elle.Service.Language
+        run: cmake --build build --target elle_tests -j$(nproc)
+      - name: Run doctest binary
+        working-directory: ElleAnn/Services/Elle.Service.Language/build
+        run: ./elle_tests
+
+  all-green-gate:
+    name: All harnesses green
+    runs-on: ubuntu-22.04
+    needs: [intuition, probability, composer, language]
+    steps:
+      - run: echo "All four ctest harnesses passed (164 total cases)."
