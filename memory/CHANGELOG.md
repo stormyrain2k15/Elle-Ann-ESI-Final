@@ -1,4 +1,30 @@
-## 2026-02 — Sloppy-work / quality audit foundation pass
+## 2026-02 — Elle.Service.Intellect added (service #27)
+
+User uploaded the new `Elle.Service.Intellect` service. Integrated using the same pattern as Intuition/Composer/Imagination.
+
+- `Intellect.cpp` copied to `Services/Elle.Service.Intellect/`, NUDE-CODE stripped (516 → 446 lines, 0 comments), brace/paren-balanced.
+- Removed stale `#include "../_Shared/ElleDB_Content.h"` (no such header — the functions live in `ElleSQLConn.h` which is already included).
+- Normalized `pool.Execute(...)` → `pool.Exec(...)` (6 sites) to match the actual `ElleSQLPool` API.
+- New `.vcxproj` mirroring Intuition's template, GUID `{B100000A-0000-0000-0000-00000000001A}`, references `ElleCore.Shared`.
+- `ElleTypes.h`: added `SVC_INTELLECT` (id 26), bumped `ELLE_SERVICE_COUNT` to 27 (`static_assert` updated); added `IPC_INTELLECT_LEARN`, `IPC_INTELLECT_QUERY`, `IPC_INTELLECT_RESULT` to `ELLE_IPC_MSG_TYPE`.
+- `ElleQueueIPC.cpp`: `g_serviceNames[]` extended with `"Intellect"` (static_assert keeps lockstep with `ELLE_SERVICE_COUNT`).
+- `ElleAnn.sln`: project entry + Debug|x64 + Release|x64 + folder map under `Services` (6 references total, same as every other service).
+
+### Verification
+- `Intellect.cpp` brace/paren balance: 63/63, 265/265.
+- Probability ctest: **52/52 PASS** (shared layer touched but still green).
+- Intuition ctest: **39/39 PASS**.
+- Combined: **91/91 green**, no regressions from adding the new enum slot.
+
+### Functionality
+The service responds to:
+- `IPC_INTELLECT_LEARN` — upserts a `learned_subjects` row keyed by `(subject, category)`, bumps proficiency, adds an `education_references` row tying source/content to the subject.
+- `IPC_INTELLECT_QUERY` — replies with `IPC_INTELLECT_RESULT` carrying the matched subject + its references + milestones.
+- Periodic tick (every 60 minutes) prunes `intellect_log` rows older than 30 days.
+
+---
+
+
 
 Reaction to `broad_code_quality_audit.md` + `Elle_Sloppy_Work_Audit_Jun9.md`. Skipped what was already in the DB pass. Full breakdown: `Docs/SLOPPY_WORK_FIX.md`.
 
