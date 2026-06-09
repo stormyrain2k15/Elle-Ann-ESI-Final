@@ -221,6 +221,30 @@ app/ElleAnn/Services/_Shared/ElleUploadGuard.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/app/ElleAnn/Services/_Shared/ElleUploadGuard.cpp.s
 .PHONY : app/ElleAnn/Services/_Shared/ElleUploadGuard.cpp.s
 
+tests/test_intent_label_vocab.o: tests/test_intent_label_vocab.cpp.o
+.PHONY : tests/test_intent_label_vocab.o
+
+# target to build an object file
+tests/test_intent_label_vocab.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/tests/test_intent_label_vocab.cpp.o
+.PHONY : tests/test_intent_label_vocab.cpp.o
+
+tests/test_intent_label_vocab.i: tests/test_intent_label_vocab.cpp.i
+.PHONY : tests/test_intent_label_vocab.i
+
+# target to preprocess a source file
+tests/test_intent_label_vocab.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/tests/test_intent_label_vocab.cpp.i
+.PHONY : tests/test_intent_label_vocab.cpp.i
+
+tests/test_intent_label_vocab.s: tests/test_intent_label_vocab.cpp.s
+.PHONY : tests/test_intent_label_vocab.s
+
+# target to generate assembly for a file
+tests/test_intent_label_vocab.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/tests/test_intent_label_vocab.cpp.s
+.PHONY : tests/test_intent_label_vocab.cpp.s
+
 tests/test_main.o: tests/test_main.cpp.o
 .PHONY : tests/test_main.o
 
@@ -287,6 +311,9 @@ help:
 	@echo "... app/ElleAnn/Services/_Shared/ElleUploadGuard.o"
 	@echo "... app/ElleAnn/Services/_Shared/ElleUploadGuard.i"
 	@echo "... app/ElleAnn/Services/_Shared/ElleUploadGuard.s"
+	@echo "... tests/test_intent_label_vocab.o"
+	@echo "... tests/test_intent_label_vocab.i"
+	@echo "... tests/test_intent_label_vocab.s"
 	@echo "... tests/test_main.o"
 	@echo "... tests/test_main.i"
 	@echo "... tests/test_main.s"

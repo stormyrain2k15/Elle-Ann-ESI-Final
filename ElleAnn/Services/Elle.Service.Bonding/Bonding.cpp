@@ -259,6 +259,8 @@ public:
             "relief", 0.7f);
 
         SaveRelationshipState();
+        ElleSQLPool::Instance().Exec(
+            "EXEC ElleHeart.dbo.usp_BondingSnapshot @Reason = N'repair_landed';");
         ElleDB::RecordMetric("bonding_repairs_completed", 1.0);
         ElleDB::RecordMetric("bonding_last_repair_ms", (double)now);
         ElleDB::RecordMetric("bonding_security", m_state.security);

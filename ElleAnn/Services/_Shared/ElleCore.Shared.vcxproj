@@ -78,6 +78,8 @@
     <ClCompile Include="ElleUserContinuity.cpp" />
     <ClCompile Include="ElleLexicalAdmin.cpp" />
     <ClCompile Include="ElleUploadGuard.cpp" />
+    <ClCompile Include="ElleIntentLabelVocab_SqlLoader.cpp" />
+    <ClCompile Include="ElleBeliefAdmin.cpp" />
     <ClCompile Include="ElleTypes.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -100,6 +102,8 @@
     <ClInclude Include="ElleUserContinuity.h" />
     <ClInclude Include="ElleLexicalAdmin.h" />
     <ClInclude Include="ElleUploadGuard.h" />
+    <ClInclude Include="ElleIntentLabelVocab.h" />
+    <ClInclude Include="ElleBeliefAdmin.h" />
     <ClInclude Include="ElleTypes.h" />
     <ClInclude Include="ElleWait.h" />
     <ClInclude Include="json.hpp" />

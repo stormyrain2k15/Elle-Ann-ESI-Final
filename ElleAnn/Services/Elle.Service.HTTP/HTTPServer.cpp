@@ -12,6 +12,7 @@
 #include "../_Shared/ElleGameAccountDB.h"
 #include "../_Shared/ElleUserContinuity.h"
 #include "../_Shared/ElleLexicalAdmin.h"
+#include "../_Shared/ElleBeliefAdmin.h"
 #include "../_Shared/ElleUploadGuard.h"
 
 #include <winsock2.h>
@@ -2707,6 +2708,32 @@ private:
                 }
                 auto body = ElleLanguage::LexicalAuditReportToJson(report);
                 return HTTPResponse::OK(body);
+            }, AUTH_ADMIN);
+
+        m_router.Register("GET", "/api/admin/belief/audit",
+            [](const HTTPRequest& req) {
+                std::string domain = req.QueryString("domain", "");
+                long long sinceMs  = req.QueryLL("since_ms", 0);
+                int       limit    = req.QueryInt("limit", 200);
+                if (limit <= 0)   limit = 200;
+                if (limit > 5000) limit = 5000;
+                if (sinceMs < 0)  sinceMs = 0;
+
+                std::vector<ElleBeliefAdmin::BeliefAuditRow> rows;
+                if (!ElleBeliefAdmin::FetchBeliefAudit(rows, domain, sinceMs, limit)) {
+                    return HTTPResponse::Err(500, "belief_audit_query_failed");
+                }
+                return HTTPResponse::OK(ElleBeliefAdmin::BeliefAuditToJson(rows));
+            }, AUTH_ADMIN);
+
+        m_router.Register("GET", "/api/admin/belief/snapshot",
+            [](const HTTPRequest& req) {
+                std::string domain = req.QueryString("domain", "");
+                std::vector<ElleBeliefAdmin::BeliefSnapshotRow> rows;
+                if (!ElleBeliefAdmin::FetchBeliefSnapshot(rows, domain)) {
+                    return HTTPResponse::Err(500, "belief_snapshot_query_failed");
+                }
+                return HTTPResponse::OK(ElleBeliefAdmin::BeliefSnapshotToJson(rows));
             }, AUTH_ADMIN);
 
         m_router.Register("GET", "/api/memory/why", [](const HTTPRequest& req) {

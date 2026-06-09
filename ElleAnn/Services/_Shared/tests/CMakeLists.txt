@@ -24,6 +24,7 @@ enable_testing()
 add_executable(elle_shared_tests
     tests/test_main.cpp
     tests/test_upload_guard.cpp
+    tests/test_intent_label_vocab.cpp
     ../ElleUploadGuard.cpp
 )
 target_include_directories(elle_shared_tests PRIVATE ..)

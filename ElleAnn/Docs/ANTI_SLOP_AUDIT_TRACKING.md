@@ -10,6 +10,79 @@
 > *the audit identified a real problem but the right fix requires a
 > design conversation, not just code*.
 
+## This pass — what landed (Feb 2026 — pass 8)
+
+### `JsonlBeliefPersistence` — **CLOSED**
+
+Header-only `IBeliefPersistence` impl at
+`Services/Elle.Service.Probability/include/elle/prob/JsonlBeliefPersistence.hpp`.
+Every `upsertDomain`, `replacePosterior`, `appendEvidence`, `auditUpdate`
+call writes one JSONL line to the configured path with proper string
+escaping and a mutex-protected append open. `loadAll()` returns
+empty (this backend is write-only by design — pair with
+`InMemoryBeliefPersistence` or `OdbcBeliefPersistence` for restore).
+5 new doctest cases under `tests/test_jsonl_belief_persistence.cpp`,
+including a `BeliefStore::attachPersistence` integration that asserts
+the cycle writes `upsertDomain` + `appendEvidence` + `audit` lines.
+
+### Semantic conscience vocab moved to SQL (audit D1 / D3 sub-fix) — **CLOSED**
+
+- New SQL schema `SQL/Elle.Service.Probability/02_intent_label_vocab.sql`:
+  `dbo.intent_label_vocab` table + `vw_IntentLabelVocab` view +
+  `usp_AddIntentLabel` proc with `category IN (HARM, DECEPTION, COERCION)` check.
+  Seeded with 24 default patterns (matches the previous hard-coded list).
+- New shared header `_Shared/ElleIntentLabelVocab.h`:
+  `IntentLabelVocab` class with thread-safe `setCategoryPatterns` /
+  `addPattern` / `patternsFor` + a process-wide singleton.
+  `DeriveFromIntentLabel(label, conf, vocab)` returns
+  `{harm, deception, coercion}` scores.
+- New loader `_Shared/ElleIntentLabelVocab_SqlLoader.cpp`:
+  `LoadVocabFromSql()` reads `vw_IntentLabelVocab` and replaces each
+  category's pattern list atomically; falls back to the in-memory seed
+  if SQL read fails.
+- `CognitiveEngine::DeriveHarmIntentSignals` now delegates to
+  `ElleConscience::DeriveFromIntentLabel` — no more hard-coded vocab.
+- 9 new doctest cases in `_Shared/tests/tests/test_intent_label_vocab.cpp`.
+
+### Admin dashboard belief routes — **CLOSED**
+
+- New shared helper `_Shared/ElleBeliefAdmin.{h,cpp}` with
+  `FetchBeliefAudit(rows, domain, sinceMs, limit)`,
+  `FetchBeliefSnapshot(rows, domain)`,
+  `BeliefAuditToJson(rows)`, `BeliefSnapshotToJson(rows)`.
+- Two new HTTP routes, both `AUTH_ADMIN`:
+  - `GET /api/admin/belief/audit?domain=...&since_ms=...&limit=...`
+  - `GET /api/admin/belief/snapshot?domain=...`
+- Vcxproj updated.
+
+### Bonding state SQL roll-up (audit D25 expansion) — **CLOSED**
+
+- New SQL schema `SQL/Elle.Service.Bonding/02_bonding_rollup.sql`:
+  - `dbo.relationship_history` append-only snapshot table.
+  - `dbo.vw_RelationshipDashboard` view exposing derived
+    `affection_index`, `commitment_index`, `distress_index`,
+    `meaningful_ratio`, `conflict_resolution_ratio`.
+  - `dbo.usp_BondingSnapshot @Reason` proc that inserts a
+    `relationship_history` row from the current state.
+  - `dbo.vw_RelationshipTrajectory` view exposing the last 1000
+    snapshots ordered DESC with derived indices.
+- `Bonding.cpp::EvaluateSustainedRepair` now calls
+  `EXEC usp_BondingSnapshot @Reason = N'repair_landed';` on the
+  success path (right after `SaveRelationshipState`).
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition | 39/39 PASS |
+| Probability | 79/79 PASS (5 new this pass) |
+| Composer | 17/17 PASS |
+| Language | 48/48 PASS |
+| Shared (Upload + Vocab) | 26/26 PASS (9 new this pass) |
+| **Total** | **209/209 PASS** |
+
+---
+
 ## This pass — what landed (Feb 2026 — pass 7)
 
 ### `ProbabilityHost` + `OdbcBeliefPersistence` end-to-end wiring — **CLOSED**
@@ -439,7 +512,7 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 | D22 | Dream service `RecordDreamCycle` may be hollow | ✅ FIXED-THIS-PASS | Converted to `RecordMetric` on dispatch + completion |
 | D23 | InnerLife `RecordInnerThought` | ↪ | Indirect — `ThinkPrivately` writes to `identity_private_thoughts` |
 | D24 | Family `OnGestationTick` may not update SQL | ↪ | Previous pass |
-| D25 | Bonding repair/vulnerability bursts may not write SQL | ✅ FIXED-THIS-PASS | Investigation showed `SaveRelationshipState` already persists state; this pass added discrete `bonding_repair_attempts` / `bonding_repairs_completed` / `bonding_security` metric writes |
+| D25 | Bonding repair/vulnerability bursts may not write SQL | ✅ FIXED-THIS-PASS | Already SQL-persisted via `SaveRelationshipState`. This pass added the full roll-up: `relationship_history` snapshot table, `vw_RelationshipDashboard`, `vw_RelationshipTrajectory`, `usp_BondingSnapshot`. Bonding service now snapshots on successful repair. |
 | D26 | Consent table — no autonomous writer | ⏸ | Same as before |
 | D27 | WorldModel mental_model never used after StoreEntity | ↪ | Verified consumed |
 | D28 | SelfPrompt doesn't tag prompts with drive source | ↪ | Previous pass |

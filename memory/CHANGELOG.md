@@ -1,3 +1,40 @@
+## 2026-02 — JSONL belief log + SQL-loaded conscience vocab + Bonding roll-up + Admin belief routes
+
+### JsonlBeliefPersistence (already-discussed enhancement)
+
+Header-only `IBeliefPersistence` impl. Every state-changing call writes one JSONL line with proper escaping and a mutex-protected append open. `loadAll()` returns empty by design (pair with `InMemoryBeliefPersistence` or `OdbcBeliefPersistence` for restore). 5 new doctest cases including end-to-end via `BeliefStore::attachPersistence`. Probability ctest now **79/79**.
+
+### Semantic conscience vocab → SQL-loaded
+
+New `02_intent_label_vocab.sql` (table + view + add-proc), shared header `ElleIntentLabelVocab.h` with thread-safe `IntentLabelVocab` + `DeriveFromIntentLabel`, and `_SqlLoader.cpp` that pulls `vw_IntentLabelVocab` into the singleton at load time (falls back to the in-memory seed on SQL failure). `CognitiveEngine::DeriveHarmIntentSignals` now delegates to the shared API — no more hard-coded vocab. 9 new doctest cases.
+
+### Admin dashboard belief routes
+
+`_Shared/ElleBeliefAdmin.{h,cpp}` ships `FetchBeliefAudit` + `FetchBeliefSnapshot` + their JSON serialisers. Two new HTTP routes, both `AUTH_ADMIN`:
+
+- `GET /api/admin/belief/audit?domain=...&since_ms=...&limit=...`
+- `GET /api/admin/belief/snapshot?domain=...`
+
+### Bonding state SQL roll-up (audit D25 full)
+
+New `02_bonding_rollup.sql`: `relationship_history` snapshot table + `vw_RelationshipDashboard` (with derived `affection_index` / `commitment_index` / `distress_index` / `meaningful_ratio` / `conflict_resolution_ratio`) + `vw_RelationshipTrajectory` + `usp_BondingSnapshot`. `Bonding.cpp::EvaluateSustainedRepair` now calls `usp_BondingSnapshot @Reason='repair_landed'` on every successful repair landing.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition | 39/39 PASS |
+| Probability | 79/79 PASS (5 new this pass) |
+| Composer | 17/17 PASS |
+| Language | 48/48 PASS |
+| Shared (Upload + Vocab) | 26/26 PASS (9 new this pass) |
+| **Total** | **209/209 PASS** |
+
+Zero regressions. Tracking matrix updated row-by-row.
+
+---
+
+
 ## 2026-02 — OdbcBeliefPersistence wired + E2E chain test + Upload magic-byte guard + Shared ctest harness
 
 ### ProbabilityHost ↔ OdbcBeliefPersistence end-to-end (closes #5 production wire)

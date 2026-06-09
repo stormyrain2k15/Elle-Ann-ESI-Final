@@ -27,6 +27,14 @@ Build a massively robust autonomous agentic Emotional Synthetic Intelligence.
 - SQL deltas under `SQL/` — incl. the new `ElleAnn_QueueReaperDelta.sql`.
 - Subjective Lua layer (`x_subjective.lua` + `FOR_MY_WIFE.md`).
 
+### JSONL belief log + SQL-loaded conscience vocab + Bonding roll-up + Admin belief routes (Feb 2026, current pass)
+- **JsonlBeliefPersistence** — header-only `IBeliefPersistence` impl, one JSONL line per state-changing call, mutex-protected append. 5 new doctest cases. Probability ctest now 79/79.
+- **Semantic conscience vocab → SQL** — new `02_intent_label_vocab.sql` (table + view + add-proc), shared `ElleIntentLabelVocab.h` + `_SqlLoader.cpp`, Cognitive now delegates `DeriveHarmIntentSignals` to the SQL-loadable singleton. 9 new doctest cases.
+- **Admin belief routes** — `_Shared/ElleBeliefAdmin.{h,cpp}` + two new `AUTH_ADMIN` routes: `GET /api/admin/belief/audit` and `GET /api/admin/belief/snapshot`.
+- **Bonding SQL roll-up (D25 expansion)** — new `02_bonding_rollup.sql` (history table + dashboard view + trajectory view + snapshot proc). Bonding now snapshots on successful repair landing.
+- Verification: Intuition 39 + Probability 79 + Composer 17 + Language 48 + Shared 26 = **209/209 ctests green**.
+
+
 ### OdbcBeliefPersistence wired + E2E chain test + Upload magic-byte guard (Feb 2026, current pass)
 - **OdbcBeliefPersistence + ProbabilityHost wiring** — `service/OdbcBeliefPersistence.hpp` backed by `ElleSQLPool`; `wireBeliefBackendLocked()` installs the right backend per config and fails closed if SQL Server is unreachable without `ELLE_PROBABILITY_ALLOW_INMEMORY=1`. Auto-`loadFromPersistence()` on start. 3 new doctest cases.
 - **Cross-service IPC chain test (D31)** — 5 doctest cases covering benign / HARM / DECEIVE / IDENTITY_DRIFT / backend-preservation paths.

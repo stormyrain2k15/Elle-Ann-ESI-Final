@@ -1,42 +1,42 @@
-BuildCombinedSignal: urgent flag set when any firing is urgent + strong 20 0.000187931
-BuildCombinedSignal: urgent NOT set when firing is urgent but weak 20 0.000108348
-BuildCombinedSignal: lean→recommendedAct mapping 20 0.000104753
-BuildCombinedSignal: unknown lean falls back to ASSERT 20 0.000111158
-BuildCombinedSignal: holdAndReflect fires on confident UNCERTAIN 20 9.65809e-05
-BuildCombinedSignal: holdAndReflect fires on confident DOUBT 20 0.000112494
-BuildCombinedSignal: holdAndReflect fires on suppressReason + high conf 20 0.00011017
-BuildCombinedSignal: priorWeight scales with confidence, decays with entropy 20 9.71832e-05
-BuildCombinedSignal: pre-response priorWeight is capped at 0.65 20 0.000113099
-BuildCombinedSignal: post-response priorWeight can exceed 0.65 up to 0.85 20 0.000103261
-Process: full pipeline produces consistent output for known input 20 9.07871e-05
-Positive feedback (was_correct) strengthens the matching pull 20 9.19579e-05
-Negative feedback decays only the matching pull 20 9.91751e-05
-AdjustPatternWeight on unknown pull is a no-op 20 0.000100834
-Decay leaves low-weight patterns alone (floor) 20 8.76706e-05
-FireInstincts: exact-match stimulus fires the corresponding pattern 20 0.000112257
-FireInstincts: trust_floor gates high-trust-only patterns 20 0.000123466
-FireInstincts: emotion_min gates intensity-required patterns 20 0.000105562
-FireInstincts: arousal amplifies strength but caps at 1.0 20 9.90705e-05
-FireInstincts: deduplicates competing patterns by pullType (keeps strongest) 20 0.000110778
-FireInstincts: substring match scores at 0.6 weight 20 9.67928e-05
-FireInstincts: empty stimulus produces no firings 20 0.000104507
-FireInstincts: case-insensitive tag matching 20 9.42243e-05
-FireInstincts: results are sorted by strength descending 20 8.79483e-05
+BuildCombinedSignal: urgent flag set when any firing is urgent + strong 21 0.000221242
+BuildCombinedSignal: urgent NOT set when firing is urgent but weak 21 9.20413e-05
+BuildCombinedSignal: lean→recommendedAct mapping 21 9.22988e-05
+BuildCombinedSignal: unknown lean falls back to ASSERT 21 8.86326e-05
+BuildCombinedSignal: holdAndReflect fires on confident UNCERTAIN 21 8.68544e-05
+BuildCombinedSignal: holdAndReflect fires on confident DOUBT 21 8.59317e-05
+BuildCombinedSignal: holdAndReflect fires on suppressReason + high conf 21 8.39354e-05
+BuildCombinedSignal: priorWeight scales with confidence, decays with entropy 21 8.57551e-05
+BuildCombinedSignal: pre-response priorWeight is capped at 0.65 21 8.90268e-05
+BuildCombinedSignal: post-response priorWeight can exceed 0.65 up to 0.85 21 9.2861e-05
+Process: full pipeline produces consistent output for known input 21 8.59797e-05
+Positive feedback (was_correct) strengthens the matching pull 21 8.53416e-05
+Negative feedback decays only the matching pull 21 8.75745e-05
+AdjustPatternWeight on unknown pull is a no-op 21 8.23121e-05
+Decay leaves low-weight patterns alone (floor) 21 8.4347e-05
+FireInstincts: exact-match stimulus fires the corresponding pattern 21 8.403e-05
+FireInstincts: trust_floor gates high-trust-only patterns 21 9.028e-05
+FireInstincts: emotion_min gates intensity-required patterns 21 9.1874e-05
+FireInstincts: arousal amplifies strength but caps at 1.0 21 8.49461e-05
+FireInstincts: deduplicates competing patterns by pullType (keeps strongest) 21 8.47789e-05
+FireInstincts: substring match scores at 0.6 weight 21 9.53233e-05
+FireInstincts: empty stimulus produces no firings 21 9.23069e-05
+FireInstincts: case-insensitive tag matching 21 8.51789e-05
+FireInstincts: results are sorted by strength descending 21 8.45977e-05
 LoadDefaults populates 30 baseline patterns 0 0
-ReplacePatterns swaps the working set 19 9.76763e-05
-AdjustPatternWeight clamps to [0.1, 1.0] 20 9.28348e-05
-Decay slowly relaxes weights toward floor but not below 20 9.58459e-05
-SynthesizeIntuition: threat firings → DANGER lean 20 9.63819e-05
-SynthesizeIntuition: comfort firings → REACH_OUT lean 20 0.000101316
-SynthesizeIntuition: high speaker trust biases toward SAFE 20 8.89412e-05
-SynthesizeIntuition: negative valence + high arousal → DANGER 19 0.000103257
-SynthesizeIntuition: low ethical safety pulls toward DOUBT 20 0.00010043
-SynthesizeIntuition: low plausibility pulls toward UNCERTAIN 20 0.000102749
-SynthesizeIntuition: high goal alignment pulls toward ENGAGE 20 0.000108763
-SynthesizeIntuition: belief entropy attenuates confidence 20 0.000109802
-SynthesizeIntuition: suppressReason set when confident and entropic 19 9.71704e-05
+ReplacePatterns swaps the working set 20 9.08365e-05
+AdjustPatternWeight clamps to [0.1, 1.0] 21 0.000107939
+Decay slowly relaxes weights toward floor but not below 21 0.000122135
+SynthesizeIntuition: threat firings → DANGER lean 21 0.000116982
+SynthesizeIntuition: comfort firings → REACH_OUT lean 21 0.000121879
+SynthesizeIntuition: high speaker trust biases toward SAFE 21 0.000122877
+SynthesizeIntuition: negative valence + high arousal → DANGER 20 0.000122893
+SynthesizeIntuition: low ethical safety pulls toward DOUBT 21 0.000114444
+SynthesizeIntuition: low plausibility pulls toward UNCERTAIN 21 0.000118195
+SynthesizeIntuition: high goal alignment pulls toward ENGAGE 21 0.000124013
+SynthesizeIntuition: belief entropy attenuates confidence 21 0.000116864
+SynthesizeIntuition: suppressReason set when confident and entropic 20 0.000121337
 SynthesizeIntuition: empty firings + neutral state → low confidence 0 0
-SynthesizeIntuition: basis string carries lean + confidence + count 20 0.000112088
-LoadDefaults populates 31 baseline patterns 19 9.4474e-05
-SynthesizeIntuition: neutral speaker without firings biases toward DOUBT (guard prior) 19 0.000146379
+SynthesizeIntuition: basis string carries lean + confidence + count 21 0.000112222
+LoadDefaults populates 31 baseline patterns 20 8.78275e-05
+SynthesizeIntuition: neutral speaker without firings biases toward DOUBT (guard prior) 20 0.000121629
 ---

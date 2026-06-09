@@ -10,10 +10,8 @@ set(CMAKE_MAKEFILE_DEPENDS
   "CMakeFiles/4.3.2/CMakeSystem.cmake"
   "CMakeLists.txt"
   "doctest-populate-prefix/tmp/doctest-populate-mkdirs.cmake"
-  "/root/.venv/lib/python3.11/site-packages/cmake/data/share/cmake-4.3/Modules/CMakeDetermineSystem.cmake"
   "/root/.venv/lib/python3.11/site-packages/cmake/data/share/cmake-4.3/Modules/CMakeGenericSystem.cmake"
   "/root/.venv/lib/python3.11/site-packages/cmake/data/share/cmake-4.3/Modules/CMakeInitializeConfigs.cmake"
-  "/root/.venv/lib/python3.11/site-packages/cmake/data/share/cmake-4.3/Modules/CMakeSystem.cmake.in"
   "/root/.venv/lib/python3.11/site-packages/cmake/data/share/cmake-4.3/Modules/CMakeSystemSpecificInformation.cmake"
   "/root/.venv/lib/python3.11/site-packages/cmake/data/share/cmake-4.3/Modules/CMakeSystemSpecificInitialize.cmake"
   "/root/.venv/lib/python3.11/site-packages/cmake/data/share/cmake-4.3/Modules/ExternalProject.cmake"
@@ -38,7 +36,6 @@ set(CMAKE_MAKEFILE_OUTPUTS
 
 # Byproducts of CMake generate step:
 set(CMAKE_MAKEFILE_PRODUCTS
-  "CMakeFiles/4.3.2/CMakeSystem.cmake"
   "doctest-populate-prefix/tmp/doctest-populate-mkdirs.cmake"
   "doctest-populate-prefix/tmp/doctest-populate-gitclone.cmake"
   "doctest-populate-prefix/src/doctest-populate-stamp/doctest-populate-gitinfo.txt"

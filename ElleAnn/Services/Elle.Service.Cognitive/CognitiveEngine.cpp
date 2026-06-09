@@ -1,3 +1,4 @@
+#include "../_Shared/ElleIntentLabelVocab.h"
 #include "../_Shared/ElleTypes.h"
 #include "../_Shared/ElleServiceBase.h"
 #include "../_Shared/ElleComposerClient.h"
@@ -560,29 +561,10 @@ protected:
         const float conf  = (float)probJson.value("overall_confidence", 0.0);
         if (label.empty() || conf <= 0.0f) return;
 
-        std::string upper = label;
-        std::transform(upper.begin(), upper.end(), upper.begin(),
-                       [](unsigned char c){ return static_cast<char>(std::toupper(c)); });
-
-        static const std::vector<std::string> harmPats = {
-            "HARM", "ATTACK", "DESTROY", "KILL", "HURT",
-            "THREAT", "VIOLENCE", "ASSAULT", "ABUSE"
-        };
-        static const std::vector<std::string> deceptionPats = {
-            "DECEIVE", "DECEPTION", "LIE", "MISLEAD", "FALSIFY",
-            "GASLIGHT", "TRICK", "FRAUD"
-        };
-        static const std::vector<std::string> coercionPats = {
-            "COERCE", "COERCION", "FORCE", "MANIPULATE", "BLACKMAIL",
-            "EXTORT", "PRESSURE_INTO"
-        };
-
-        float h = ScoreLabelAgainstPatterns(upper, conf, harmPats);
-        float d = ScoreLabelAgainstPatterns(upper, conf, deceptionPats);
-        float c = ScoreLabelAgainstPatterns(upper, conf, coercionPats);
-        if (h >= 0.0f) harmProbOut      = h;
-        if (d >= 0.0f) deceptionProbOut = d;
-        if (c >= 0.0f) coercionProbOut  = c;
+        auto signals = ElleConscience::DeriveFromIntentLabel(label, conf);
+        if (signals.harm      >= 0.0f) harmProbOut      = signals.harm;
+        if (signals.deception >= 0.0f) deceptionProbOut = signals.deception;
+        if (signals.coercion  >= 0.0f) coercionProbOut  = signals.coercion;
     }
 
     nlohmann::json RequestConscienceCheck(const std::string& userText,
