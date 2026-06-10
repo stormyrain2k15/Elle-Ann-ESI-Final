@@ -1,4 +1,101 @@
-## 2026-02 — SQL Fallback Phase 2: poison table + admin routes + MSVC-readiness sweep
+## 2026-02 — SQL Fallback Phase 3: reaper auto-load + /api/server/status observability
+
+### Phase 3 — the reaper is now self-driving
+
+`ElleSQLFallback::WorkerLoop` (which already woke every 10s or on
+nudge to drain the live JSONL queue) now also calls
+`LoadPoisonIntoSql(500)` once per `m_poisonLoadIntervalMs` —
+default **300s** via the new
+`http_server.sqlfallback_poison_load_interval_secs` config key.
+The reaper:
+
+- only fires after the existing `SELECT 1` probe confirms SQL is
+  reachable (same gate the live drain uses);
+- records `last_attempt_ms` and bumps `total_attempts` every tick;
+- on success records `last_success_ms`, `last_inserted`, and bumps
+  `total_successes` / `total_inserted`;
+- on exception logs and stores the message in `m_lastPoisonError`;
+- the rest of `WorkerLoop` keeps draining, so a poison-load failure
+  never blocks the live queue.
+
+New public API on `ElleSQLFallback`:
+- `SetPoisonLoadIntervalMs(uint64_t)` / `PoisonLoadIntervalMs()` —
+  `0` disables the reaper.
+- `GetPoisonLoadStatus() -> PoisonLoadStatus`
+  (`last_attempt_ms`, `last_success_ms`, `last_inserted`,
+  `total_attempts`, `total_successes`, `total_inserted`,
+  `last_error`).
+
+Wired in `Elle.Service.HTTP::OnStart`: reads
+`http_server.sqlfallback_poison_load_interval_secs` (default 300),
+calls `SetPoisonLoadIntervalMs(secs*1000)` + `NudgeDrain()`, logs
+`"SQL fallback poison reaper: enabled, interval=300s"`.
+
+### Observability — `/api/server/status` exposes the queue
+
+`HTTPServer_ServerRoutes.cpp`'s `GET /api/server/status` now
+includes a top-level `sql_fallback` object:
+
+```json
+{
+  "sql_fallback": {
+    "enabled": true,
+    "max_retries": 5,
+    "poison_load_interval_ms": 300000,
+    "pending_bytes": 0,
+    "pending_files": 0,
+    "poison_bytes": 1247,
+    "poison_files": 1,
+    "reaper": {
+      "last_attempt_ms":  1700000010000,
+      "last_success_ms":  1700000010000,
+      "last_inserted":    3,
+      "total_attempts":   42,
+      "total_successes":  41,
+      "total_inserted":   18,
+      "last_error":       ""
+    }
+  }
+}
+```
+
+The operator dashboard can poll a single endpoint to see live
+queue depth, poison depth, and reaper health — no disk or DB access
+needed.
+
+### Config schema
+
+`elle_master_config.json` → added
+`http_server.sqlfallback_poison_load_interval_secs = 300`.
+
+### Anti-Slop audit row 3 → ✅
+
+The full chain — op-classifier + idempotency-aware drain + poison
+quarantine + table-backed durable queue + auto-replay reaper +
+HTTP observability — is in place. Row 3 in
+`Docs/ANTI_SLOP_AUDIT_TRACKING.md` flipped from 🟡 PHASE-2-LANDED
+to 🟢 PHASE-3-LANDED ✅.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition   | 39/39 PASS |
+| Probability | 85/85 PASS |
+| Composer    | 17/17 PASS |
+| Language    | 1/1 PASS |
+| Shared      | 34/34 PASS |
+| **Total local Linux ctest** | **176/176 PASS** |
+
+`ElleSQLFallback.cpp` re-validated standalone under
+`g++ -std=c++17 -Wall -Wextra` with stub deps — clean.
+HTTP brace totals across all 19 .cpp files = **1 947 / 1 947**
+(was 1 902; +45 from the expanded `/api/server/status`). Routes
+still **160**. NUDE CODE preserved.
+
+---
+
+
 
 ### SQL Fallback — Phase 2 — poison table + replay/inspection routes
 

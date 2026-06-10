@@ -39,13 +39,14 @@ msbuild ElleAnn.sln /p:Configuration=Debug /p:Platform=x64 /m
 sc start Elle.Service.HTTP
 ```
 
-Then `Get-EventLog -LogName Application -Source Elle.Service.HTTP -Newest 20` or tail `logs/elle_http.log`. Expected log line:
+Then `Get-EventLog -LogName Application -Source Elle.Service.HTTP -Newest 20` or tail `logs/elle_http.log`. Expected log lines (both must appear):
 
 ```
 INFO  Registered 160 API routes
+INFO  SQL fallback poison reaper: enabled, interval=300s
 ```
 
-(`158` original routes + the 2 new poison admin routes.)
+(`158` original routes + the 2 new poison admin routes. The reaper line confirms Phase 3 wiring — to disable set `http_server.sqlfallback_poison_load_interval_secs = 0`.)
 
 ## 3. Route smoke — at least one per registrar
 
@@ -69,7 +70,7 @@ the dispatcher reached it) is success.
 | Education            | `curl -s "http://localhost:8082/api/education/skills?limit=5"` |
 | EmotionalContext     | `curl -s http://localhost:8082/api/emotional-context/dimensions` |
 | XLifecycle           | `curl -s http://localhost:8082/api/x/state` |
-| Server               | `curl -s -H "x-auth-admin: 1" http://localhost:8082/api/server/status` |
+| Server               | `curl -s -H "x-auth-admin: 1" http://localhost:8082/api/server/status` — also assert the new `sql_fallback` block: `\| python3 -c "import sys,json; d=json.load(sys.stdin); print(d['sql_fallback']['reaper'])"` |
 | Models               | `curl -s http://localhost:8082/api/models/slots` |
 | MoralsGoals          | `curl -s http://localhost:8082/api/morals/rules` |
 | Misc                 | `curl -s http://localhost:8082/api/brain/status` |

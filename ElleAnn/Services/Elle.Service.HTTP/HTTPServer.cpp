@@ -160,6 +160,23 @@ bool ElleHTTPService::OnStart() {
             ELLE_INFO("game-DB auth path: disabled (http_server.game_db_dsn unset)");
         }
 
+        {
+            const uint64_t poison_interval_secs = (uint64_t)
+                ElleConfig::Instance().GetInt(
+                    "http_server.sqlfallback_poison_load_interval_secs", 300);
+            if (poison_interval_secs > 0) {
+                ElleSQLFallback::Instance().SetPoisonLoadIntervalMs(
+                    poison_interval_secs * 1000ull);
+                ElleSQLFallback::Instance().NudgeDrain();
+                ELLE_INFO("SQL fallback poison reaper: enabled, interval=%llus",
+                          (unsigned long long)poison_interval_secs);
+            } else {
+                ElleSQLFallback::Instance().SetPoisonLoadIntervalMs(0);
+                ELLE_INFO("SQL fallback poison reaper: disabled "
+                          "(http_server.sqlfallback_poison_load_interval_secs=0)");
+            }
+        }
+
         return true;
     }
 

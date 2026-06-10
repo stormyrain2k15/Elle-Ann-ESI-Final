@@ -23,11 +23,34 @@ void ElleHTTPService::RegisterServerRoutes() {
                     {"errors", s.errors}
                 });
             }
+
+            auto& fb = ElleSQLFallback::Instance();
+            auto poison = fb.GetPoisonLoadStatus();
+            json sqlFallback = {
+                {"enabled",                fb.IsEnabled()},
+                {"max_retries",            fb.MaxRetries()},
+                {"poison_load_interval_ms",fb.PoisonLoadIntervalMs()},
+                {"pending_bytes",          fb.PendingBytes()},
+                {"pending_files",          fb.FileCount()},
+                {"poison_bytes",           fb.PoisonBytes()},
+                {"poison_files",           fb.PoisonFileCount()},
+                {"reaper", {
+                    {"last_attempt_ms",  poison.last_attempt_ms},
+                    {"last_success_ms",  poison.last_success_ms},
+                    {"last_inserted",    poison.last_inserted},
+                    {"total_attempts",   poison.total_attempts},
+                    {"total_successes",  poison.total_successes},
+                    {"total_inserted",   poison.total_inserted},
+                    {"last_error",       poison.last_error}
+                }}
+            };
+
             return HTTPResponse::OK({
                 {"services", svcArr},
                 {"count", (int)statuses.size()},
                 {"version", ELLE_VERSION_STRING},
-                {"uptime_ms", (uint64_t)ELLE_MS_NOW()}
+                {"uptime_ms", (uint64_t)ELLE_MS_NOW()},
+                {"sql_fallback", sqlFallback}
             });
         });
         m_router.Register("GET", "/api/server/console", [](const HTTPRequest& req) {

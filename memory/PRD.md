@@ -79,7 +79,13 @@ Build a massively robust autonomous agentic Emotional Synthetic Intelligence.
 
 ## Completed (this session — Feb 2026)
 
-### Pass 12 — SQL Fallback Phase 2 + MSVC-readiness sweep (current pass)
+### Pass 13 — SQL Fallback Phase 3: reaper auto-load + observability (current pass)
+- **Reaper wired into `ElleSQLFallback::WorkerLoop`**: every wake (10s timer or nudge), if SQL is reachable AND `m_poisonLoadIntervalMs` has elapsed since the last attempt, the worker calls `LoadPoisonIntoSql(500)`. Tracks `last_attempt_ms`, `last_success_ms`, `last_inserted`, totals, and `last_error` (mutex-guarded). Default cadence: 5 min via `http_server.sqlfallback_poison_load_interval_secs=300`. `0` cleanly disables. Wired in `ElleHTTPService::OnStart` with an explicit log line on enable/disable.
+- **`/api/server/status` extended** with a top-level `sql_fallback` block: `{enabled, max_retries, poison_load_interval_ms, pending_bytes, pending_files, poison_bytes, poison_files, reaper:{last_attempt_ms, last_success_ms, last_inserted, total_attempts, total_successes, total_inserted, last_error}}`. Operator dashboards can poll a single endpoint to see live queue depth + reaper health.
+- **Audit row 3 → ✅** in `Docs/ANTI_SLOP_AUDIT_TRACKING.md` — op-classifier + durable queue + poison quarantine + auto-replay + observability all in place. `elle_master_config.json` updated with the new config key.
+- **Verification**: 176/176 local Linux ctest still green. `ElleSQLFallback.cpp` standalone-compiles cleanly under `g++ -Wall -Wextra`. HTTP brace totals 1947/1947 across 19 .cpp files; 160 routes still registered.
+
+### Pass 12 — SQL Fallback Phase 2 + MSVC-readiness sweep
 - **SQL Fallback Phase 2** landed: `SQL/_Shared/01_sql_fallback_poison.sql` adds `dbo.SQLFallbackPoison` table + `usp_SQLFallbackPoisonLoad` / `MarkReplayed` / `List` stored procs. New `ElleSQLFallback::ListPoison(maxLines)` and `LoadPoisonIntoSql(maxLines)` C++ APIs. Two new AUTH_ADMIN routes in `HTTPServer_AdminRoutes.cpp`: `GET /api/admin/sqlfallback/poison` (parsed listing + counts) and `POST /api/admin/sqlfallback/poison/load` (idempotent bulk-load into SQL via `source_file + raw_line` dedup). HTTP route count now **160**.
 - **MSVC-readiness sweep** on `HTTPServer.h`: promoted the four remaining file-scope `static` declarations (`kB64`, `PairedDeviceStatusCached`, `VerifyJwtHs256`, `GetIntHeader`, `kPairedCacheTtlMs`) to `inline` so all 19 TUs share one ODR-safe definition. Header now has zero `^static\b` namespace-scope declarations.
 - **MSVC verification checklist** documented at `Docs/HTTP_GOD_FILE_MSVC_VERIFICATION.md` — pre-flight, build, service-start log assertion (`Registered 160 API routes`), 19-route curl smoke matrix (one per registrar + new SQL-fallback route), Anti-Slop matrix sign-off transition, and a likely-error → fix table.

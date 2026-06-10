@@ -330,7 +330,52 @@ void ElleSQLFallback::WorkerLoop() {
         if (replayed) {
             ELLE_INFO("ElleSQLFallback: drained %u queued queries", replayed);
         }
+
+        const uint64_t interval = m_poisonLoadIntervalMs.load(std::memory_order_acquire);
+        if (interval > 0) {
+            uint64_t now_ms = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            uint64_t last = m_lastPoisonAttemptMs.load(std::memory_order_acquire);
+            if (last == 0 || now_ms - last >= interval) {
+                m_lastPoisonAttemptMs.store(now_ms, std::memory_order_release);
+                m_totalPoisonAttempts.fetch_add(1, std::memory_order_acq_rel);
+                try {
+                    uint32_t inserted = LoadPoisonIntoSql(500);
+                    m_lastPoisonSuccessMs.store(now_ms, std::memory_order_release);
+                    m_lastPoisonInserted.store(inserted, std::memory_order_release);
+                    m_totalPoisonSuccesses.fetch_add(1, std::memory_order_acq_rel);
+                    m_totalPoisonInserted.fetch_add(inserted, std::memory_order_acq_rel);
+                    {
+                        std::lock_guard<std::mutex> lk(m_lastPoisonErrorMx);
+                        m_lastPoisonError.clear();
+                    }
+                    if (inserted) {
+                        ELLE_INFO("ElleSQLFallback: reaper loaded %u poison lines into SQL",
+                                  inserted);
+                    }
+                } catch (const std::exception& e) {
+                    std::lock_guard<std::mutex> lk(m_lastPoisonErrorMx);
+                    m_lastPoisonError = e.what();
+                    ELLE_ERROR("ElleSQLFallback: poison reaper threw: %s", e.what());
+                }
+            }
+        }
     }
+}
+
+ElleSQLFallback::PoisonLoadStatus ElleSQLFallback::GetPoisonLoadStatus() const {
+    PoisonLoadStatus s;
+    s.last_attempt_ms = m_lastPoisonAttemptMs.load(std::memory_order_acquire);
+    s.last_success_ms = m_lastPoisonSuccessMs.load(std::memory_order_acquire);
+    s.last_inserted   = m_lastPoisonInserted.load(std::memory_order_acquire);
+    s.total_attempts  = m_totalPoisonAttempts.load(std::memory_order_acquire);
+    s.total_successes = m_totalPoisonSuccesses.load(std::memory_order_acquire);
+    s.total_inserted  = m_totalPoisonInserted.load(std::memory_order_acquire);
+    {
+        std::lock_guard<std::mutex> lk(m_lastPoisonErrorMx);
+        s.last_error = m_lastPoisonError;
+    }
+    return s;
 }
 
 bool ElleSQLFallback::ReplayLine(const std::string& jsonLine, std::string& outErr) {

@@ -10,6 +10,92 @@
 > *the audit identified a real problem but the right fix requires a
 > design conversation, not just code*.
 
+## This pass — what landed (Feb 2026 — pass 13)
+
+### SQL fallback queue — Phase 3 — **LANDED (audit row 3 → ✅)**
+
+The `WorkerLoop` in `ElleSQLFallback` now does double duty: every
+wake (10s timer + nudge) it still drains the live JSONL queue, and
+once per `m_poisonLoadIntervalMs` (default 5 min, configurable via
+`http_server.sqlfallback_poison_load_interval_secs`) it also calls
+`LoadPoisonIntoSql(500)` — but only after the `SELECT 1` probe
+confirms SQL is back. Every reaper tick bumps `total_attempts`,
+records `last_attempt_ms`, and on success updates
+`last_success_ms` + `last_inserted` + `total_inserted`. On exception
+the reaper logs and stores `m_lastPoisonError` (rest of the
+WorkerLoop keeps running).
+
+New public API:
+- `SetPoisonLoadIntervalMs(uint64_t)` / `PoisonLoadIntervalMs()` —
+  configure (0 = disabled, any positive value enables).
+- `GetPoisonLoadStatus() -> PoisonLoadStatus` snapshot
+  (`last_attempt_ms`, `last_success_ms`, `last_inserted`,
+  `total_attempts`, `total_successes`, `total_inserted`,
+  `last_error`).
+
+Wired in `Elle.Service.HTTP::OnStart`: reads
+`http_server.sqlfallback_poison_load_interval_secs` (default 300),
+calls `SetPoisonLoadIntervalMs(secs*1000)` + `NudgeDrain()`, logs
+`"SQL fallback poison reaper: enabled, interval=300s"`. Setting the
+config to `0` cleanly disables the reaper.
+
+### Observability — `/api/server/status` now exposes the queue
+
+`HTTPServer_ServerRoutes.cpp` extended with a `sql_fallback` block:
+
+```json
+{
+  "services": [...],
+  "count": ...,
+  "version": "...",
+  "uptime_ms": ...,
+  "sql_fallback": {
+    "enabled": true,
+    "max_retries": 5,
+    "poison_load_interval_ms": 300000,
+    "pending_bytes": 0,
+    "pending_files": 0,
+    "poison_bytes": 1247,
+    "poison_files": 1,
+    "reaper": {
+      "last_attempt_ms":  1700000010000,
+      "last_success_ms":  1700000010000,
+      "last_inserted":    3,
+      "total_attempts":   42,
+      "total_successes":  41,
+      "total_inserted":   18,
+      "last_error":       ""
+    }
+  }
+}
+```
+
+This makes the queue + reaper end-to-end visible from a single curl
+without needing direct disk or DB access — the operator dashboard
+can poll it.
+
+### Config schema
+
+`elle_master_config.json` → `http_server.sqlfallback_poison_load_interval_secs = 300`
+added to the canonical schema.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition   | 39/39 PASS |
+| Probability | 85/85 PASS |
+| Composer    | 17/17 PASS |
+| Language    | 1/1 PASS |
+| Shared      | 34/34 PASS |
+| **Total local Linux ctest** | **176/176 PASS** |
+
+`ElleSQLFallback.cpp` re-validated standalone under
+`g++ -std=c++17 -Wall -Wextra` with stub deps — clean. NUDE CODE
+preserved.
+
+---
+
 ## This pass — what landed (Feb 2026 — pass 12)
 
 ### SQL fallback queue — Phase 2 — **LANDED**
@@ -754,7 +840,7 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 |---|------|--------|-------|
 | 1 | Auth defaults / public bind / no-auth flag | ↪ | Fail-closed defaults + runtime guard landed in `SLOPPY_WORK_FIX.md` |
 | 2 | SQL pool drops connection slots on reconnect-fail | ↪ | Slot now returned to pool, `notify_one()` fires |
-| 3 | SQL fallback queue lies about durability | 🟡 PHASE-2-LANDED | **Phase 1** (pass 11): `ElleSQLFallbackClassifier.h` adds idempotency hints (`ClassifyExec`/`ClassifyCallProc`). JSONL line format carries `idem` + `retry_count`. `DrainNow()` quarantines non-idempotent failures immediately to `<exe>/sqllogs/poison/YYYY-MM-DD.txt`; idempotent/unknown failures retry up to `m_maxRetries` (5) before quarantine. **Phase 2** (pass 12): `SQL/_Shared/01_sql_fallback_poison.sql` adds `dbo.SQLFallbackPoison` table + three stored procs (`usp_SQLFallbackPoisonLoad`, `usp_SQLFallbackPoisonMarkReplayed`, `usp_SQLFallbackPoisonList`). New `ElleSQLFallback::ListPoison(maxLines)` and `LoadPoisonIntoSql(maxLines)` C++ APIs. Two new admin routes wired in `HTTPServer_AdminRoutes.cpp`: `GET /api/admin/sqlfallback/poison` (returns parsed poison-file contents + counts) and `POST /api/admin/sqlfallback/poison/load` (pulls poison rows into the SQL table, idempotent on duplicates via `source_file + raw_line` lookup). Total HTTP routes now **160** (was 158 + 2). Shared ctest 34/34, all suites green. |
+| 3 | SQL fallback queue lies about durability | 🟢 PHASE-3-LANDED | **Phase 1** (pass 11): `ElleSQLFallbackClassifier.h` adds idempotency hints. JSONL line carries `idem` + `retry_count`. `DrainNow()` quarantines non-idempotent failures immediately; idempotent/unknown failures retry up to `m_maxRetries` (5) before quarantine. **Phase 2** (pass 12): `SQL/_Shared/01_sql_fallback_poison.sql` adds `dbo.SQLFallbackPoison` + 3 stored procs. C++ APIs `ListPoison`/`LoadPoisonIntoSql`. Admin routes `GET /api/admin/sqlfallback/poison` + `POST /api/admin/sqlfallback/poison/load`. **Phase 3** (pass 13): poison reaper auto-loads — `WorkerLoop` now calls `LoadPoisonIntoSql(500)` every `m_poisonLoadIntervalMs` (default 5 min via `http_server.sqlfallback_poison_load_interval_secs=300`) once SQL is reachable. Status (`last_attempt_ms`, `last_success_ms`, `last_inserted`, totals, `last_error`) surfaced via new `GetPoisonLoadStatus()` and embedded in `/api/server/status` under `sql_fallback.reaper` alongside `pending_bytes`, `pending_files`, `poison_bytes`, `poison_files`. **Closed: full op-classifier + durable queue table + poison quarantine + auto-replay + observability.** ✅ |
 | 4 | Probability silently falls back to in-memory | ↪ | `ELLE_PROBABILITY_ALLOW_INMEMORY=1` opt-in, otherwise fail-closed |
 | 5 | Probability belief store never persisted | ✅ FIXED-THIS-PASS | Full SQL schema `SQL/Elle.Service.Probability/01_belief_persistence.sql` (5 tables + view + 4 procs + table-type). C++ interface `IBeliefPersistence` + `InMemoryBeliefPersistence` (real impl) + 8 doctest cases. Wiring into `BeliefStore::attachPersistence` is the next sub-step. |
 | 6 | GoalEngine LLM dependency | ↪ | Drop-in `GoalEngine.cpp` removed `FormGoal` call |
@@ -838,8 +924,8 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 
 ## Next pass — recommended priority order
 
-1. ⏸ **MSVC verification** of the HTTP god-file split (Phase A + B + C). Follow `Docs/HTTP_GOD_FILE_MSVC_VERIFICATION.md`: build `Elle.Service.HTTP.vcxproj`, confirm `Registered 160 API routes` at startup, run the 19-route smoke (one per registrar + `/api/admin/sqlfallback/poison`), then flip Anti-Slop matrix row 8/15 to ✅.
-2. ⏸ **SQL Fallback — Phase 3 (auto-load + observability)**: schedule a background task in `Elle.Service.HTTP` (or a dedicated `Elle.Service.SQLReaper`) to call `ElleSQLFallback::Instance().LoadPoisonIntoSql()` every N minutes once SQL is reachable, and expose a count in `/api/server/status`.
+1. ⏸ **MSVC verification** of the HTTP god-file split (Phase A + B + C) + SQL Fallback Phase 2/3. Follow `Docs/HTTP_GOD_FILE_MSVC_VERIFICATION.md`: build `Elle.Service.HTTP.vcxproj`, confirm `Registered 160 API routes` at startup + `SQL fallback poison reaper: enabled, interval=300s`, run the 20-route smoke (one per registrar + `/api/admin/sqlfallback/poison` + the `sql_fallback` block inside `/api/server/status`). When green flip Anti-Slop matrix rows 8/15 to ✅.
+2. ⏸ **Apply `SQL/_Shared/01_sql_fallback_poison.sql`** to the `ElleCore` DB on the Windows host before exercising the new poison admin routes or letting the reaper write.
 3. ⏸ **Upload + SHN write hardening** (#9, #10).
 4. ⏸ **Restart-persistence + CI smoke tests** (D32–D35 remaining).
 5. ⏸ **Android client rewrite** to remove pair UI.

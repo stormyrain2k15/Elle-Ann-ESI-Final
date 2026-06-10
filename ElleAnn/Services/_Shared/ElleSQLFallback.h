@@ -60,6 +60,25 @@ public:
     void SetMaxRetries(uint32_t n) { m_maxRetries.store(n, std::memory_order_release); }
     uint32_t MaxRetries() const { return m_maxRetries.load(std::memory_order_acquire); }
 
+    void SetPoisonLoadIntervalMs(uint64_t ms) {
+        m_poisonLoadIntervalMs.store(ms, std::memory_order_release);
+    }
+    uint64_t PoisonLoadIntervalMs() const {
+        return m_poisonLoadIntervalMs.load(std::memory_order_acquire);
+    }
+
+    struct PoisonLoadStatus {
+        uint64_t last_attempt_ms   = 0;
+        uint64_t last_success_ms   = 0;
+        uint32_t last_inserted     = 0;
+        uint32_t total_attempts    = 0;
+        uint32_t total_successes   = 0;
+        uint32_t total_inserted    = 0;
+        std::string last_error;
+    };
+
+    PoisonLoadStatus GetPoisonLoadStatus() const;
+
 private:
     ElleSQLFallback() = default;
     ~ElleSQLFallback();
@@ -73,6 +92,16 @@ private:
     std::atomic<bool> m_enabled{false};
     std::atomic<bool> m_running{false};
     std::atomic<uint32_t> m_maxRetries{5};
+    std::atomic<uint64_t> m_poisonLoadIntervalMs{0};
+
+    std::atomic<uint64_t> m_lastPoisonAttemptMs{0};
+    std::atomic<uint64_t> m_lastPoisonSuccessMs{0};
+    std::atomic<uint32_t> m_lastPoisonInserted{0};
+    std::atomic<uint32_t> m_totalPoisonAttempts{0};
+    std::atomic<uint32_t> m_totalPoisonSuccesses{0};
+    std::atomic<uint32_t> m_totalPoisonInserted{0};
+    mutable std::mutex    m_lastPoisonErrorMx;
+    std::string           m_lastPoisonError;
 
     std::thread             m_worker;
     std::mutex              m_workerMutex;
