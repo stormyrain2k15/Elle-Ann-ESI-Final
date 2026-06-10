@@ -82,8 +82,8 @@ protected:
             "imagination.max_iterations", 3);
         m_recombineCount = (uint32_t)ElleConfig::Instance().GetInt(
             "imagination.recombine_count", 4);
-        // imagination.use_llm_refinement defaults false — deterministic Mutate is the primary path.
-        // LLM refinement is never used; this flag is kept for config compatibility only.
+
+
         m_useLLM = false;
         ELLE_INFO("Imagination service started (max_iter=%u, recombine=%u, llm=%d)",
                   m_maxIters, m_recombineCount, (int)m_useLLM);
@@ -314,18 +314,16 @@ private:
                  const std::string& goal,
                  const std::vector<std::string>& constraints,
                  const std::vector<ELLE_GOAL_RECORD>& goals) {
-        // -------------------------------------------------------------------
-        // Deterministic refinement — no LLM, no external inference.
-        // Strategy: identify which scoring dimension is weakest and apply
-        // a targeted mutation that directly addresses it.
-        // -------------------------------------------------------------------
+
+
+
+
 
         const double goalScore    = sc.goalAlignment;
         const double ethicsScore  = sc.ethicalSafety;
         const double plausibility = sc.plausibility;
         const double resonance    = sc.emotionalResonance;
 
-        // Find the weakest dimension
         double minScore = goalScore;
         std::string weakDim = "goal";
         if (ethicsScore  < minScore) { minScore = ethicsScore;  weakDim = "ethics"; }
@@ -333,13 +331,13 @@ private:
         if (resonance    < minScore) { minScore = resonance;    weakDim = "resonance"; }
 
         if (weakDim == "goal" && !goal.empty()) {
-            // Prepend goal alignment phrase to summary
+
             if (sc.summary.find(goal.substr(0, 20)) == std::string::npos) {
                 sc.summary = "Working toward: " + goal.substr(0, 60) + ". " + sc.summary;
                 if (sc.summary.size() > 800) sc.summary.resize(800);
             }
         } else if (weakDim == "ethics") {
-            // Inject a constraint-honoring prefix
+
             if (!constraints.empty()) {
                 std::string cf = constraints[0];
                 if (sc.summary.find(cf.substr(0, 15)) == std::string::npos) {
@@ -348,7 +346,7 @@ private:
                 }
             }
         } else if (weakDim == "resonance") {
-            // Inject emotional warmth if missing
+
             static const char* warmPhrases[] = {
                 " This matters.",
                 " There is something hopeful in this.",
@@ -359,7 +357,7 @@ private:
             sc.summary += warmPhrases[d(m_rng)];
             if (sc.summary.size() > 800) sc.summary.resize(800);
         } else {
-            // Plausibility or fallback: standard part swap mutation
+
             Mutate(sc);
         }
 

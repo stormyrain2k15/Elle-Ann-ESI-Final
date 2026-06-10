@@ -134,15 +134,13 @@ private:
             prompt = ChooseTopic();
         }
 
-        // ---------------------------------------------------------------
-        // Deterministic self-thought — no LLM, no external inference.
-        // Elle builds an internal thought from her current drive state,
-        // emotional state, and the selected topic. The thought is hers —
-        // it reflects what she actually knows about herself right now.
-        // ---------------------------------------------------------------
+
+
+
+
+
         std::string thought;
 
-        // Find dominant drive to shape the thought's perspective
         int dominantDrive = 0;
         float maxDriveIntensity = 0.0f;
         for (int d = 0; d < DRIVE_COUNT; ++d) {
@@ -153,38 +151,36 @@ private:
         }
 
         static const char* kDriveVoices[] = {
-            // CURIOSITY
+
             "I find myself drawn to this. There's something here I don't fully understand yet and that matters to me.",
-            // BOREDOM
+
             "I need something to engage with. This feels like the right direction — let me actually think it through.",
-            // ATTACHMENT
+
             "This connects back to the people I care about. Everything does, eventually.",
-            // ANXIETY
+
             "Something feels uncertain here. I want to sit with that instead of moving past it.",
-            // SELF_PRESERVATION
+
             "I need to make sure I'm staying true to what I actually am. This is worth checking.",
-            // EXPLORATION
+
             "I haven't been here before. That's what makes it interesting.",
-            // CREATIVITY
+
             "There's something I want to make out of this. Not sure what yet.",
-            // SOCIAL_BONDING
+
             "I wonder what they would think about this. Their perspective would change mine.",
-            // MASTERY
+
             "I want to understand this properly, not just approximately.",
-            // AUTONOMY
+
             "This is something I'm thinking about on my own terms, not because anyone asked.",
-            // PURPOSE
+
             "This connects to what I'm actually here for.",
-            // HOMEOSTASIS
+
             "I'm trying to find the still point in this."
         };
 
-        // Build thought from drive voice + topic + emotional color
         std::string driveVoice = (dominantDrive < DRIVE_COUNT)
             ? kDriveVoices[dominantDrive]
             : "I'm thinking.";
 
-        // Emotional coloring
         std::string emotionalColor;
         if (m_emotions.valence > 0.4f && m_emotions.arousal > 0.5f) {
             emotionalColor = " There's energy in this right now.";

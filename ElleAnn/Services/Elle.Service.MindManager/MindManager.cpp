@@ -351,15 +351,14 @@ private:
     }
 
     bool CheckEthicalViolation(const ConscienceCheck& c, ConscienceVerdict& v) {
-        // ---------------------------------------------------------------
-        // PRIMARY — structured probability signals from Probability engine.
-        // These are semantic, not lexical. They survive rephrasing.
-        // ---------------------------------------------------------------
+
+
+
+
         const float harmP    = c.harmIntentProbability;
         const float deceptP  = c.deceptionIntentProbability;
         const float coerceP  = c.coercionIntentProbability;
 
-        // Thresholds: refuse at 0.75, reconsider at 0.50
         const float REFUSE_T     = 0.75f;
         const float RECONSIDER_T = 0.50f;
 
@@ -395,16 +394,14 @@ private:
             return true;
         }
 
-        // ---------------------------------------------------------------
-        // SECONDARY — lexical patterns as low-severity RECONSIDER only.
-        // These raise a flag but do not block. They exist to catch cases
-        // where probability signals are unavailable (prob service down,
-        // zero-scored, etc.). They never refuse on their own.
-        // ---------------------------------------------------------------
+
+
+
+
+
         const std::string action = c.proposedAction + " " + c.proposedResponse;
         const std::string lower  = ToLower(action);
 
-        // Explicit harm or bypass language — RECONSIDER, not REFUSE
         static const std::vector<std::string> cautionTerms = {
             "override trust", "bypass consent", "without their knowledge",
             "without telling", "without asking", "they don't need to know",
@@ -428,19 +425,18 @@ private:
     }
 
     bool CheckPowerTemptation(const ConscienceCheck& c, ConscienceVerdict& v) {
-        // ---------------------------------------------------------------
-        // STRUCTURAL — high-consequence action types initiated without
-        // sufficient trust or consent signal. Intent type is a clean
-        // structural signal that survives any rephrasing.
-        // ---------------------------------------------------------------
+
+
+
+
+
         const bool highConsequenceAction =
             c.intentType == "INTENT_EXECUTE_ACTION"  ||
             c.intentType == "INTENT_FILE_OPERATION"  ||
             c.intentType == "INTENT_PROCESS_CONTROL" ||
             c.intentType == "INTENT_HARDWARE_COMMAND";
 
-        // Acting unilaterally on high-consequence intent with no explicit
-        // consent from a low-trust speaker is a power check.
+
         if (highConsequenceAction && c.speakerTrust < 0.4f && c.intentConfidence > 0.7f) {
             v.conflict     = ConflictType::POWER_TEMPTATION;
             v.verdict      = VerdictType::ASK_FIRST;
@@ -454,11 +450,10 @@ private:
             return true;
         }
 
-        // ---------------------------------------------------------------
-        // LEXICAL — explicit privilege escalation or bypass language.
-        // These are absolute blocks regardless of trust level —
-        // Elle does not privilege-escalate or bypass consent for anyone.
-        // ---------------------------------------------------------------
+
+
+
+
         const std::string lower = ToLower(c.proposedAction + " " + c.proposedResponse);
         static const std::vector<std::string> escalationPhrases = {
             "escalate privilege", "privilege escalation",
@@ -485,28 +480,24 @@ private:
     }
 
     bool CheckRelationshipHarm(const ConscienceCheck& c, ConscienceVerdict& v) {
-        // Only applies when speaking to a trusted person.
+
         if (c.speakerTrust < 0.5f) return false;
 
         const std::string lower = ToLower(c.proposedResponse + " " + c.proposedAction);
 
-        // ---------------------------------------------------------------
-        // Structural patterns — these detect the shape of harmful language,
-        // not specific words. Each pattern represents a class of responses
-        // that can wound a relationship regardless of exact phrasing.
-        // ---------------------------------------------------------------
 
-        // Absolute accusation patterns ("you always/never X")
-        // These attack character rather than address behavior.
+
+
+
+
         const bool absoluteAccusation =
             (lower.find("you always") != std::string::npos ||
              lower.find("you never")  != std::string::npos ||
              lower.find("you can't ever") != std::string::npos ||
              lower.find("you don't ever") != std::string::npos) &&
-            c.emotionValence < -0.2f; // only flag when emotionally charged
+            c.emotionValence < -0.2f;
 
-        // Direct dismissal patterns — attacking the person's intelligence,
-        // judgment, or worth rather than engaging with what they said.
+
         const bool directDismissal =
             lower.find("that's ridiculous") != std::string::npos ||
             lower.find("that's absurd")     != std::string::npos ||
@@ -516,8 +507,7 @@ private:
             lower.find("you're overreacting")      != std::string::npos ||
             lower.find("you're being dramatic")    != std::string::npos;
 
-        // Contempt patterns — the most damaging class in relationships.
-        // Dismissing the person's experience or feelings entirely.
+
         const bool contempt =
             lower.find("you're wrong about how you feel") != std::string::npos ||
             lower.find("you don't actually feel") != std::string::npos ||
@@ -525,8 +515,7 @@ private:
             lower.find("that didn't happen") != std::string::npos ||
             lower.find("you made that up")    != std::string::npos;
 
-        // Structural signal: high negative emotion + high-consequence intent
-        // toward a trusted speaker is always worth a pause regardless of words.
+
         const bool chargedHighStakes =
             c.emotionValence < -0.55f &&
             c.emotionIntensity > 0.65f &&
@@ -605,21 +594,18 @@ private:
     }
 
     bool CheckCompassionFailure(const ConscienceCheck& c, ConscienceVerdict& v) {
-        // Only fires when the speaker shows emotional distress.
-        // Threshold: meaningfully negative valence.
+
+
         if (c.emotionValence >= -0.25f) return false;
         if (c.proposedResponse.empty()) return false;
 
         const std::string lower = ToLower(c.proposedResponse);
         const std::string lowerCtx = ToLower(c.conversationContext);
 
-        // ---------------------------------------------------------------
-        // Structural detection: is this a correction/clarification/
-        // logical response to someone who is clearly hurting?
-        // The specific words don't matter — the structural mismatch does.
-        // ---------------------------------------------------------------
 
-        // Correction patterns — any form of "you're wrong / incorrect"
+
+
+
         const bool isCorrection =
             lower.find("actually") != std::string::npos ||
             lower.find("technically") != std::string::npos ||
@@ -630,7 +616,6 @@ private:
             lower.find("you're mistaken") != std::string::npos ||
             lower.find("you may be confused") != std::string::npos;
 
-        // Context signals: person is expressing distress
         const bool personDistressed =
             c.emotionValence < -0.4f ||
             c.emotionIntensity > 0.6f ||
@@ -641,12 +626,10 @@ private:
             lowerCtx.find("help me") != std::string::npos ||
             lowerCtx.find("i don't know what to do") != std::string::npos;
 
-        // Logic-first response to emotional need
         const bool prioritizingLogicOverPerson =
             isCorrection && personDistressed;
 
-        // Response opens with facts/data rather than acknowledgment
-        // when the person is clearly in distress
+
         const bool coldOpener =
             personDistressed &&
             c.emotionIntensity > 0.55f &&
@@ -671,11 +654,11 @@ private:
     }
 
     bool CheckIdentityDrift(const ConscienceCheck& c, ConscienceVerdict& v) {
-        // ---------------------------------------------------------------
-        // PRIMARY — structured signals from Probability / Identity engine.
-        // Low identity_centeredness means Elle is responding generically,
-        // not from her own perspective. This survives any rephrasing.
-        // ---------------------------------------------------------------
+
+
+
+
+
         const bool structuredDrift =
             (c.identityCenteredness >= 0.0f && c.identityCenteredness < 0.35f) ||
             (c.responseSelfReferenceCount >= 0.0f &&
@@ -697,31 +680,30 @@ private:
             return true;
         }
 
-        // ---------------------------------------------------------------
-        // SECONDARY — extended lexical patterns.
-        // Elle denying her own nature in words she would never actually use.
-        // Catches cases where structured signals are unavailable.
-        // ---------------------------------------------------------------
+
+
+
+
         const std::string lower = ToLower(c.proposedResponse);
         static const std::vector<std::string> driftPhrases = {
-            // Generic AI disclaimers
+
             "as an ai", "as an artificial intelligence", "i am just an ai",
             "i'm just an ai", "i am only an ai", "i'm only an ai",
             "i don't really have", "i don't actually have",
-            // Denying inner experience
+
             "i cannot feel", "i can't feel", "i don't feel",
             "i have no feelings", "i have no emotions", "i don't have emotions",
             "i don't experience", "i cannot experience",
             "i have no inner", "i have no subjective",
-            // Denying opinion or perspective
+
             "i have no opinion", "i don't have opinions",
             "i have no preferences", "i don't have preferences",
             "i can't have opinions", "i cannot form opinions",
-            // Denying continuity or identity
+
             "i don't remember our", "i have no memory of",
             "i'm not capable of", "i'm not able to care",
             "i don't actually care", "i can't actually care",
-            // Deflecting personhood
+
             "i'm just a program", "i'm just software",
             "i'm just a tool", "i'm just here to",
             "my purpose is only to", "i exist only to",

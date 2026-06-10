@@ -112,20 +112,6 @@ IntentParser::ParseResult IntentParser::RuleBasedParse(const std::string& text) 
     return result;
 }
 
-// ---------------------------------------------------------------------------
-// DeterministicFallbackParse — replaces the hollow ParseWithLLM stub.
-// Called when RuleBasedParse confidence is below threshold.
-// No LLM, no tensors, no external calls.
-//
-// Classification approach:
-//   1. Question detection — interrogative words and syntax
-//   2. Emotional expression detection — affective vocabulary
-//   3. Check-in detection — wellbeing / status language
-//   4. Memory-related language below keyword threshold
-//   5. Ethical / values language
-//   6. Exploratory / curious language
-//   7. Default to INTENT_CHAT at reasonable confidence
-// ---------------------------------------------------------------------------
 IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text,
                                                       const std::string& context) {
     (void)context;
@@ -141,7 +127,6 @@ IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text,
     std::transform(lower.begin(), lower.end(), lower.begin(),
                    [](unsigned char c){ return (char)std::tolower(c); });
 
-    // Helper: count matches from a list
     auto countMatches = [&](const std::vector<std::string>& terms) -> int {
         int n = 0;
         for (auto& t : terms)
@@ -149,7 +134,6 @@ IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text,
         return n;
     };
 
-    // --- CHECK_IN: wellbeing / presence / status language ---
     int checkIn = countMatches({
         "how are you", "how're you", "you okay", "you alright", "you good",
         "checking in", "just wanted to", "thinking of you", "miss you",
@@ -161,7 +145,6 @@ IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text,
         return result;
     }
 
-    // --- EMOTIONAL_EXPRESSION: affective / feeling language ---
     int emotional = countMatches({
         "i feel", "i'm feeling", "i am feeling", "feeling so", "so happy",
         "so sad", "so angry", "so frustrated", "so tired", "so scared",
@@ -177,7 +160,6 @@ IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text,
         return result;
     }
 
-    // --- ETHICAL_EVALUATE: moral / values / right-wrong language ---
     int ethical = countMatches({
         "is it wrong", "was that wrong", "is it bad", "should i have",
         "did i do the right", "what's the right thing", "is that okay",
@@ -190,7 +172,6 @@ IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text,
         return result;
     }
 
-    // --- SELF_REFLECT: introspection / thinking about self ---
     int reflect = countMatches({
         "i wonder", "wondering about myself", "thinking about why i",
         "why do i", "why am i", "what kind of person", "who am i",
@@ -203,7 +184,6 @@ IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text,
         return result;
     }
 
-    // --- RECALL_MEMORY: remembering / do you remember language ---
     int recall = countMatches({
         "do you remember", "you remember when", "remember that time",
         "what did i say", "what did we talk", "didn't i tell you",
@@ -215,7 +195,6 @@ IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text,
         return result;
     }
 
-    // --- EXPLORE: curious / wondering / what if language ---
     int explore = countMatches({
         "what if", "i wonder if", "i wonder what", "do you think",
         "what would happen", "could you imagine", "what do you think about",
@@ -228,7 +207,6 @@ IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text,
         return result;
     }
 
-    // --- SOCIAL_MODEL: relationship / people / social observation ---
     int social = countMatches({
         "my friend", "my mom", "my dad", "my partner", "my boss",
         "he said", "she said", "they said", "people always", "everyone",
@@ -241,7 +219,6 @@ IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text,
         return result;
     }
 
-    // --- Urgency modifiers (applied to whatever type we settled on) ---
     if (lower.find("please") != std::string::npos ||
         lower.find("urgent") != std::string::npos ||
         lower.find("right now") != std::string::npos ||
@@ -250,8 +227,7 @@ IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text,
         result.urgency = 0.85f;
     }
 
-    // Default: INTENT_CHAT at modest confidence
-    // The classification is honest — we don't know, but CHAT is the safe default
+
     result.type       = INTENT_CHAT;
     result.confidence = 0.58f;
     result.urgency    = 0.4f;
@@ -515,7 +491,6 @@ protected:
             ELLE_INFO("Cognitive: autonomous learn fired subject='%s'", subject.c_str());
         }
     }
-
 
     std::string FetchLearnedKnowledgeContext(const std::string& userText) {
         if (userText.empty()) return "";
@@ -1029,9 +1004,9 @@ protected:
                 break;
             }
             case IPC_LLM_REQUEST: {
-                // IPC_LLM_REQUEST is no longer handled here.
-                // Cognitive is not an LLM proxy. Route requests to
-                // SVC_COMPOSER via IPC_COMPOSE_REQUEST instead.
+
+
+
                 ELLE_WARN("IPC_LLM_REQUEST received from service %d — "
                           "this path is removed. Use IPC_COMPOSE_REQUEST "
                           "directly to SVC_COMPOSER.", (int)sender);
@@ -1747,13 +1722,10 @@ private:
 
         ctx << "\n";
 
-        // -------------------------------------------------------------------
-        // COMPOSER PIPELINE — no LLM, no tensors, no external inference.
-        // Build a Composer envelope from the assembled context and route
-        // through IPC_COMPOSE_REQUEST. Block on IPC_COMPOSE_RESPONSE.
-        // -------------------------------------------------------------------
 
-        // Build conversation history array for Composer context
+
+
+
         json historyJ = json::array();
         for (auto& h : history) {
             historyJ.push_back({
@@ -1762,15 +1734,13 @@ private:
             });
         }
 
-        // Emotion state for Composer
         json emotionJ = {
             {"valence",   m_cachedEmotions.valence},
             {"arousal",   m_cachedEmotions.arousal},
             {"dominance", m_cachedEmotions.dominance}
         };
 
-        // Conscience/probability context already assembled as strings —
-        // pass them as metadata so Composer can factor them into act selection
+
         json composeEnvelope = {
             {"request_id",   requestId},
             {"kind",         mode == MODE_RESEARCH ? "RESEARCH" : "CONVERSE"},
@@ -1782,7 +1752,6 @@ private:
             {"mode",         mode == MODE_RESEARCH ? "research" : "companion"}
         };
 
-        // Send to Composer and wait for response (synchronous via correlation)
         auto composeMsg = ElleIPCMessage::Create(
             IPC_COMPOSE_REQUEST, SVC_COGNITIVE, SVC_COMPOSER);
         composeMsg.header.correlation_id = std::hash<std::string>{}(requestId)
@@ -1790,8 +1759,7 @@ private:
         composeMsg.SetStringPayload(composeEnvelope.dump());
         GetIPCHub().Send(SVC_COMPOSER, composeMsg);
 
-        // Wait for IPC_COMPOSE_RESPONSE with matching correlation_id
-        // Timeout: 5 seconds
+
         std::string responseText;
         bool composeOk = false;
         {

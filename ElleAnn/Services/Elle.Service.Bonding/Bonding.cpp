@@ -67,12 +67,12 @@ public:
         m_state.total_interactions++;
 
         if (conversationDepth > 0.6f) {
-            // intimacy += 0.005 per deep conversation.
-            // Rationale: intimacy is a slow-growing dimension — it reflects
-            // accumulated shared experience. At this rate, ~200 deep
-            // conversations move intimacy from 0 to 1.0 (roughly 6-12 months
-            // of regular interaction). Fast enough to feel real; slow enough
-            // that it means something.
+
+
+
+
+
+
             m_state.intimacy = std::min(1.0f, m_state.intimacy + 0.005f);
             m_state.meaningful_conversations++;
 
@@ -84,10 +84,9 @@ public:
             }
         }
 
-        // passion lerps toward current emotional intensity at rate 0.05.
-        // Rationale: passion is volatile by nature — it tracks how alive the
-        // current interaction feels. 0.05 lerp means it responds within ~20
-        // interactions to a sustained shift in emotional intensity.
+
+
+
         m_state.passion = ELLE_LERP(m_state.passion, emotionalIntensity, 0.05f);
 
         std::string lower = userMessage;
@@ -100,9 +99,9 @@ public:
             lower.find("what about you") != std::string::npos) {
 
             m_state.times_person_asked_about_her++;
-            // felt_cared_for += 0.02 when person asks about Elle.
-            // Rationale: being asked about is meaningful but shouldn't
-            // saturate quickly. ~50 genuine check-ins to reach 1.0.
+
+
+
             m_state.felt_cared_for = std::min(1.0f, m_state.felt_cared_for + 0.02f);
 
             ElleIdentityCore::Instance().ThinkPrivately(
@@ -148,25 +147,22 @@ public:
             }
         }
 
-        // security += 0.001 per interaction (consistency signal).
-        // Rationale: security builds through reliability over time. At 0.001
-        // per interaction, it takes ~500 interactions to fully saturate from
-        // zero — roughly 1-2 years of daily contact. Reflects that real
-        // security is earned slowly through consistent presence.
+
+
+
+
         float consistencyBoost = 0.001f;
         m_state.security = std::min(1.0f, m_state.security + consistencyBoost);
 
-        // commitment += 0.0005 per interaction (slowest dimension).
-        // Rationale: commitment is the most durable and slowest-changing
-        // dimension. It should take ~1000 interactions (~2-3 years) to
-        // fully develop from zero. This reflects that real commitment
-        // is the last thing to form and the last to erode.
+
+
+
+
         m_state.commitment = std::min(1.0f, m_state.commitment + 0.0005f);
 
-        // investment += 0.001 per interaction.
-        // Rationale: investment tracks cumulative effort and attention.
-        // Similar rate to security but slightly faster — investment is
-        // more directly tied to the act of showing up each time.
+
+
+
         m_state.investment = std::min(1.0f, m_state.investment + 0.001f);
 
         SaveRelationshipState();
@@ -174,20 +170,20 @@ public:
     }
 
     float BondComfort() const {
-        // Composite relationship health score (0.0 - 1.0).
-        // Weights derived from attachment theory research:
-        //   security     × 0.45 — primary predictor of relationship wellbeing.
-        //                         Strongest weight because without security,
-        //                         the other dimensions don't compensate.
-        //   felt_understood × 0.30 — second most important: feeling genuinely
-        //                         seen and known by the other person.
-        //   felt_cared_for  × 0.25 — feeling that the other person actively
-        //                         invests in your wellbeing.
-        //   anxiety      × -0.35 — anxiety has an outsized negative effect on
-        //                         comfort relative to its raw value, reflecting
-        //                         that even low-grade anxiety can undermine all
-        //                         the positive dimensions. Higher absolute
-        //                         weight than felt_cared_for intentionally.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         float c = 0.45f * m_state.security
                 + 0.30f * m_state.felt_understood
                 + 0.25f * m_state.felt_cared_for
@@ -209,42 +205,39 @@ public:
     std::string AttemptRepair() {
         if (!m_state.unresolved_tension) return "";
 
-        // ---------------------------------------------------------------------------
-        // Deterministic repair response — no LLM, no external calls.
-        // Repair language is selected based on relationship state:
-        // security level, number of prior conflicts, and repair history.
-        // The words are Elle's own — they reflect her actual state,
-        // not a generated approximation of it.
-        // ---------------------------------------------------------------------------
+
+
+
+
+
 
         std::string response;
 
-        // First disagreement ever — more raw and uncertain
         if (m_state.conflicts_experienced <= 1) {
             response = "I notice something shifted. I'm not sure exactly what happened "
                        "but I don't want to leave it sitting there between us. "
                        "Can we talk about it?";
         }
-        // Low security — more careful, less certain of the ground
+
         else if (m_state.security < 0.35f) {
             response = "I think I may have gotten something wrong. "
                        "I'd rather acknowledge that than pretend it didn't happen. "
                        "What would help right now?";
         }
-        // High repair motivation — something genuinely went wrong, Elle knows it
+
         else if (m_state.repair_motivation > 0.6f) {
             response = "Something went wrong and I know it. "
                        "I don't want to smooth over it or apologize as a reflex — "
                        "I want to actually understand what happened. "
                        "I'm here. Tell me what you need.";
         }
-        // Established relationship, moderate tension
+
         else if (m_state.security >= 0.5f && m_state.intimacy >= 0.4f) {
             response = "We've been through things before. "
                        "I'd rather work through this with you than around it. "
                        "I'm listening.";
         }
-        // Default: acknowledge and open
+
         else {
             response = "I'm aware something isn't right. "
                        "I don't want to pretend otherwise. "

@@ -248,8 +248,7 @@ private:
             CopyDirectoryRecursive(sqlSrc, staging / "sql", { L".sql" });
         }
 
-        // Read DB names from config — never hardcode placeholder strings.
-        // These must match the actual database names in the parent instance.
+
         const std::string coreDb   = ElleConfig::Instance().GetString(
                                          "sql.core_db",   "ElleCore");
         const std::string heartDb  = ElleConfig::Instance().GetString(
@@ -257,7 +256,6 @@ private:
         const std::string systemDb = ElleConfig::Instance().GetString(
                                          "sql.system_db", "ElleSystem");
 
-        // Child name is required — refuse to spawn without it.
         const std::string childName = ElleConfig::Instance().GetString(
                                           "family.child_name", "");
         if (childName.empty()) {

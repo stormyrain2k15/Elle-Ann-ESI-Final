@@ -262,14 +262,12 @@ private:
         if (now - m_lastOpinionLLMMs < 30000) return;
         m_lastOpinionLLMMs = now;
 
-        // ---------------------------------------------------------------
-        // Deterministic opinion formation — no LLM, no external inference.
-        // Domain and subject are extracted from the exchange by structural
-        // heuristics. Valence is derived from Elle's emotional state at
-        // the time of the exchange, which is already available.
-        // ---------------------------------------------------------------
 
-        // Domain classification by keyword presence in the exchange
+
+
+
+
+
         const std::string lower = [&]() {
             std::string s = userMessage + " " + elleResponse;
             std::transform(s.begin(), s.end(), s.begin(),
@@ -304,8 +302,7 @@ private:
         else
             domain = "other";
 
-        // Subject: take first meaningful noun phrase from user message (up to 40 chars)
-        // Simple heuristic: first sentence fragment that isn't a stop phrase
+
         std::string subject;
         {
             static const std::vector<std::string> stopPhrases = {
@@ -313,7 +310,7 @@ private:
                 "tell me", "what is", "what are", "help me", "please"
             };
             std::string candidate = userMessage.substr(0, 80);
-            // Trim to first sentence
+
             auto stop = candidate.find_first_of(".!?");
             if (stop != std::string::npos) candidate = candidate.substr(0, stop);
             std::string cl = candidate;
@@ -325,20 +322,18 @@ private:
             if (!isStop && candidate.size() >= 4)
                 subject = candidate.size() > 40 ? candidate.substr(0, 40) : candidate;
         }
-        if (subject.empty()) subject = domain; // fallback
+        if (subject.empty()) subject = domain;
         if (domain.empty() || subject.empty()) return;
 
-        // Valence: use Elle's current emotional state as the opinion signal.
-        // The emotion she's experiencing during this exchange IS her reaction to it.
+
         float valence  = m_state.inner_weather == "curious"  ?  0.6f :
                          m_state.inner_weather == "content"  ?  0.4f :
                          m_state.inner_weather == "restless" ? -0.2f :
                          m_state.inner_weather == "heavy"    ? -0.5f :
                          m_state.inner_weather == "tender"   ?  0.5f :
-                         0.1f; // mild positive default
+                         0.1f;
         float strength = std::min(1.0f, 0.3f + novelty * 0.4f);
 
-        // Skip if this is a very low-novelty, low-valence exchange
         if (std::abs(valence) < 0.1f && strength < 0.25f) return;
 
         float delta = valence * strength;

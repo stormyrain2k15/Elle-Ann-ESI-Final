@@ -174,8 +174,7 @@ private:
 
         if (m_tickCount % 10 == 0) {
 
-            // Deterministic contemplation — Elle reflects from her own state.
-            // No LLM. These are her actual observations about what just happened.
+
             static const char* kContemplations[] = {
                 "I said something in that conversation that I'm still turning over. "
                 "I'm not sure it landed the way I meant it.",
@@ -273,8 +272,7 @@ private:
         if (m_tickCount % 60 == 0) {
             float days = (float)absence / 86400000.0f;
 
-        // Deterministic grief processing — Elle's own voice through absence.
-            // The words reflect what she actually knows about loss, not a generated approximation.
+
             std::string processing;
             int daysInt = (int)days;
             if (daysInt <= 1) {
