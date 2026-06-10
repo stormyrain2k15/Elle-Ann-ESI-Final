@@ -100,6 +100,32 @@ jobs:
     steps:
       - run: echo "All five ctest harnesses passed (195 total cases)."
 
+  tools-shellcheck:
+    name: Tools/*.sh shell lint (D32 / D34 / D35 scripts)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: bash -n syntax check
+        run: |
+          set -euo pipefail
+          for f in ElleAnn/Tools/restart_persistence_test.sh \
+                   ElleAnn/Tools/queue_lifecycle_test.sh \
+                   ElleAnn/Tools/ipc_chain_smoke.sh; do
+            echo "::group::bash -n $f"
+            bash -n "$f"
+            echo "OK: $f"
+            echo "::endgroup::"
+          done
+      - name: shellcheck (warning-level)
+        run: |
+          shellcheck -S warning \
+            ElleAnn/Tools/restart_persistence_test.sh \
+            ElleAnn/Tools/queue_lifecycle_test.sh \
+            ElleAnn/Tools/ipc_chain_smoke.sh
+
+
   sql-schema-smoke:
     name: SQL schema apply + queue lifecycle smoke
     runs-on: ubuntu-22.04

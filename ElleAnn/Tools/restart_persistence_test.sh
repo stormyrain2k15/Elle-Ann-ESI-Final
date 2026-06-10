@@ -46,7 +46,8 @@ stop_elle() {
 }
 
 write_seed_state() {
-    local user_session_id="restart-test-$(date +%s)"
+    local user_session_id
+    user_session_id="restart-test-$(date +%s)"
     local memory_payload
     memory_payload=$(printf '{"content":"restart-canary-%s","importance":0.9}' "${user_session_id}")
 

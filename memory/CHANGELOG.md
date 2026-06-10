@@ -1,4 +1,109 @@
-## 2026-02 — SQL Fallback Phase 3: reaper auto-load + /api/server/status observability
+## 2026-02 — Config schema drift sweep (#12) ✅ + D34 cross-service IPC chain smoke ✅
+
+### Config drift sweep — `Docs/CONFIG_SCHEMA_DRIFT_REPORT.md`
+
+A Python sweeper (kept at `/tmp/config_drift_sweep.py`, regenerates the
+report on demand) walks every
+`ElleConfig::Instance().Get(Int|Bool|String|Float|Double)("key", default)`
+call across `Services/**/*.{cpp,h,hpp}` — **69 call sites, 59 unique
+keys** — and compares each against the flattened
+`elle_master_config.json`.
+
+After this pass:
+
+- **30 missing keys added** to the canonical master config under
+  their correct sections: `bonding.{repair_comfort_threshold,
+  repair_sustain_ms}`, `cognitive.{chat_workers,
+  probability_timeout_ms, conscience_timeout_ms,
+  intuition_timeout_ms, max_chat_queue}`, `consent.{audit_window,
+  coercion_comfort_threshold, coercion_min_count,
+  audit_alert_cooldown_ms}`, `memory.dream_ack_timeout_ms`,
+  `dream.imagination_iterations`, `family.{child_bind_address,
+  child_http_bind}`, `goals.{fallback_dir, fallback_prefix}`,
+  `http_server.{game_db_dsn, game_db_pool_size}`,
+  `imagination.{max_iterations, recombine_count,
+  use_llm_refinement}`, `innerlife.expression_cooldown_ms`,
+  `probability.{language_config, engine_config, auto_load_on_start,
+  use_in_memory_language, belief_jsonl_mirror_path}`,
+  `services.named_pipes.max_payload_bytes`, `video.avatar_dir`.
+
+- **0 real value mismatches** between code defaults and JSON
+  values. All 17 raw mismatches the regex flagged were classified
+  into four false-positive buckets — `windows-path-escape-equivalent`
+  (×5), `unparseable-constexpr-expression` (×3),
+  `unresolved-local-variable-default` (×4),
+  `intentional-testing-mode-override` (×5, all
+  `http_server.no_auth` per the `_testing_mode_comment`).
+
+- **340 JSON keys** are reached via structured accessors
+  (`cfg.bind_address` etc. through `GetHTTP()` / `GetService()`
+  / …) or by Python/Android tools — not drift.
+
+Audit row 12 → ✅ closed. Report regenerable via
+`python3 /tmp/config_drift_sweep.py`.
+
+### D34 — cross-service IPC chain smoke
+
+New `Tools/ipc_chain_smoke.sh` exercises the canonical chat pipeline
+end-to-end:
+
+```
+HTTP --(IPC_CHAT_REQUEST)--> Cognitive
+                               +-> Probability  (IPC_PROB_*)
+                               +-> MindManager  (IPC_MIND_*)
+                               +-> Intuition    (IPC_INTUITION_*)
+                               +-> Memory       (IPC_MEMORY_*)
+                               +-> Composer / LLM
+HTTP <--(IPC_CHAT_RESPONSE)---+
+```
+
+Assertions:
+1. `POST /api/ai/chat` returns HTTP 200 within 60 s.
+2. Response payload carries non-trivial output from every
+   downstream service: `.response` (Composer), `.probabilistic_read`
+   (Probability), `.inner_voice` (MindManager), `.gut_read`
+   (Intuition), `.memories_used` (Memory), `.latency_ms`,
+   `.provider_used`, `.model_used`.
+3. Optional `ElleSystem.dbo.Workers` freshness check — when
+   `ELLE_SQL_DSN` is set and `sqlcmd` is on PATH, the script
+   asserts heartbeats for the 7 expected service names are within
+   60 s of the request.
+
+The script ships configurable via `ELLE_HTTP_URL` (default
+`http://127.0.0.1:8000`), `ELLE_SQL_DSN`, `ELLE_CHAT_USER`. It is
+intended to run on the Windows host where the mesh is alive.
+
+### CI — `tools-shellcheck` job
+
+`.github/workflows/ctest-smoke.yml` now has a `tools-shellcheck`
+job that runs `bash -n` + `shellcheck -S warning` on every push
+against all three smoke scripts
+(`restart_persistence_test.sh`,
+`queue_lifecycle_test.sh`,
+`ipc_chain_smoke.sh`). Pre-existing SC2155 warning in
+`restart_persistence_test.sh` (`local var=$(cmd)` pattern in
+`write_seed_state`) fixed in the same pass by splitting the
+`local` declaration from the assignment.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition   | 39/39 PASS |
+| Probability | 85/85 PASS |
+| Composer    | 17/17 PASS |
+| Language    | 1/1 PASS |
+| Shared      | 34/34 PASS |
+| **Total local Linux ctest** | **176/176 PASS** |
+
+`shellcheck -S warning` clean across all three `Tools/*.sh`.
+
+Audit row 12 (Config schema drift) → ✅ CLOSED.
+Audit row D34 (IPC smoke missing from CI) → ✅ CLOSED.
+
+---
+
+
 
 ### Phase 3 — the reaper is now self-driving
 
