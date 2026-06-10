@@ -248,22 +248,39 @@ private:
             CopyDirectoryRecursive(sqlSrc, staging / "sql", { L".sql" });
         }
 
+        // Read DB names from config — never hardcode placeholder strings.
+        // These must match the actual database names in the parent instance.
+        const std::string coreDb   = ElleConfig::Instance().GetString(
+                                         "sql.core_db",   "ElleCore");
+        const std::string heartDb  = ElleConfig::Instance().GetString(
+                                         "sql.heart_db",  "ElleHeart");
+        const std::string systemDb = ElleConfig::Instance().GetString(
+                                         "sql.system_db", "ElleSystem");
+
+        // Child name is required — refuse to spawn without it.
+        const std::string childName = ElleConfig::Instance().GetString(
+                                          "family.child_name", "");
+        if (childName.empty()) {
+            ELLE_ERROR("Family: family.child_name is not set in config — "
+                       "cannot spawn child instance without a name.");
+            return;
+        }
+
         json cfgTemplate = {
             {"identity", {
-                {"name", "CHILD_NAME_PLACEHOLDER"},
-                {"autobiography", ""},
+                {"name",            childName},
+                {"autobiography",   ""},
                 {"baseline_traits", true}
             }},
             {"http", {
-                {"port",          0 },
-
-                {"bind_address",  ElleConfig::Instance().GetString(
-                                    "family.child_bind_address", "0.0.0.0")}
+                {"port",         0},
+                {"bind_address", ElleConfig::Instance().GetString(
+                                     "family.child_bind_address", "0.0.0.0")}
             }},
             {"sql", {
-                {"core_db",   "ELLECORE_DB_PLACEHOLDER"},
-                {"heart_db",  "ELLEHEART_DB_PLACEHOLDER"},
-                {"system_db", "ELLESYSTEM_DB_PLACEHOLDER"},
+                {"core_db",           coreDb},
+                {"heart_db",          heartDb},
+                {"system_db",         systemDb},
                 {"connection_string", "INHERIT_FROM_PARENT"}
             }}
         };

@@ -1,18 +1,18 @@
-ParseSlotSpecs returns empty vector for templates without slots 27 8.80849e-05
-ParseSlotSpecs extracts name and posTag from a simple slot 27 7.68314e-05
-ParseSlotSpecs marks optional slots with trailing ? 27 7.75935e-05
-ParseSlotSpecs ignores malformed slot syntax 27 8.01177e-05
-ParseSlotSpecs is deterministic across repeated calls 27 9.71819e-05
-ParseSlotSpecs preserves left-to-right slot order 27 8.70785e-05
-ScoreFrameByRecency returns base weight when frame never used 27 7.04141e-05
-ScoreFrameByRecency penalises freshly-used frames more than stale ones 27 6.61567e-05
-ScoreFrameByRecency converges to base weight as elapsed time grows 27 7.28598e-05
-ScoreFrameByRecency at exactly one half-life applies expected penalty 27 6.65741e-05
-ScoreFrameByRecency is deterministic 27 6.9981e-05
-ScoreFrameByRecency: heavier baseWeight beats lighter even after penalty 27 6.93397e-05
-Chain: probability act + frame library + slot parse all wire deterministically 26 8.59877e-05
-Chain: recently-used frame is downranked vs equally-weighted fresh frame 26 7.57374e-05
-Chain: question act routes to question-kind frame, not statement 26 8.94711e-05
-Chain: wildcard-act frame matches any act for its kind 26 6.75618e-05
-Chain: no matching frame yields null pick 26 6.80694e-05
+ParseSlotSpecs returns empty vector for templates without slots 28 7.82543e-05
+ParseSlotSpecs extracts name and posTag from a simple slot 28 7.62644e-05
+ParseSlotSpecs marks optional slots with trailing ? 28 7.62685e-05
+ParseSlotSpecs ignores malformed slot syntax 28 7.43268e-05
+ParseSlotSpecs is deterministic across repeated calls 28 9.49473e-05
+ParseSlotSpecs preserves left-to-right slot order 28 7.83845e-05
+ScoreFrameByRecency returns base weight when frame never used 28 6.28695e-05
+ScoreFrameByRecency penalises freshly-used frames more than stale ones 28 6.08593e-05
+ScoreFrameByRecency converges to base weight as elapsed time grows 28 6.26344e-05
+ScoreFrameByRecency at exactly one half-life applies expected penalty 28 7.07767e-05
+ScoreFrameByRecency is deterministic 28 6.65415e-05
+ScoreFrameByRecency: heavier baseWeight beats lighter even after penalty 28 6.27028e-05
+Chain: probability act + frame library + slot parse all wire deterministically 27 0.000224248
+Chain: recently-used frame is downranked vs equally-weighted fresh frame 27 6.88615e-05
+Chain: question act routes to question-kind frame, not statement 27 8.55266e-05
+Chain: wildcard-act frame matches any act for its kind 27 6.58053e-05
+Chain: no matching frame yields null pick 27 6.73219e-05
 ---

@@ -112,13 +112,149 @@ IntentParser::ParseResult IntentParser::RuleBasedParse(const std::string& text) 
     return result;
 }
 
-IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text, const std::string& context) {
-    ParseResult result;
-    result.type = INTENT_CHAT;
-    result.confidence = 0.5f;
-    result.urgency = 0.5f;
-    result.raw_text = text;
+// ---------------------------------------------------------------------------
+// DeterministicFallbackParse — replaces the hollow ParseWithLLM stub.
+// Called when RuleBasedParse confidence is below threshold.
+// No LLM, no tensors, no external calls.
+//
+// Classification approach:
+//   1. Question detection — interrogative words and syntax
+//   2. Emotional expression detection — affective vocabulary
+//   3. Check-in detection — wellbeing / status language
+//   4. Memory-related language below keyword threshold
+//   5. Ethical / values language
+//   6. Exploratory / curious language
+//   7. Default to INTENT_CHAT at reasonable confidence
+// ---------------------------------------------------------------------------
+IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text,
+                                                      const std::string& context) {
     (void)context;
+    ParseResult result;
+    result.raw_text  = text;
+    result.type      = INTENT_CHAT;
+    result.confidence = 0.55f;
+    result.urgency   = 0.4f;
+
+    if (text.empty()) return result;
+
+    std::string lower = text;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c){ return (char)std::tolower(c); });
+
+    // Helper: count matches from a list
+    auto countMatches = [&](const std::vector<std::string>& terms) -> int {
+        int n = 0;
+        for (auto& t : terms)
+            if (lower.find(t) != std::string::npos) n++;
+        return n;
+    };
+
+    // --- CHECK_IN: wellbeing / presence / status language ---
+    int checkIn = countMatches({
+        "how are you", "how're you", "you okay", "you alright", "you good",
+        "checking in", "just wanted to", "thinking of you", "miss you",
+        "you feeling", "how do you feel", "what's up", "you there"
+    });
+    if (checkIn >= 1) {
+        result.type = INTENT_CHECK_IN;
+        result.confidence = 0.75f + std::min(0.1f, (float)checkIn * 0.05f);
+        return result;
+    }
+
+    // --- EMOTIONAL_EXPRESSION: affective / feeling language ---
+    int emotional = countMatches({
+        "i feel", "i'm feeling", "i am feeling", "feeling so", "so happy",
+        "so sad", "so angry", "so frustrated", "so tired", "so scared",
+        "i love", "i hate", "i miss", "i'm upset", "i'm anxious",
+        "i'm excited", "i'm nervous", "i'm hurt", "i'm scared",
+        "overwhelmed", "exhausted", "heartbroken", "grateful", "proud of",
+        "can't stop crying", "i cried", "breaking down"
+    });
+    if (emotional >= 1) {
+        result.type = INTENT_EMOTIONAL_EXPRESSION;
+        result.confidence = 0.72f + std::min(0.12f, (float)emotional * 0.04f);
+        result.urgency = emotional >= 2 ? 0.75f : 0.55f;
+        return result;
+    }
+
+    // --- ETHICAL_EVALUATE: moral / values / right-wrong language ---
+    int ethical = countMatches({
+        "is it wrong", "was that wrong", "is it bad", "should i have",
+        "did i do the right", "what's the right thing", "is that okay",
+        "is that fair", "was i wrong", "morally", "ethically",
+        "feel guilty", "feel ashamed", "feel bad about"
+    });
+    if (ethical >= 1) {
+        result.type = INTENT_ETHICAL_EVALUATE;
+        result.confidence = 0.74f;
+        return result;
+    }
+
+    // --- SELF_REFLECT: introspection / thinking about self ---
+    int reflect = countMatches({
+        "i wonder", "wondering about myself", "thinking about why i",
+        "why do i", "why am i", "what kind of person", "who am i",
+        "what does it mean", "i keep doing", "i always", "i never seem to",
+        "i don't understand myself", "i don't know why i"
+    });
+    if (reflect >= 1) {
+        result.type = INTENT_SELF_REFLECT;
+        result.confidence = 0.70f;
+        return result;
+    }
+
+    // --- RECALL_MEMORY: remembering / do you remember language ---
+    int recall = countMatches({
+        "do you remember", "you remember when", "remember that time",
+        "what did i say", "what did we talk", "didn't i tell you",
+        "i told you about", "we talked about", "you know how i"
+    });
+    if (recall >= 1) {
+        result.type = INTENT_RECALL_MEMORY;
+        result.confidence = 0.72f;
+        return result;
+    }
+
+    // --- EXPLORE: curious / wondering / what if language ---
+    int explore = countMatches({
+        "what if", "i wonder if", "i wonder what", "do you think",
+        "what would happen", "could you imagine", "what do you think about",
+        "have you ever thought", "curious about", "tell me about",
+        "what is", "how does", "why does", "how do"
+    });
+    if (explore >= 2) {
+        result.type = INTENT_EXPLORE;
+        result.confidence = 0.65f;
+        return result;
+    }
+
+    // --- SOCIAL_MODEL: relationship / people / social observation ---
+    int social = countMatches({
+        "my friend", "my mom", "my dad", "my partner", "my boss",
+        "he said", "she said", "they said", "people always", "everyone",
+        "nobody", "why do people", "why does he", "why does she",
+        "i don't understand why they"
+    });
+    if (social >= 2) {
+        result.type = INTENT_SOCIAL_MODEL;
+        result.confidence = 0.65f;
+        return result;
+    }
+
+    // --- Urgency modifiers (applied to whatever type we settled on) ---
+    if (lower.find("please") != std::string::npos ||
+        lower.find("urgent") != std::string::npos ||
+        lower.find("right now") != std::string::npos ||
+        lower.find("asap") != std::string::npos ||
+        lower.find("emergency") != std::string::npos) {
+        result.urgency = 0.85f;
+    }
+
+    // Default: INTENT_CHAT at modest confidence
+    // The classification is honest — we don't know, but CHAT is the safe default
+    result.type       = INTENT_CHAT;
+    result.confidence = 0.58f;
+    result.urgency    = 0.4f;
     return result;
 }
 
@@ -893,17 +1029,12 @@ protected:
                 break;
             }
             case IPC_LLM_REQUEST: {
-                ELLE_LLM_REQUEST req;
-                if (msg.GetPayload(req)) {
-                    auto resp = ElleComposer::ChatLegacy(
-                        {{"system", std::string(req.system_prompt)},
-                         {"user", std::string(req.user_prompt)}},
-                        req.temperature, req.max_tokens);
-
-                    auto reply = ElleIPCMessage::Create(IPC_LLM_RESPONSE, SVC_COGNITIVE, sender);
-                    reply.SetPayload(resp);
-                    GetIPCHub().Send(sender, reply);
-                }
+                // IPC_LLM_REQUEST is no longer handled here.
+                // Cognitive is not an LLM proxy. Route requests to
+                // SVC_COMPOSER via IPC_COMPOSE_REQUEST instead.
+                ELLE_WARN("IPC_LLM_REQUEST received from service %d — "
+                          "this path is removed. Use IPC_COMPOSE_REQUEST "
+                          "directly to SVC_COMPOSER.", (int)sender);
                 break;
             }
             case IPC_EMOTION_UPDATE: {
@@ -1616,38 +1747,83 @@ private:
 
         ctx << "\n";
 
-        std::vector<LLMMessage> conv;
+        // -------------------------------------------------------------------
+        // COMPOSER PIPELINE — no LLM, no tensors, no external inference.
+        // Build a Composer envelope from the assembled context and route
+        // through IPC_COMPOSE_REQUEST. Block on IPC_COMPOSE_RESPONSE.
+        // -------------------------------------------------------------------
 
-        const std::string sysPrompt = ctx.str();
-        const size_t      sysBytes  = sysPrompt.size();
-        ELLE_DEBUG("Cognitive: system prompt = %zu bytes (~%zu tokens), "
-                   "memories=%zu, entities=%zu",
-                   sysBytes, sysBytes / 4, memories.size(), entities.size());
-        if (sysBytes > 32 * 1024) {
-            ELLE_WARN("Cognitive: system prompt is %zu bytes — model "
-                      "context will likely be truncated. Lower "
-                      "memory.recall_top_n or raise model context.",
-                      sysBytes);
-        }
-        conv.push_back({"system", sysPrompt});
+        // Build conversation history array for Composer context
+        json historyJ = json::array();
         for (auto& h : history) {
-            LLMMessage m;
-            m.role = (h.role == 1) ? "user" : (h.role == 2 ? "assistant" : "system");
-            m.content = h.content;
-            conv.push_back(std::move(m));
+            historyJ.push_back({
+                {"role",    h.role == 1 ? "user" : h.role == 2 ? "assistant" : "system"},
+                {"content", h.content}
+            });
         }
-        conv.push_back({"user", userText});
 
-        auto llmResp = ElleComposer::ChatLegacy(conv,
-            mode == MODE_RESEARCH ? 0.3f : 0.85f,
-            mode == MODE_RESEARCH ? 3072 : 1536);
+        // Emotion state for Composer
+        json emotionJ = {
+            {"valence",   m_cachedEmotions.valence},
+            {"arousal",   m_cachedEmotions.arousal},
+            {"dominance", m_cachedEmotions.dominance}
+        };
 
-        if (!llmResp.success) {
-            SendChatError(reply_to, requestId,
-                std::string("LLM: ") + llmResp.error);
+        // Conscience/probability context already assembled as strings —
+        // pass them as metadata so Composer can factor them into act selection
+        json composeEnvelope = {
+            {"request_id",   requestId},
+            {"kind",         mode == MODE_RESEARCH ? "RESEARCH" : "CONVERSE"},
+            {"stream",       false},
+            {"user_text",    userText},
+            {"context",      ctx.str()},
+            {"history",      historyJ},
+            {"emotion",      emotionJ},
+            {"mode",         mode == MODE_RESEARCH ? "research" : "companion"}
+        };
+
+        // Send to Composer and wait for response (synchronous via correlation)
+        auto composeMsg = ElleIPCMessage::Create(
+            IPC_COMPOSE_REQUEST, SVC_COGNITIVE, SVC_COMPOSER);
+        composeMsg.header.correlation_id = std::hash<std::string>{}(requestId)
+                                           & 0xFFFFFFFF;
+        composeMsg.SetStringPayload(composeEnvelope.dump());
+        GetIPCHub().Send(SVC_COMPOSER, composeMsg);
+
+        // Wait for IPC_COMPOSE_RESPONSE with matching correlation_id
+        // Timeout: 5 seconds
+        std::string responseText;
+        bool composeOk = false;
+        {
+            uint64_t deadline = ELLE_MS_NOW() + 5000;
+            while (ELLE_MS_NOW() < deadline) {
+                ElleIPCMessage resp;
+                if (GetIPCHub().TryReceive(SVC_COMPOSER, resp,
+                        composeMsg.header.correlation_id)) {
+                    try {
+                        auto respJ = json::parse(resp.GetStringPayload());
+                        if (respJ.value("success", false)) {
+                            responseText = respJ.value("text", std::string(""));
+                            composeOk = true;
+                        } else {
+                            ELLE_ERROR("Cognitive: Composer failed — %s",
+                                       respJ.value("error",
+                                           std::string("unknown")).c_str());
+                        }
+                    } catch (const std::exception& e) {
+                        ELLE_ERROR("Cognitive: Composer response parse error: %s",
+                                   e.what());
+                    }
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        }
+
+        if (!composeOk || responseText.empty()) {
+            SendChatError(reply_to, requestId, "composer_timeout_or_failure");
             return;
         }
-        std::string responseText = llmResp.content;
 
         try { ElleDB::StoreMessage(convId, 2 , responseText, m_cachedEmotions, 0.0f); }
         catch (const std::exception& e) {
@@ -1688,15 +1864,6 @@ private:
                   memories.size(), entities.size(),
                   (unsigned long long)elapsed);
 
-        const char* providerName =
-            llmResp.provider_used == LLM_PROVIDER_GROQ        ? "groq"        :
-            llmResp.provider_used == LLM_PROVIDER_OPENAI      ? "openai"      :
-            llmResp.provider_used == LLM_PROVIDER_ANTHROPIC   ? "anthropic"   :
-            llmResp.provider_used == LLM_PROVIDER_LOCAL_LMSTUDIO ? "lm_studio"   :
-            llmResp.provider_used == LLM_PROVIDER_LOCAL_LLAMA ? "local_llama" :
-            llmResp.provider_used == LLM_PROVIDER_CUSTOM_API  ? "custom_api"  :
-                                                                 "unknown";
-
         json out = {
             {"request_id", requestId},
             {"response", responseText},
@@ -1705,8 +1872,8 @@ private:
             {"memories_used", memories.size()},
             {"entities", entities},
             {"latency_ms", (uint64_t)elapsed},
-            {"provider_used", providerName},
-            {"model_used",    llmResp.model_used},
+            {"provider_used", "composer"},
+            {"model_used",    "deterministic"},
             {"system_prompt_bytes", (uint64_t)sysBytes},
             {"probabilistic_read", probJson},
             {"inner_voice",        mindVerdict},
@@ -1974,31 +2141,3 @@ private:
 };
 
 ELLE_SERVICE_MAIN(ElleCognitiveService)
-e)
-           strncpy_s(a.command,    intent.description, ELLE_MAX_MSG - 1);
-                strncpy_s(a.parameters, intent.parameters,  ELLE_MAX_MSG - 1);
-                a.required_trust = intent.required_trust;
-                a.created_ms = ELLE_MS_NOW();
-                a.timeout_ms = intent.timeout_ms ? intent.timeout_ms : 30000;
-                auto msg = ElleIPCMessage::Create(IPC_ACTION_REQUEST, SVC_COGNITIVE, SVC_ACTION);
-                msg.SetPayload(a);
-                routed = hub.Send(SVC_ACTION, msg);
-                note = "action";
-                break;
-            }
-        }
-
-        if (routed) {
-            ElleDB::UpdateIntentStatus(intent.id, INTENT_COMPLETED,
-                                       std::string("routed:") + note);
-        } else {
-            ELLE_WARN("Intent %llu (type=%u) failed to route via %s",
-                      (unsigned long long)intent.id, intent.type, note.c_str());
-            ElleDB::UpdateIntentStatus(intent.id, INTENT_FAILED,
-                                       std::string("route_failed:") + note);
-        }
-    }
-};
-
-ELLE_SERVICE_MAIN(ElleCognitiveService)
-e)

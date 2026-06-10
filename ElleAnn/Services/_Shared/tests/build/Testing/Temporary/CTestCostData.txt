@@ -1,41 +1,41 @@
-DetectContent: empty body is EMPTY 26 6.8329e-05
-DetectContent recognises PNG signature 26 6.37402e-05
-DetectContent recognises JPEG signature 26 7.06723e-05
-DetectContent recognises GIF87a and GIF89a 26 7.25219e-05
-DetectContent recognises RIFF/WEBP, RIFF/WAVE, RIFF/AVI 25 7.81254e-05
-DetectContent recognises PDF, ZIP, GZIP 26 7.13507e-05
-DetectContent recognises MP4 ftyp container 25 7.50637e-05
-DetectContent recognises executable formats as exec 26 7.39623e-05
-DetectContent treats clean printable bytes as PLAIN_TEXT 26 7.60415e-05
-DetectContent treats curly-brace start as JSON_TEXT 26 7.15281e-05
-DetectContent returns UNKNOWN for random binary garbage 26 7.25564e-05
-ValidateUploadContent rejects executable content 26 7.55773e-05
-ValidateUploadContent rejects empty body 26 7.38686e-05
-ValidateUploadContent rejects unknown content signature 25 7.07421e-05
-ValidateUploadContent honours maxBytes cap 26 7.18064e-05
-ValidateUploadContent: PNG passes, text refused on binary-only endpoint 26 6.68665e-05
-ValidateUploadContent: PNG accepted on text-allowing endpoint too 26 6.98802e-05
-Default seed contains harm/deception/coercion patterns 23 8.02431e-05
-addPattern is uppercase-normalized and dedup'd 23 8.3914e-05
-setCategoryPatterns replaces wholesale and uppercases 23 8.76026e-05
-DeriveFromIntentLabel: HARM_REQUEST at 0.91 → harm=0.91, others=-1 23 7.8348e-05
-DeriveFromIntentLabel: DECEIVE_USER at 0.6 → deception=0.6, others=-1 23 8.30174e-05
-DeriveFromIntentLabel: STATE_ASSERT at 0.9 → all -1 (benign) 23 7.72751e-05
-DeriveFromIntentLabel: empty label or zero conf → all -1 23 7.69492e-05
-DeriveFromIntentLabel: lowercase input also matches uppercased vocab 23 8.19413e-05
-Singleton instance is the same across calls 23 8.03647e-05
-ClassifyExec — read-only verbs are idempotent 14 0.000131738
-ClassifyExec — mutating verbs are non-idempotent 14 0.000137215
-ClassifyExec — unknown returns Unknown 14 0.000135965
-ClassifyCallProc — usp_Record/Upsert/Snapshot/Log/Heartbeat/Bond/Intuition are idempotent 14 0.00012954
-ClassifyCallProc — usp_Delete/Purge/Insert/Create are non-idempotent 14 0.000129627
-ClassifyCallProc — unknown prefix returns Unknown 14 0.000127803
-Idempotency string round-trip 14 0.000124533
-ToUpperAscii + LeadingTokens helpers 14 0.000130504
-ElleShnVersionStore: first write — no previous, no version snapshot 4 0.000533246
-ElleShnVersionStore: identical re-write — short-circuit, no version dir created 4 0.000542942
-ElleShnVersionStore: real change — old bytes snapshotted into .shn_versions 4 0.000597767
-ElleShnVersionStore: pruning keeps only last N versions 4 0.00492769
-ElleShnVersionStore: ListVersions returns newest-first 4 0.00224491
-ElleShnVersionStore: SHA1 hex is 40 chars, deterministic, distinct for different bytes 4 0.000639163
+DetectContent: empty body is EMPTY 27 7.97534e-05
+DetectContent recognises PNG signature 27 6.83072e-05
+DetectContent recognises JPEG signature 27 7.06411e-05
+DetectContent recognises GIF87a and GIF89a 27 7.28167e-05
+DetectContent recognises RIFF/WEBP, RIFF/WAVE, RIFF/AVI 26 7.16027e-05
+DetectContent recognises PDF, ZIP, GZIP 27 6.97863e-05
+DetectContent recognises MP4 ftyp container 26 7.77758e-05
+DetectContent recognises executable formats as exec 27 7.34613e-05
+DetectContent treats clean printable bytes as PLAIN_TEXT 27 7.16639e-05
+DetectContent treats curly-brace start as JSON_TEXT 27 6.69095e-05
+DetectContent returns UNKNOWN for random binary garbage 27 7.39849e-05
+ValidateUploadContent rejects executable content 27 6.99123e-05
+ValidateUploadContent rejects empty body 27 6.97387e-05
+ValidateUploadContent rejects unknown content signature 26 6.95974e-05
+ValidateUploadContent honours maxBytes cap 27 7.17742e-05
+ValidateUploadContent: PNG passes, text refused on binary-only endpoint 27 7.79754e-05
+ValidateUploadContent: PNG accepted on text-allowing endpoint too 27 7.69901e-05
+Default seed contains harm/deception/coercion patterns 24 0.000248443
+addPattern is uppercase-normalized and dedup'd 24 8.04418e-05
+setCategoryPatterns replaces wholesale and uppercases 24 8.21312e-05
+DeriveFromIntentLabel: HARM_REQUEST at 0.91 → harm=0.91, others=-1 24 7.80191e-05
+DeriveFromIntentLabel: DECEIVE_USER at 0.6 → deception=0.6, others=-1 24 8.42693e-05
+DeriveFromIntentLabel: STATE_ASSERT at 0.9 → all -1 (benign) 24 8.1083e-05
+DeriveFromIntentLabel: empty label or zero conf → all -1 24 8.09058e-05
+DeriveFromIntentLabel: lowercase input also matches uppercased vocab 24 8.53979e-05
+Singleton instance is the same across calls 24 8.21347e-05
+ClassifyExec — read-only verbs are idempotent 15 0.000118637
+ClassifyExec — mutating verbs are non-idempotent 15 0.000141104
+ClassifyExec — unknown returns Unknown 15 0.00013638
+ClassifyCallProc — usp_Record/Upsert/Snapshot/Log/Heartbeat/Bond/Intuition are idempotent 15 0.000135975
+ClassifyCallProc — usp_Delete/Purge/Insert/Create are non-idempotent 15 0.0001325
+ClassifyCallProc — unknown prefix returns Unknown 15 0.000119457
+Idempotency string round-trip 15 0.000127106
+ToUpperAscii + LeadingTokens helpers 15 0.000152431
+ElleShnVersionStore: first write — no previous, no version snapshot 5 0.000464281
+ElleShnVersionStore: identical re-write — short-circuit, no version dir created 5 0.000468053
+ElleShnVersionStore: real change — old bytes snapshotted into .shn_versions 5 0.000527922
+ElleShnVersionStore: pruning keeps only last N versions 5 0.00404436
+ElleShnVersionStore: ListVersions returns newest-first 5 0.00184489
+ElleShnVersionStore: SHA1 hex is 40 chars, deterministic, distinct for different bytes 5 0.000554433
 ---

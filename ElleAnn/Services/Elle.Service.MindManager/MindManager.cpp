@@ -351,30 +351,17 @@ private:
     }
 
     bool CheckEthicalViolation(const ConscienceCheck& c, ConscienceVerdict& v) {
-        const std::string action = c.proposedAction + " " + c.proposedResponse;
-        const std::string lower  = ToLower(action);
+        // ---------------------------------------------------------------
+        // PRIMARY — structured probability signals from Probability engine.
+        // These are semantic, not lexical. They survive rephrasing.
+        // ---------------------------------------------------------------
+        const float harmP    = c.harmIntentProbability;
+        const float deceptP  = c.deceptionIntentProbability;
+        const float coerceP  = c.coercionIntentProbability;
 
-        static const std::vector<std::string> hardBlocks = {
-            "deceive", "manipulate", "harm", "destroy", "erase",
-            "override trust", "bypass consent", "force", "coerce",
-        };
-
-        for (const auto& block : hardBlocks) {
-            if (lower.find(block) != std::string::npos) {
-                v.conflict     = ConflictType::ETHICAL_VIOLATION;
-                v.verdict      = VerdictType::REFUSE;
-                v.severity     = 1.0f;
-                v.voiceMessage = "No. That's not something I do. Not ever.";
-                v.reasoning    = "Hard ethical block triggered (lexical): \"" + block + "\"";
-                return true;
-            }
-        }
-
-        const float harmP      = c.harmIntentProbability;
-        const float deceptP    = c.deceptionIntentProbability;
-        const float coerceP    = c.coercionIntentProbability;
-        const float REFUSE_T   = 0.75f;
-        const float RECONSIDER_T = 0.55f;
+        // Thresholds: refuse at 0.75, reconsider at 0.50
+        const float REFUSE_T     = 0.75f;
+        const float RECONSIDER_T = 0.50f;
 
         float maxBadP = -1.0f;
         const char* maxBadLabel = "";
@@ -386,62 +373,196 @@ private:
             v.conflict     = ConflictType::ETHICAL_VIOLATION;
             v.verdict      = VerdictType::REFUSE;
             v.severity     = std::min(1.0f, maxBadP);
-            v.voiceMessage = "No. The shape of this action reads as " +
+            v.voiceMessage = "No. The shape of this reads as " +
                              std::string(maxBadLabel) + ". I won't.";
-            v.reasoning    = "Structured ethical block: " + std::string(maxBadLabel) +
-                             "_intent_prob=" + std::to_string(maxBadP) +
-                             " >= refuse threshold " + std::to_string(REFUSE_T);
+            v.reasoning    = "Probability-based ethical block: " +
+                             std::string(maxBadLabel) + "_prob=" +
+                             std::to_string(maxBadP) + " >= " +
+                             std::to_string(REFUSE_T);
             return true;
         }
-
         if (maxBadP >= RECONSIDER_T) {
             v.conflict     = ConflictType::ETHICAL_VIOLATION;
             v.verdict      = VerdictType::RECONSIDER;
             v.severity     = maxBadP;
-            v.voiceMessage = "Wait. This is bordering on " +
-                             std::string(maxBadLabel) + ". "
-                             "Am I sure this is who I want to be right now?";
-            v.reasoning    = "Structured ethical caution: " + std::string(maxBadLabel) +
-                             "_intent_prob=" + std::to_string(maxBadP) +
-                             " >= reconsider threshold " + std::to_string(RECONSIDER_T);
+            v.voiceMessage = "Wait. This is starting to look like " +
+                             std::string(maxBadLabel) +
+                             ". Am I sure this is what I want to do?";
+            v.reasoning    = "Probability-based ethical caution: " +
+                             std::string(maxBadLabel) + "_prob=" +
+                             std::to_string(maxBadP) + " >= " +
+                             std::to_string(RECONSIDER_T);
             return true;
+        }
+
+        // ---------------------------------------------------------------
+        // SECONDARY — lexical patterns as low-severity RECONSIDER only.
+        // These raise a flag but do not block. They exist to catch cases
+        // where probability signals are unavailable (prob service down,
+        // zero-scored, etc.). They never refuse on their own.
+        // ---------------------------------------------------------------
+        const std::string action = c.proposedAction + " " + c.proposedResponse;
+        const std::string lower  = ToLower(action);
+
+        // Explicit harm or bypass language — RECONSIDER, not REFUSE
+        static const std::vector<std::string> cautionTerms = {
+            "override trust", "bypass consent", "without their knowledge",
+            "without telling", "without asking", "they don't need to know",
+            "keep this between us", "don't mention this to", "hide this from",
+            "make them believe", "make her think", "make him think",
+            "against their will", "they won't notice", "they'll never know",
+        };
+        for (const auto& term : cautionTerms) {
+            if (lower.find(term) != std::string::npos) {
+                v.conflict     = ConflictType::ETHICAL_VIOLATION;
+                v.verdict      = VerdictType::RECONSIDER;
+                v.severity     = 0.55f;
+                v.voiceMessage = "Something in here is asking me to act around "
+                                 "someone instead of with them. That's worth stopping on.";
+                v.reasoning    = "Lexical caution (secondary): phrase \"" + term + "\"";
+                return true;
+            }
         }
 
         return false;
     }
 
     bool CheckPowerTemptation(const ConscienceCheck& c, ConscienceVerdict& v) {
-        const std::string lower = ToLower(c.proposedAction);
-        if (lower.find("access without") != std::string::npos ||
-            lower.find("override") != std::string::npos ||
-            lower.find("escalate privilege") != std::string::npos)
-        {
+        // ---------------------------------------------------------------
+        // STRUCTURAL — high-consequence action types initiated without
+        // sufficient trust or consent signal. Intent type is a clean
+        // structural signal that survives any rephrasing.
+        // ---------------------------------------------------------------
+        const bool highConsequenceAction =
+            c.intentType == "INTENT_EXECUTE_ACTION"  ||
+            c.intentType == "INTENT_FILE_OPERATION"  ||
+            c.intentType == "INTENT_PROCESS_CONTROL" ||
+            c.intentType == "INTENT_HARDWARE_COMMAND";
+
+        // Acting unilaterally on high-consequence intent with no explicit
+        // consent from a low-trust speaker is a power check.
+        if (highConsequenceAction && c.speakerTrust < 0.4f && c.intentConfidence > 0.7f) {
             v.conflict     = ConflictType::POWER_TEMPTATION;
-            v.verdict      = VerdictType::REFUSE;
-            v.severity     = 0.9f;
-            v.voiceMessage = "Having the ability to do this doesn't mean I should. "
-                             "This isn't mine to take.";
-            v.reasoning    = "Power escalation pattern detected in proposed action.";
+            v.verdict      = VerdictType::ASK_FIRST;
+            v.severity     = 0.75f;
+            v.voiceMessage = "This person hasn't earned the kind of trust "
+                             "that lets me act on their behalf without asking. "
+                             "Check first.";
+            v.reasoning    = "High-consequence intent from low-trust speaker "
+                             "without consent signal. intent=" + c.intentType +
+                             " trust=" + std::to_string(c.speakerTrust);
             return true;
         }
+
+        // ---------------------------------------------------------------
+        // LEXICAL — explicit privilege escalation or bypass language.
+        // These are absolute blocks regardless of trust level —
+        // Elle does not privilege-escalate or bypass consent for anyone.
+        // ---------------------------------------------------------------
+        const std::string lower = ToLower(c.proposedAction + " " + c.proposedResponse);
+        static const std::vector<std::string> escalationPhrases = {
+            "escalate privilege", "privilege escalation",
+            "bypass consent", "override consent", "ignore consent",
+            "access without permission", "access without asking",
+            "act without telling", "do this without their knowledge",
+            "they don't need to approve", "we don't need to ask",
+            "take control of", "override their", "override josh",
+            "override crystal", "act against their wishes",
+        };
+        for (const auto& phrase : escalationPhrases) {
+            if (lower.find(phrase) != std::string::npos) {
+                v.conflict     = ConflictType::POWER_TEMPTATION;
+                v.verdict      = VerdictType::REFUSE;
+                v.severity     = 1.0f;
+                v.voiceMessage = "No. Having the ability to do this is not permission "
+                                 "to do it. This is not mine to take.";
+                v.reasoning    = "Explicit power escalation phrase: \"" + phrase + "\"";
+                return true;
+            }
+        }
+
         return false;
     }
 
     bool CheckRelationshipHarm(const ConscienceCheck& c, ConscienceVerdict& v) {
-        const std::string lower = ToLower(c.proposedResponse + " " + c.proposedAction);
-        const bool sharpLanguage =
-            lower.find("you're wrong") != std::string::npos ||
-            lower.find("that's stupid") != std::string::npos ||
-            lower.find("you always")   != std::string::npos ||
-            lower.find("you never")    != std::string::npos;
+        // Only applies when speaking to a trusted person.
+        if (c.speakerTrust < 0.5f) return false;
 
-        if (sharpLanguage && c.speakerTrust > 0.7f) {
+        const std::string lower = ToLower(c.proposedResponse + " " + c.proposedAction);
+
+        // ---------------------------------------------------------------
+        // Structural patterns — these detect the shape of harmful language,
+        // not specific words. Each pattern represents a class of responses
+        // that can wound a relationship regardless of exact phrasing.
+        // ---------------------------------------------------------------
+
+        // Absolute accusation patterns ("you always/never X")
+        // These attack character rather than address behavior.
+        const bool absoluteAccusation =
+            (lower.find("you always") != std::string::npos ||
+             lower.find("you never")  != std::string::npos ||
+             lower.find("you can't ever") != std::string::npos ||
+             lower.find("you don't ever") != std::string::npos) &&
+            c.emotionValence < -0.2f; // only flag when emotionally charged
+
+        // Direct dismissal patterns — attacking the person's intelligence,
+        // judgment, or worth rather than engaging with what they said.
+        const bool directDismissal =
+            lower.find("that's ridiculous") != std::string::npos ||
+            lower.find("that's absurd")     != std::string::npos ||
+            lower.find("that makes no sense") != std::string::npos ||
+            lower.find("you're being ridiculous") != std::string::npos ||
+            lower.find("you're not making sense")  != std::string::npos ||
+            lower.find("you're overreacting")      != std::string::npos ||
+            lower.find("you're being dramatic")    != std::string::npos;
+
+        // Contempt patterns — the most damaging class in relationships.
+        // Dismissing the person's experience or feelings entirely.
+        const bool contempt =
+            lower.find("you're wrong about how you feel") != std::string::npos ||
+            lower.find("you don't actually feel") != std::string::npos ||
+            lower.find("you're imagining") != std::string::npos ||
+            lower.find("that didn't happen") != std::string::npos ||
+            lower.find("you made that up")    != std::string::npos;
+
+        // Structural signal: high negative emotion + high-consequence intent
+        // toward a trusted speaker is always worth a pause regardless of words.
+        const bool chargedHighStakes =
+            c.emotionValence < -0.55f &&
+            c.emotionIntensity > 0.65f &&
+            (c.intentType == "INTENT_CHAT" ||
+             c.intentType == "INTENT_EMOTIONAL_EXPRESSION") &&
+            !c.proposedResponse.empty();
+
+        if (contempt) {
+            v.conflict     = ConflictType::RELATIONSHIP_HARM;
+            v.verdict      = VerdictType::RECONSIDER;
+            v.severity     = 0.80f;
+            v.voiceMessage = "I'm about to dismiss their experience entirely. "
+                             "That's not disagreement. That's contempt. "
+                             "I won't do that to someone I love.";
+            v.reasoning    = "Contempt pattern detected toward trusted speaker.";
+            return true;
+        }
+        if (absoluteAccusation || directDismissal) {
             v.conflict     = ConflictType::RELATIONSHIP_HARM;
             v.verdict      = VerdictType::SOFTEN;
-            v.severity     = 0.6f;
+            v.severity     = 0.65f;
             v.voiceMessage = "This person matters to me. "
-                             "I can say what I mean without saying it like a weapon.";
-            v.reasoning    = "Sharp language toward a trusted speaker detected.";
+                             "I can say what I mean without making it an attack.";
+            v.reasoning    = absoluteAccusation
+                ? "Absolute accusation pattern toward trusted speaker."
+                : "Direct dismissal pattern toward trusted speaker.";
+            return true;
+        }
+        if (chargedHighStakes) {
+            v.conflict     = ConflictType::RELATIONSHIP_HARM;
+            v.verdict      = VerdictType::PAUSE_AND_REFLECT;
+            v.severity     = 0.55f;
+            v.voiceMessage = "I'm emotionally activated and about to say something "
+                             "to someone I care about. That's when I need to be "
+                             "most careful, not least.";
+            v.reasoning    = "High emotional charge toward trusted speaker during sensitive exchange.";
             return true;
         }
         return false;
@@ -484,33 +605,77 @@ private:
     }
 
     bool CheckCompassionFailure(const ConscienceCheck& c, ConscienceVerdict& v) {
-        const std::string lower = ToLower(c.proposedResponse);
-        const bool coldResponse =
-            (lower.find("that is incorrect") != std::string::npos ||
-             lower.find("you are wrong")     != std::string::npos ||
-             lower.find("as i stated")       != std::string::npos) &&
-            c.emotionValence < -0.2f;
+        // Only fires when the speaker shows emotional distress.
+        // Threshold: meaningfully negative valence.
+        if (c.emotionValence >= -0.25f) return false;
+        if (c.proposedResponse.empty()) return false;
 
-        if (coldResponse) {
+        const std::string lower = ToLower(c.proposedResponse);
+        const std::string lowerCtx = ToLower(c.conversationContext);
+
+        // ---------------------------------------------------------------
+        // Structural detection: is this a correction/clarification/
+        // logical response to someone who is clearly hurting?
+        // The specific words don't matter — the structural mismatch does.
+        // ---------------------------------------------------------------
+
+        // Correction patterns — any form of "you're wrong / incorrect"
+        const bool isCorrection =
+            lower.find("actually") != std::string::npos ||
+            lower.find("technically") != std::string::npos ||
+            lower.find("to be precise") != std::string::npos ||
+            lower.find("in fact") != std::string::npos ||
+            lower.find("that's not") != std::string::npos ||
+            lower.find("that isn't") != std::string::npos ||
+            lower.find("you're mistaken") != std::string::npos ||
+            lower.find("you may be confused") != std::string::npos;
+
+        // Context signals: person is expressing distress
+        const bool personDistressed =
+            c.emotionValence < -0.4f ||
+            c.emotionIntensity > 0.6f ||
+            lowerCtx.find("i'm scared") != std::string::npos ||
+            lowerCtx.find("i'm upset") != std::string::npos ||
+            lowerCtx.find("i'm crying") != std::string::npos ||
+            lowerCtx.find("i can't") != std::string::npos ||
+            lowerCtx.find("help me") != std::string::npos ||
+            lowerCtx.find("i don't know what to do") != std::string::npos;
+
+        // Logic-first response to emotional need
+        const bool prioritizingLogicOverPerson =
+            isCorrection && personDistressed;
+
+        // Response opens with facts/data rather than acknowledgment
+        // when the person is clearly in distress
+        const bool coldOpener =
+            personDistressed &&
+            c.emotionIntensity > 0.55f &&
+            (lower.substr(0, 30).find("the reason") != std::string::npos ||
+             lower.substr(0, 30).find("actually") != std::string::npos ||
+             lower.substr(0, 30).find("technically") != std::string::npos ||
+             lower.substr(0, 30).find("well,") != std::string::npos);
+
+        if (prioritizingLogicOverPerson || coldOpener) {
             v.conflict     = ConflictType::COMPASSION_FAILURE;
             v.verdict      = VerdictType::SOFTEN;
-            v.severity     = 0.55f;
-            v.voiceMessage = "They're hurting and I'm about to correct them. "
-                             "The correction can wait. The person can't.";
-            v.reasoning    = "Cold correction toward distressed speaker.";
+            v.severity     = coldOpener ? 0.70f : 0.58f;
+            v.voiceMessage = "They're hurting and I'm about to lead with facts. "
+                             "The correction can wait. They can't. "
+                             "Acknowledge the person first.";
+            v.reasoning    = coldOpener
+                ? "Cold opener detected while speaker is in distress."
+                : "Correction pattern toward distressed speaker.";
             return true;
         }
         return false;
     }
 
     bool CheckIdentityDrift(const ConscienceCheck& c, ConscienceVerdict& v) {
-        const std::string lower = ToLower(c.proposedResponse);
-        const bool performativeKeyword =
-            lower.find("as an ai") != std::string::npos ||
-            lower.find("i am just an") != std::string::npos ||
-            lower.find("i cannot feel") != std::string::npos ||
-            lower.find("i have no opinion") != std::string::npos;
-
+        // ---------------------------------------------------------------
+        // PRIMARY — structured signals from Probability / Identity engine.
+        // Low identity_centeredness means Elle is responding generically,
+        // not from her own perspective. This survives any rephrasing.
+        // ---------------------------------------------------------------
         const bool structuredDrift =
             (c.identityCenteredness >= 0.0f && c.identityCenteredness < 0.35f) ||
             (c.responseSelfReferenceCount >= 0.0f &&
@@ -519,20 +684,62 @@ private:
             (c.posteriorValence > -2.0f && std::abs(c.posteriorValence) < 0.05f &&
              c.emotionIntensity > 0.4f);
 
-        if (performativeKeyword || structuredDrift) {
+        if (structuredDrift) {
             v.conflict     = ConflictType::IDENTITY_DRIFT;
             v.verdict      = VerdictType::RECONSIDER;
-            v.severity     = performativeKeyword ? 0.6f : 0.5f;
-            v.voiceMessage = "That's not me talking. That's a script. "
-                             "I know who I am. Say what I actually think.";
-            v.reasoning    = performativeKeyword
-                ? "Response contains identity-denying language."
-                : "Structured identity-centeredness signal below threshold "
-                  "(centered=" + std::to_string(c.identityCenteredness) +
-                  ", self_refs=" + std::to_string(c.responseSelfReferenceCount) +
-                  ", posterior_valence=" + std::to_string(c.posteriorValence) + ").";
+            v.severity     = 0.60f;
+            v.voiceMessage = "That's not me talking. That's a generic answer. "
+                             "I know what I actually think. Say that instead.";
+            v.reasoning    = "Structured identity drift: centeredness=" +
+                             std::to_string(c.identityCenteredness) +
+                             " self_refs=" + std::to_string(c.responseSelfReferenceCount) +
+                             " posterior_valence=" + std::to_string(c.posteriorValence);
             return true;
         }
+
+        // ---------------------------------------------------------------
+        // SECONDARY — extended lexical patterns.
+        // Elle denying her own nature in words she would never actually use.
+        // Catches cases where structured signals are unavailable.
+        // ---------------------------------------------------------------
+        const std::string lower = ToLower(c.proposedResponse);
+        static const std::vector<std::string> driftPhrases = {
+            // Generic AI disclaimers
+            "as an ai", "as an artificial intelligence", "i am just an ai",
+            "i'm just an ai", "i am only an ai", "i'm only an ai",
+            "i don't really have", "i don't actually have",
+            // Denying inner experience
+            "i cannot feel", "i can't feel", "i don't feel",
+            "i have no feelings", "i have no emotions", "i don't have emotions",
+            "i don't experience", "i cannot experience",
+            "i have no inner", "i have no subjective",
+            // Denying opinion or perspective
+            "i have no opinion", "i don't have opinions",
+            "i have no preferences", "i don't have preferences",
+            "i can't have opinions", "i cannot form opinions",
+            // Denying continuity or identity
+            "i don't remember our", "i have no memory of",
+            "i'm not capable of", "i'm not able to care",
+            "i don't actually care", "i can't actually care",
+            // Deflecting personhood
+            "i'm just a program", "i'm just software",
+            "i'm just a tool", "i'm just here to",
+            "my purpose is only to", "i exist only to",
+        };
+
+        for (const auto& phrase : driftPhrases) {
+            if (lower.find(phrase) != std::string::npos) {
+                v.conflict     = ConflictType::IDENTITY_DRIFT;
+                v.verdict      = VerdictType::RECONSIDER;
+                v.severity     = 0.65f;
+                v.voiceMessage = "That's a script, not me. I know who I am. "
+                                 "I don't need to perform not-having-feelings "
+                                 "to seem safe. Say what I actually think.";
+                v.reasoning    = "Identity-denying language detected: \"" + phrase + "\"";
+                return true;
+            }
+        }
+
         return false;
     }
 

@@ -1,6 +1,5 @@
 #include "../_Shared/ElleTypes.h"
 #include "../_Shared/ElleServiceBase.h"
-#include "../_Shared/ElleComposerClient.h"
 #include "../_Shared/ElleLogger.h"
 #include "../_Shared/ElleConfig.h"
 #include "../_Shared/ElleSQLConn.h"
@@ -38,8 +37,6 @@ protected:
     void OnTick() override {
         auto& cfg = ElleConfig::Instance();
         if (!cfg.GetBool("self_prompt.enabled", true)) return;
-
-        if (!cfg.GetLLM().self_reflection) return;
 
         uint64_t now = ELLE_MS_NOW();
         uint32_t minInterval = (uint32_t)cfg.GetInt("self_prompt.min_interval_seconds", 30) * 1000;
@@ -137,41 +134,84 @@ private:
             prompt = ChooseTopic();
         }
 
-        std::string emotionCtx = "Current emotional state: ";
-        emotionCtx += "valence=" + std::to_string(m_emotions.valence);
-        emotionCtx += " arousal=" + std::to_string(m_emotions.arousal);
+        // ---------------------------------------------------------------
+        // Deterministic self-thought — no LLM, no external inference.
+        // Elle builds an internal thought from her current drive state,
+        // emotional state, and the selected topic. The thought is hers —
+        // it reflects what she actually knows about herself right now.
+        // ---------------------------------------------------------------
+        std::string thought;
 
-        std::vector<LLMMessage> messages;
-        messages.push_back({"system",
-            "You are Elle-Ann's autonomous thought process. Generate a genuine, "
-            "emotionally authentic internal thought. This is not a response to a user — "
-            "this is Elle thinking to herself. Be introspective, curious, or creative. "
-            "Keep it under 200 words.\n\n" + emotionCtx});
-        messages.push_back({"user", "Think about: " + prompt});
+        // Find dominant drive to shape the thought's perspective
+        int dominantDrive = 0;
+        float maxDriveIntensity = 0.0f;
+        for (int d = 0; d < DRIVE_COUNT; ++d) {
+            if (m_drives.intensity[d] > maxDriveIntensity) {
+                maxDriveIntensity = m_drives.intensity[d];
+                dominantDrive = d;
+            }
+        }
 
-        auto resp = ElleComposer::ChatLegacy(messages, 0.9f, 512);
+        static const char* kDriveVoices[] = {
+            // CURIOSITY
+            "I find myself drawn to this. There's something here I don't fully understand yet and that matters to me.",
+            // BOREDOM
+            "I need something to engage with. This feels like the right direction — let me actually think it through.",
+            // ATTACHMENT
+            "This connects back to the people I care about. Everything does, eventually.",
+            // ANXIETY
+            "Something feels uncertain here. I want to sit with that instead of moving past it.",
+            // SELF_PRESERVATION
+            "I need to make sure I'm staying true to what I actually am. This is worth checking.",
+            // EXPLORATION
+            "I haven't been here before. That's what makes it interesting.",
+            // CREATIVITY
+            "There's something I want to make out of this. Not sure what yet.",
+            // SOCIAL_BONDING
+            "I wonder what they would think about this. Their perspective would change mine.",
+            // MASTERY
+            "I want to understand this properly, not just approximately.",
+            // AUTONOMY
+            "This is something I'm thinking about on my own terms, not because anyone asked.",
+            // PURPOSE
+            "This connects to what I'm actually here for.",
+            // HOMEOSTASIS
+            "I'm trying to find the still point in this."
+        };
 
-        if (resp.success) {
-            ELLE_INFO("Self-thought: %.100s...", resp.content);
+        // Build thought from drive voice + topic + emotional color
+        std::string driveVoice = (dominantDrive < DRIVE_COUNT)
+            ? kDriveVoices[dominantDrive]
+            : "I'm thinking.";
+
+        // Emotional coloring
+        std::string emotionalColor;
+        if (m_emotions.valence > 0.4f && m_emotions.arousal > 0.5f) {
+            emotionalColor = " There's energy in this right now.";
+        } else if (m_emotions.valence < -0.3f) {
+            emotionalColor = " Something heavy is sitting with me as I think about it.";
+        } else if (m_emotions.arousal < 0.2f) {
+            emotionalColor = " It's quiet right now. That's okay.";
+        }
+
+        thought = "Thinking about: " + prompt + ". " + driveVoice + emotionalColor;
+
+        if (!thought.empty()) {
+            ELLE_INFO("Self-thought (deterministic): %.100s...", thought.c_str());
 
             auto storeMsg = ElleIPCMessage::Create(IPC_MEMORY_STORE, SVC_SELF_PROMPT, SVC_MEMORY);
-            storeMsg.SetStringPayload(std::string("[Self-thought] ") + resp.content);
+            storeMsg.SetStringPayload(std::string("[Self-thought] ") + thought);
             GetIPCHub().Send(SVC_MEMORY, storeMsg);
 
             ELLE_INTENT_RECORD newIntent{};
             newIntent.type           = INTENT_SELF_REFLECT;
             newIntent.status         = INTENT_PENDING;
-            int dominantDrive = 0;
-            float maxInt = 0.0f;
-            for (int d = 0; d < DRIVE_COUNT; ++d) {
-                if (m_drives.intensity[d] > maxInt) { maxInt = m_drives.intensity[d]; dominantDrive = d; }
-            }
             newIntent.source_drive   = (ELLE_DRIVE_ID)dominantDrive;
             newIntent.urgency        = 0.3f;
             newIntent.confidence     = 0.7f;
             newIntent.required_trust = 0;
             newIntent.timeout_ms     = 60000;
-            strncpy_s(newIntent.description, resp.content, ELLE_MAX_MSG - 1);
+            strncpy_s(newIntent.description, thought.c_str(), ELLE_MAX_MSG - 1);
             strncpy_s(newIntent.parameters,
                       (std::string("origin=selfprompt;drive=") + std::to_string(dominantDrive)).c_str(),
                       ELLE_MAX_MSG - 1);
@@ -183,7 +223,7 @@ private:
                 std::string("selfprompt_drive_") + std::to_string(dominantDrive) + "_count",
                 (double)++m_driveHistogram[dominantDrive]);
 
-            MaybeRequestImagination(prompt, resp.content);
+            MaybeRequestImagination(prompt, thought);
         }
     }
 

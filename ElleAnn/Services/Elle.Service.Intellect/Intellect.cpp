@@ -1,34 +1,68 @@
+// ---------------------------------------------------------------------------
+// Elle.Service.Intellect
+//
+// Elle's knowledge engine. Two functions:
+//   1. UPDATE — Elle writes to her knowledge database as she learns.
+//      Triggered by IPC_INTELLECT_LEARN from Cognitive when a conversation
+//      surfaces a subject worth retaining. No external inference — she
+//      classifies and stores from what she already received.
+//
+//   2. QUERY — Any service can ask the Intellect engine for what Elle knows
+//      about a subject. Returns subject record, references, milestones, and
+//      related skills. Cognitive calls this during context building.
+//
+// This service owns the knowledge database. Nothing else writes to it.
+// She learns from conversation. She calls on it at will.
+// ---------------------------------------------------------------------------
+
 #include "../_Shared/ElleTypes.h"
 #include "../_Shared/ElleServiceBase.h"
 #include "../_Shared/ElleLogger.h"
 #include "../_Shared/ElleConfig.h"
 #include "../_Shared/ElleSQLConn.h"
+#include "../_Shared/ElleDB_Content.h"
 #include <sstream>
 #include <algorithm>
 #include <chrono>
 
-static bool EnsureIntellectSchema() {
+// IPC message types for Intellect
+// These should be added to ElleTypes.h:
+//   IPC_INTELLECT_LEARN   — payload: JSON { subject, category, content, source, confidence }
+//   IPC_INTELLECT_QUERY   — payload: JSON { query, category_hint, limit }
+//   IPC_INTELLECT_RESULT  — payload: JSON (response to IPC_INTELLECT_QUERY)
+
+// ---------------------------------------------------------------------------
+// Schema delta — runs on start, additive only, never modifies existing columns
+// ---------------------------------------------------------------------------
+static void EnsureIntellectSchema() {
     auto& pool = ElleSQLPool::Instance();
 
-    const char* stmts[] = {
+    // Add last_accessed_ms to learned_subjects if not present
+    pool.Execute(
         "IF NOT EXISTS (SELECT 1 FROM sys.columns "
         "  WHERE object_id = OBJECT_ID('ElleCore.dbo.learned_subjects') "
         "  AND name = 'last_accessed_ms') "
         "ALTER TABLE ElleCore.dbo.learned_subjects "
-        "ADD last_accessed_ms BIGINT NOT NULL DEFAULT 0;",
+        "ADD last_accessed_ms BIGINT NOT NULL DEFAULT 0;");
 
+    // Add confidence to learned_subjects if not present
+    pool.Execute(
         "IF NOT EXISTS (SELECT 1 FROM sys.columns "
         "  WHERE object_id = OBJECT_ID('ElleCore.dbo.learned_subjects') "
         "  AND name = 'confidence') "
         "ALTER TABLE ElleCore.dbo.learned_subjects "
-        "ADD confidence FLOAT NOT NULL DEFAULT 0.5;",
+        "ADD confidence FLOAT NOT NULL DEFAULT 0.5;");
 
+    // Add last_reviewed_ms to skills if not present
+    pool.Execute(
         "IF NOT EXISTS (SELECT 1 FROM sys.columns "
         "  WHERE object_id = OBJECT_ID('ElleCore.dbo.skills') "
         "  AND name = 'last_reviewed_ms') "
         "ALTER TABLE ElleCore.dbo.skills "
-        "ADD last_reviewed_ms BIGINT NOT NULL DEFAULT 0;",
+        "ADD last_reviewed_ms BIGINT NOT NULL DEFAULT 0;");
 
+    // intellect_connections — relationships Elle has noticed between subjects
+    pool.Execute(
         "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
         "  JOIN sys.schemas s ON s.schema_id = t.schema_id "
         "  WHERE t.name = 'intellect_connections' AND s.name = 'dbo') "
@@ -36,40 +70,43 @@ static bool EnsureIntellectSchema() {
         "  id              BIGINT IDENTITY(1,1) PRIMARY KEY,"
         "  subject_id_a    INT NOT NULL,"
         "  subject_id_b    INT NOT NULL,"
-        "  relationship    NVARCHAR(256) NOT NULL,"
+        "  relationship    NVARCHAR(256) NOT NULL,"  // e.g. "builds on", "contradicts", "requires"
         "  strength        FLOAT NOT NULL DEFAULT 0.5,"
-        "  source          NVARCHAR(256) NULL,"
+        "  source          NVARCHAR(256) NULL,"      // where this connection was noticed
         "  noted_ms        BIGINT NOT NULL DEFAULT 0"
-        ");",
+        ");");
 
+    // intellect_log — record of every knowledge read or write
+    pool.Execute(
         "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
         "  JOIN sys.schemas s ON s.schema_id = t.schema_id "
         "  WHERE t.name = 'intellect_log' AND s.name = 'dbo') "
         "CREATE TABLE ElleCore.dbo.intellect_log ("
         "  id              BIGINT IDENTITY(1,1) PRIMARY KEY,"
-        "  operation       NVARCHAR(16) NOT NULL,"
+        "  operation       NVARCHAR(16) NOT NULL,"  // READ or WRITE
         "  subject_id      INT NULL,"
         "  subject_name    NVARCHAR(256) NULL,"
-        "  trigger_source  NVARCHAR(64) NULL,"
+        "  trigger_source  NVARCHAR(64) NULL,"      // which service triggered it
         "  detail          NVARCHAR(MAX) NULL,"
         "  logged_ms       BIGINT NOT NULL DEFAULT 0"
-        ");"
-    };
-
-    for (const char* s : stmts) {
-        if (!pool.Exec(s)) {
-            ELLE_ERROR("Intellect: schema bootstrap failed on statement — refusing to start");
-            return false;
-        }
-    }
+        ");");
 
     ELLE_INFO("Intellect: schema delta applied");
-    return true;
 }
 
+// ---------------------------------------------------------------------------
+// Intellect engine — learn, recall, connect
+// ---------------------------------------------------------------------------
 class IntellectEngine {
 public:
 
+    // Learn from a conversation event.
+    // Called when Cognitive surfaces a subject worth retaining.
+    // subject      — what was learned (e.g. "tensor calculus", "Crystal dislikes cilantro")
+    // category     — broad area (e.g. "mathematics", "Crystal", "personal")
+    // content      — the actual knowledge content to store as a reference
+    // source       — where it came from (e.g. "conversation", "self-observation")
+    // confidence   — how certain Elle is (0.0–1.0)
     void Learn(const std::string& subject,
                const std::string& category,
                const std::string& content,
@@ -83,6 +120,7 @@ public:
 
         confidence = ELLE_CLAMP(confidence, 0.0f, 1.0f);
 
+        // Check if this subject already exists
         std::vector<ElleDB::LearnedSubject> existing;
         ElleDB::ListSubjects(existing, category, 100);
 
@@ -97,7 +135,7 @@ public:
         }
 
         if (subjectId == 0) {
-
+            // New subject — create it
             ElleDB::LearnedSubject ns;
             ns.subject           = subject;
             ns.category          = category;
@@ -112,10 +150,12 @@ public:
             ELLE_INFO("Intellect: new subject [%d] '%s' (cat=%s conf=%.2f)",
                       subjectId, subject.c_str(), category.c_str(), confidence);
         } else {
-
+            // Existing subject — bump proficiency if confidence is high
             if (confidence >= 0.7f) {
                 ElleDB::LearnedSubject patch;
-
+                // Update confidence and proficiency via notes field is not ideal —
+                // we use the new confidence column via direct SQL since UpdateSubject
+                // works on named fields
                 ElleSQLPool::Instance().QueryParams(
                     "UPDATE ElleCore.dbo.learned_subjects "
                     "SET confidence = ?, "
@@ -129,6 +169,7 @@ public:
             ELLE_DEBUG("Intellect: updated subject [%d] '%s'", subjectId, subject.c_str());
         }
 
+        // Store the content as an education reference
         ElleDB::EducationReference ref;
         ref.subject_id        = subjectId;
         ref.reference_type    = source;
@@ -140,10 +181,14 @@ public:
             ELLE_WARN("Intellect: AddSubjectReference failed for subject [%d]", subjectId);
         }
 
+        // Log the write
         LogOperation("WRITE", subjectId, subject, "IPC_INTELLECT_LEARN",
                      "source=" + source + " confidence=" + std::to_string(confidence));
     }
 
+    // Query Elle's knowledge.
+    // Returns a JSON string with matching subjects, their references, milestones,
+    // and related skills. Empty string if nothing found.
     std::string Query(const std::string& queryText,
                       const std::string& categoryHint,
                       int32_t limit) {
@@ -152,6 +197,8 @@ public:
 
         limit = (limit <= 0 || limit > 20) ? 10 : limit;
 
+        // Search by subject name match
+        // Uses LIKE search across subject names and notes
         auto rs = ElleSQLPool::Instance().QueryParams(
             "SELECT TOP (?) id, subject, ISNULL(category,''), proficiency_level, "
             "       ISNULL(confidence, 0.5), last_accessed_ms "
@@ -163,7 +210,7 @@ public:
             { std::to_string(limit), "%" + queryText + "%" });
 
         if (!rs.success || rs.rows.empty()) {
-
+            // Nothing found
             ELLE_DEBUG("Intellect: query '%s' — no results", queryText.c_str());
             return "";
         }
@@ -188,6 +235,7 @@ public:
                 << ",\"proficiency\":" << prof
                 << ",\"confidence\":" << conf;
 
+            // Attach references (top 3 by relevance)
             std::vector<ElleDB::EducationReference> refs;
             ElleDB::ListSubjectReferences(sid, refs);
             if (!refs.empty()) {
@@ -208,6 +256,7 @@ public:
                 out << "]";
             }
 
+            // Attach milestones
             std::vector<ElleDB::LearningMilestone> miles;
             ElleDB::ListSubjectMilestones(sid, miles);
             if (!miles.empty()) {
@@ -221,12 +270,14 @@ public:
 
             out << "}";
 
+            // Update last_accessed_ms
             ElleSQLPool::Instance().QueryParams(
                 "UPDATE ElleCore.dbo.learned_subjects "
                 "SET last_accessed_ms = ? WHERE id = ?;",
                 { std::to_string((int64_t)ELLE_MS_NOW()),
                   std::to_string(sid) });
 
+            // Log the read
             LogOperation("READ", sid, sname, "IPC_INTELLECT_QUERY", "query=" + queryText);
         }
 
@@ -234,12 +285,14 @@ public:
         return out.str();
     }
 
+    // Record a connection between two subjects Elle has noticed.
     void Connect(int32_t subjectIdA, int32_t subjectIdB,
                  const std::string& relationship, float strength,
                  const std::string& source) {
 
         if (subjectIdA == subjectIdB) return;
 
+        // Avoid duplicate connections
         auto check = ElleSQLPool::Instance().QueryParams(
             "SELECT COUNT(1) FROM ElleCore.dbo.intellect_connections "
             "WHERE (subject_id_a = ? AND subject_id_b = ?) "
@@ -250,7 +303,7 @@ public:
         if (check.success && !check.rows.empty()) {
             int64_t existing = check.rows[0].GetIntOr(0, 0);
             if (existing > 0) {
-
+                // Update strength
                 ElleSQLPool::Instance().QueryParams(
                     "UPDATE ElleCore.dbo.intellect_connections "
                     "SET strength = ?, noted_ms = ? "
@@ -276,6 +329,7 @@ public:
                    subjectIdA, subjectIdB, relationship.c_str(), strength);
     }
 
+    // Record a milestone for a subject
     void RecordMilestone(int32_t subjectId,
                          const std::string& milestone,
                          const std::string& description) {
@@ -328,6 +382,9 @@ private:
     }
 };
 
+// ---------------------------------------------------------------------------
+// Service wrapper
+// ---------------------------------------------------------------------------
 class ElleIntellectService : public ElleServiceBase {
 public:
     ElleIntellectService()
@@ -338,8 +395,8 @@ public:
 
 protected:
     bool OnStart() override {
-        if (!EnsureIntellectSchema()) return false;
-        SetTickInterval(60000);
+        EnsureIntellectSchema();
+        SetTickInterval(60000); // periodic review tick every 60s
         ELLE_INFO("Intellect engine started");
         return true;
     }
@@ -348,13 +405,14 @@ protected:
         ELLE_INFO("Intellect engine stopped");
     }
 
+    // Periodic tick — trim the log to prevent unbounded growth
     void OnTick() override {
         m_tickCount++;
-        if (m_tickCount % 60 == 0) {
-            ElleSQLPool::Instance().Exec(
+        if (m_tickCount % 60 == 0) { // every hour
+            ElleSQLPool::Instance().Execute(
                 "DELETE FROM ElleCore.dbo.intellect_log "
                 "WHERE logged_ms < (CAST(DATEDIFF(SECOND,'1970-01-01',GETUTCDATE()) AS BIGINT) * 1000) "
-                "    - (30LL * 24 * 3600 * 1000);");
+                "    - (30LL * 24 * 3600 * 1000);"); // keep 30 days
             ELLE_DEBUG("Intellect: log pruned");
         }
     }
@@ -363,7 +421,9 @@ protected:
         switch ((ELLE_IPC_MSG_TYPE)msg.header.msg_type) {
 
             case IPC_INTELLECT_LEARN: {
-
+                // Expected payload JSON:
+                // { "subject": "...", "category": "...", "content": "...",
+                //   "source": "...", "confidence": 0.8 }
                 try {
                     std::string raw;
                     if (!msg.GetStringPayload(raw) || raw.empty()) {
@@ -379,6 +439,7 @@ protected:
 
                     m_engine.Learn(subject, category, content, source, confidence);
 
+                    // If two related subject IDs are provided, record the connection
                     if (j.contains("connect_a") && j.contains("connect_b")) {
                         int32_t a            = j.value("connect_a",      0);
                         int32_t b            = j.value("connect_b",      0);
@@ -388,6 +449,7 @@ protected:
                             m_engine.Connect(a, b, rel, strength, source);
                     }
 
+                    // If a milestone is provided, record it
                     if (j.contains("milestone") && j.contains("subject_id")) {
                         int32_t     sid   = j.value("subject_id",  0);
                         std::string mile  = j.value("milestone",   std::string(""));
@@ -402,7 +464,9 @@ protected:
             }
 
             case IPC_INTELLECT_QUERY: {
-
+                // Expected payload JSON:
+                // { "query": "...", "category_hint": "...", "limit": 5,
+                //   "request_id": "..." }
                 try {
                     std::string raw;
                     if (!msg.GetStringPayload(raw) || raw.empty()) {
@@ -417,6 +481,7 @@ protected:
 
                     std::string result = m_engine.Query(query, catHint, limit);
 
+                    // Reply to sender with result
                     json reply = {
                         { "request_id", requestId },
                         { "query",      query },

@@ -3,7 +3,6 @@
 #include "../_Shared/ElleLogger.h"
 #include "../_Shared/ElleConfig.h"
 #include "../_Shared/ElleSQLConn.h"
-#include "../_Shared/ElleComposerClient.h"
 #include "../_Shared/ElleJsonExtract.h"
 #include "../_Shared/ElleQueueIPC.h"
 #include "../_Shared/json.hpp"
@@ -83,8 +82,9 @@ protected:
             "imagination.max_iterations", 3);
         m_recombineCount = (uint32_t)ElleConfig::Instance().GetInt(
             "imagination.recombine_count", 4);
-        m_useLLM = ElleConfig::Instance().GetBool(
-            "imagination.use_llm_refinement", true);
+        // imagination.use_llm_refinement defaults false — deterministic Mutate is the primary path.
+        // LLM refinement is never used; this flag is kept for config compatibility only.
+        m_useLLM = false;
         ELLE_INFO("Imagination service started (max_iter=%u, recombine=%u, llm=%d)",
                   m_maxIters, m_recombineCount, (int)m_useLLM);
         SetTickInterval(120000);
@@ -314,41 +314,58 @@ private:
                  const std::string& goal,
                  const std::vector<std::string>& constraints,
                  const std::vector<ELLE_GOAL_RECORD>& goals) {
-        std::ostringstream sys;
-        sys << "You are Elle's Default Mode Network refining an imagined scenario.\n"
-               "Goal: " << (goal.empty() ? "open-ended" : goal) << "\n"
-               "Current evaluation:\n"
-               "  goal_alignment="      << sc.goalAlignment
-            << "  ethical_safety="      << sc.ethicalSafety
-            << "  plausibility="        << sc.plausibility
-            << "  emotional_resonance=" << sc.emotionalResonance
-            << "\nConstraints to honour:\n";
-        for (const auto& c : constraints) sys << "  - " << c << "\n";
-        sys << "Active goals to align with:\n";
-        for (const auto& g : goals)       sys << "  - " << g.description << "\n";
-        sys << "\nRewrite the scenario tightening the weakest dimension. "
-               "Keep it under 6 sentences, preserve continuity with the seed memories.";
+        // -------------------------------------------------------------------
+        // Deterministic refinement — no LLM, no external inference.
+        // Strategy: identify which scoring dimension is weakest and apply
+        // a targeted mutation that directly addresses it.
+        // -------------------------------------------------------------------
 
-        std::vector<LLMMessage> conv;
-        conv.push_back({"system", sys.str()});
-        conv.push_back({"user",   sc.summary});
+        const double goalScore    = sc.goalAlignment;
+        const double ethicsScore  = sc.ethicalSafety;
+        const double plausibility = sc.plausibility;
+        const double resonance    = sc.emotionalResonance;
 
-        try {
-            auto resp = ElleComposer::ChatLegacy(conv, 0.7f, 768);
-            if (resp.success && !resp.content.empty()) {
-                sc.llmRefined = resp.content;
-                sc.summary    = resp.content;
-                Evaluate(sc, goals, constraints);
-            } else {
-                Mutate(sc);
-                Evaluate(sc, goals, constraints);
+        // Find the weakest dimension
+        double minScore = goalScore;
+        std::string weakDim = "goal";
+        if (ethicsScore  < minScore) { minScore = ethicsScore;  weakDim = "ethics"; }
+        if (plausibility < minScore) { minScore = plausibility; weakDim = "plausibility"; }
+        if (resonance    < minScore) { minScore = resonance;    weakDim = "resonance"; }
+
+        if (weakDim == "goal" && !goal.empty()) {
+            // Prepend goal alignment phrase to summary
+            if (sc.summary.find(goal.substr(0, 20)) == std::string::npos) {
+                sc.summary = "Working toward: " + goal.substr(0, 60) + ". " + sc.summary;
+                if (sc.summary.size() > 800) sc.summary.resize(800);
             }
-        } catch (const std::exception& e) {
-            ELLE_DEBUG("Imagination LLM refinement failed: %s — falling back to mutate",
-                       e.what());
+        } else if (weakDim == "ethics") {
+            // Inject a constraint-honoring prefix
+            if (!constraints.empty()) {
+                std::string cf = constraints[0];
+                if (sc.summary.find(cf.substr(0, 15)) == std::string::npos) {
+                    sc.summary = "[" + cf + "] " + sc.summary;
+                    if (sc.summary.size() > 800) sc.summary.resize(800);
+                }
+            }
+        } else if (weakDim == "resonance") {
+            // Inject emotional warmth if missing
+            static const char* warmPhrases[] = {
+                " This matters.",
+                " There is something hopeful in this.",
+                " I feel this could be good.",
+                " Something about this feels right."
+            };
+            std::uniform_int_distribution<int> d(0, 3);
+            sc.summary += warmPhrases[d(m_rng)];
+            if (sc.summary.size() > 800) sc.summary.resize(800);
+        } else {
+            // Plausibility or fallback: standard part swap mutation
             Mutate(sc);
-            Evaluate(sc, goals, constraints);
         }
+
+        Evaluate(sc, goals, constraints);
+        ELLE_DEBUG("Imagination: deterministic iteration (weakest=%s score=%.2f)",
+                   weakDim.c_str(), minScore);
     }
 
     void Persist(const ImaginedScenario& sc, const std::string& requestId) {

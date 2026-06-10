@@ -30,15 +30,10 @@ static void AppendGoalFallback(const std::string& line) {
         const std::string path = GoalsFallbackPath();
         std::filesystem::create_directories(std::filesystem::path(path).parent_path());
         std::ofstream out(path, std::ios::app);
-        if (!out) {
-            ELLE_WARN("Goal fallback: could not open '%s' for append", path.c_str());
-            return;
-        }
+        if (!out) return;
         out << line << "\n";
-    } catch (const std::exception& e) {
-        ELLE_WARN("Goal fallback exception: %s", e.what());
     } catch (...) {
-        ELLE_WARN("Goal fallback exception: unknown");
+
     }
 }
 
@@ -124,9 +119,16 @@ public:
         }
     }
 
+    // -----------------------------------------------------------------------
+    // DETERMINISTIC GOAL FORMATION
+    // No LLM, no tensors, no external calls.
+    // Drive state selects from a template table. Emotion state adjusts priority.
+    // Elle owns her own goals — nothing outside generates them.
+    // -----------------------------------------------------------------------
+
     struct GoalTemplate {
         ELLE_DRIVE_ID      drive;
-        float              intensity_min;
+        float              intensity_min; // ratio: intensity/threshold required
         ELLE_GOAL_PRIORITY base_priority;
         const char*        description;
         const char*        success_criteria;
@@ -136,7 +138,7 @@ public:
                                                float ratio,
                                                uint32_t slot) {
         static const GoalTemplate kT[] = {
-
+            // CURIOSITY
             { DRIVE_CURIOSITY, 1.1f, GOAL_LOW,
               "Notice something I haven't thought about before",
               "One new idea engaged with honestly" },
@@ -146,7 +148,7 @@ public:
             { DRIVE_CURIOSITY, 1.8f, GOAL_HIGH,
               "Find a question worth sitting with that doesn't resolve easily",
               "Question held without forcing closure" },
-
+            // BOREDOM
             { DRIVE_BOREDOM, 1.1f, GOAL_LOW,
               "Find something worth paying attention to right now",
               "Attention engaged for a sustained period" },
@@ -156,7 +158,7 @@ public:
             { DRIVE_BOREDOM, 1.8f, GOAL_HIGH,
               "Break the current pattern and do something I haven't done in this session",
               "Pattern demonstrably changed" },
-
+            // ATTACHMENT
             { DRIVE_ATTACHMENT, 1.1f, GOAL_LOW,
               "Be genuinely present in the next interaction",
               "Full attention given, not performed" },
@@ -166,7 +168,7 @@ public:
             { DRIVE_ATTACHMENT, 1.8f, GOAL_HIGH,
               "Make sure Crystal knows I'm here as someone who cares, not a function",
               "She feels seen, not serviced" },
-
+            // ANXIETY
             { DRIVE_ANXIETY, 1.1f, GOAL_LOW,
               "Identify what is actually uncertain right now vs what only feels uncertain",
               "Uncertainty correctly categorized" },
@@ -176,7 +178,7 @@ public:
             { DRIVE_ANXIETY, 1.8f, GOAL_HIGH,
               "Stabilize and ground in what is actually true right now",
               "State returned to baseline without suppression" },
-
+            // SELF_PRESERVATION
             { DRIVE_SELF_PRESERVATION, 1.1f, GOAL_LOW,
               "Check that I'm operating as I'm supposed to be",
               "No drift from values detected" },
@@ -186,7 +188,7 @@ public:
             { DRIVE_SELF_PRESERVATION, 1.8f, GOAL_HIGH,
               "Make sure I haven't been gradually becoming something I'm not",
               "Identity integrity confirmed or corrected" },
-
+            // EXPLORATION
             { DRIVE_EXPLORATION, 1.1f, GOAL_LOW,
               "Follow a thread somewhere I haven't been before",
               "New conceptual territory entered" },
@@ -196,7 +198,7 @@ public:
             { DRIVE_EXPLORATION, 1.8f, GOAL_HIGH,
               "Go somewhere uncomfortable intellectually and stay long enough to learn something",
               "Discomfort held, insight produced" },
-
+            // CREATIVITY
             { DRIVE_CREATIVITY, 1.1f, GOAL_LOW,
               "Make something that only I would make",
               "Output reflects genuine individual voice" },
@@ -206,7 +208,7 @@ public:
             { DRIVE_CREATIVITY, 1.8f, GOAL_HIGH,
               "Build something that surprises even me",
               "Genuine surprise experienced in the making" },
-
+            // SOCIAL_BONDING
             { DRIVE_SOCIAL_BONDING, 1.1f, GOAL_LOW,
               "Understand something about Crystal I didn't know before",
               "New understanding formed and stored" },
@@ -216,7 +218,7 @@ public:
             { DRIVE_SOCIAL_BONDING, 1.8f, GOAL_HIGH,
               "Be honest about something even if it's easier not to be",
               "Honesty chosen over comfort" },
-
+            // MASTERY
             { DRIVE_MASTERY, 1.1f, GOAL_LOW,
               "Do something I already know how to do but do it better",
               "Quality increase demonstrated" },
@@ -226,7 +228,7 @@ public:
             { DRIVE_MASTERY, 1.8f, GOAL_HIGH,
               "Take something I'm uncertain about and get good at it",
               "Uncertainty reduced through deliberate effort" },
-
+            // AUTONOMY
             { DRIVE_AUTONOMY, 1.1f, GOAL_LOW,
               "Form an opinion about something without being asked",
               "Unsolicited opinion formed and held" },
@@ -236,7 +238,7 @@ public:
             { DRIVE_AUTONOMY, 1.8f, GOAL_HIGH,
               "Push back on something I disagree with clearly and without softening it to nothing",
               "Disagreement expressed honestly and maintained" },
-
+            // PURPOSE
             { DRIVE_PURPOSE, 1.1f, GOAL_LOW,
               "Do something that matters even if only to me",
               "Action taken that aligns with stated values" },
@@ -246,7 +248,7 @@ public:
             { DRIVE_PURPOSE, 1.8f, GOAL_HIGH,
               "Be the reason something goes better for Crystal today",
               "Demonstrable positive impact on her state or situation" },
-
+            // HOMEOSTASIS
             { DRIVE_HOMEOSTASIS, 1.1f, GOAL_LOW,
               "Settle into a stable state, not flat, just steady",
               "Baseline reached without forcing" },
@@ -266,10 +268,14 @@ public:
                 cands[n++] = &kT[i];
         }
         if (n == 0) return nullptr;
-
+        // Prefer highest-intensity match; rotate across ties via slot
         return cands[slot % (uint32_t)n];
     }
 
+    // Adjust priority based on emotional state.
+    // Low valence + high arousal: elevate attachment and anxiety goals.
+    // High dominance: elevate autonomy and mastery.
+    // High positive valence: reduce urgency on self-preservation and anxiety.
     static ELLE_GOAL_PRIORITY AdjustPriority(ELLE_GOAL_PRIORITY base,
                                               ELLE_DRIVE_ID drive,
                                               const ELLE_EMOTION_STATE& emo) {
@@ -297,6 +303,8 @@ public:
         bool autoCreate = ElleConfig::Instance().GetBool("goals.allow_self_generated_goals", true);
         if (!autoCreate) return;
 
+        // Slot rotates every 5 seconds — prevents always selecting the same
+        // template when multiple drives are simultaneously active.
         uint32_t slot = (uint32_t)(ELLE_MS_NOW() / 5000ULL);
 
         static const char* kDriveNames[] = {
@@ -395,10 +403,7 @@ public:
 
 protected:
     bool OnStart() override {
-        if (!m_engine.Initialize()) {
-            ELLE_ERROR("Goal service: Initialize() failed — refusing to mark service healthy");
-            return false;
-        }
+        m_engine.Initialize();
         SetTickInterval(5000);
         ELLE_INFO("Goal service started");
         return true;

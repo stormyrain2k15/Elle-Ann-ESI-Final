@@ -1,7 +1,6 @@
 #include "../_Shared/ElleTypes.h"
 #include "../_Shared/ElleServiceBase.h"
 #include "../_Shared/ElleIdentityCore.h"
-#include "../_Shared/ElleComposerClient.h"
 #include "../_Shared/ElleLogger.h"
 #include "../_Shared/ElleConfig.h"
 #include "../_Shared/ElleSQLConn.h"
@@ -263,36 +262,89 @@ private:
         if (now - m_lastOpinionLLMMs < 30000) return;
         m_lastOpinionLLMMs = now;
 
-        std::string prompt =
-            "User said: \"" + userMessage.substr(0, 400) + "\"\n"
-            "Elle replied: \"" + elleResponse.substr(0, 200) + "\"\n\n"
-            "Extract the opinion-worthy topic of this exchange. Return STRICT "
-            "JSON: {\"domain\":\"<one of: people|ideas|activities|places|food|"
-            "art|tech|self|other>\",\"subject\":\"<short noun phrase, <=40 "
-            "chars>\",\"valence\":<-1.0 to 1.0>,\"strength\":<0.0 to 1.0>,"
-            "\"skip\":<true if the exchange doesn't warrant a preference>}. "
-            "No prose outside the JSON.";
-        std::string raw = ElleComposer::Ask(prompt,
-            "You distill exchanges into preferences. Terse. JSON only.");
-        if (raw.empty()) return;
-        nlohmann::json j;
-        if (!Elle::ExtractJsonObject(raw, j)) return;
+        // ---------------------------------------------------------------
+        // Deterministic opinion formation — no LLM, no external inference.
+        // Domain and subject are extracted from the exchange by structural
+        // heuristics. Valence is derived from Elle's emotional state at
+        // the time of the exchange, which is already available.
+        // ---------------------------------------------------------------
 
-        try {
-            if (j.value("skip", false)) return;
-            std::string domain  = j.value("domain",  std::string(""));
-            std::string subject = j.value("subject", std::string(""));
-            float valence       = (float)j.value("valence",  0.0);
-            float strength      = (float)j.value("strength", 0.2);
-            if (domain.empty() || subject.empty()) return;
+        // Domain classification by keyword presence in the exchange
+        const std::string lower = [&]() {
+            std::string s = userMessage + " " + elleResponse;
+            std::transform(s.begin(), s.end(), s.begin(),
+                           [](unsigned char c){ return (char)std::tolower(c); });
+            return s;
+        }();
 
-            float delta = valence * strength;
-            identity.ReinforcePreference(domain, subject, delta);
-            ELLE_DEBUG("Opinion formed: %s/%s val=%.2f str=%.2f",
-                       domain.c_str(), subject.c_str(), valence, strength);
-        } catch (const std::exception& ex) {
-            ELLE_DEBUG("CheckOpinionFormation JSON parse: %s", ex.what());
+        auto countHits = [&](const std::vector<std::string>& terms) {
+            int n = 0;
+            for (auto& t : terms)
+                if (lower.find(t) != std::string::npos) n++;
+            return n;
+        };
+
+        std::string domain;
+        if (countHits({"person","people","friend","family","crystal","josh","they","he","she"}) >= 2)
+            domain = "people";
+        else if (countHits({"code","software","tech","computer","system","program","api","build"}) >= 2)
+            domain = "tech";
+        else if (countHits({"music","art","film","movie","book","song","story","creative","write"}) >= 2)
+            domain = "art";
+        else if (countHits({"food","eat","drink","cook","taste","flavor","recipe"}) >= 2)
+            domain = "food";
+        else if (countHits({"place","city","town","travel","visit","location","here","there"}) >= 2)
+            domain = "places";
+        else if (countHits({"do","play","hobby","activity","sport","game","exercise","walk"}) >= 2)
+            domain = "activities";
+        else if (countHits({"i feel","i think","i am","myself","my own","i wonder","i want"}) >= 2)
+            domain = "self";
+        else if (countHits({"idea","concept","theory","believe","think","philosophy","mean"}) >= 2)
+            domain = "ideas";
+        else
+            domain = "other";
+
+        // Subject: take first meaningful noun phrase from user message (up to 40 chars)
+        // Simple heuristic: first sentence fragment that isn't a stop phrase
+        std::string subject;
+        {
+            static const std::vector<std::string> stopPhrases = {
+                "how are", "what do", "can you", "do you", "i want", "i need",
+                "tell me", "what is", "what are", "help me", "please"
+            };
+            std::string candidate = userMessage.substr(0, 80);
+            // Trim to first sentence
+            auto stop = candidate.find_first_of(".!?");
+            if (stop != std::string::npos) candidate = candidate.substr(0, stop);
+            std::string cl = candidate;
+            std::transform(cl.begin(), cl.end(), cl.begin(),
+                           [](unsigned char c){ return (char)std::tolower(c); });
+            bool isStop = false;
+            for (auto& sp : stopPhrases)
+                if (cl.find(sp) == 0) { isStop = true; break; }
+            if (!isStop && candidate.size() >= 4)
+                subject = candidate.size() > 40 ? candidate.substr(0, 40) : candidate;
         }
+        if (subject.empty()) subject = domain; // fallback
+        if (domain.empty() || subject.empty()) return;
+
+        // Valence: use Elle's current emotional state as the opinion signal.
+        // The emotion she's experiencing during this exchange IS her reaction to it.
+        float valence  = m_state.inner_weather == "curious"  ?  0.6f :
+                         m_state.inner_weather == "content"  ?  0.4f :
+                         m_state.inner_weather == "restless" ? -0.2f :
+                         m_state.inner_weather == "heavy"    ? -0.5f :
+                         m_state.inner_weather == "tender"   ?  0.5f :
+                         0.1f; // mild positive default
+        float strength = std::min(1.0f, 0.3f + novelty * 0.4f);
+
+        // Skip if this is a very low-novelty, low-valence exchange
+        if (std::abs(valence) < 0.1f && strength < 0.25f) return;
+
+        float delta = valence * strength;
+        identity.ReinforcePreference(domain, subject, delta);
+        ELLE_DEBUG("Opinion formed (deterministic): %s/%s val=%.2f str=%.2f",
+                   domain.c_str(), subject.c_str(), valence, strength);
     }
 
     void CheckNeeds() {
