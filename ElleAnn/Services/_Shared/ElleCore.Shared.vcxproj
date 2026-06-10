@@ -78,6 +78,7 @@
     <ClCompile Include="ElleUserContinuity.cpp" />
     <ClCompile Include="ElleLexicalAdmin.cpp" />
     <ClCompile Include="ElleUploadGuard.cpp" />
+    <ClCompile Include="ElleShnVersionStore.cpp" />
     <ClCompile Include="ElleIntentLabelVocab_SqlLoader.cpp" />
     <ClCompile Include="ElleBeliefAdmin.cpp" />
     <ClCompile Include="ElleTypes.cpp" />
@@ -102,6 +103,7 @@
     <ClInclude Include="ElleUserContinuity.h" />
     <ClInclude Include="ElleLexicalAdmin.h" />
     <ClInclude Include="ElleUploadGuard.h" />
+    <ClInclude Include="ElleShnVersionStore.h" />
     <ClInclude Include="ElleIntentLabelVocab.h" />
     <ClInclude Include="ElleBeliefAdmin.h" />
     <ClInclude Include="ElleTypes.h" />

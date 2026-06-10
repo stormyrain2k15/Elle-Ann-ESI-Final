@@ -26,7 +26,9 @@ add_executable(elle_shared_tests
     tests/test_upload_guard.cpp
     tests/test_intent_label_vocab.cpp
     tests/test_sql_fallback_classifier.cpp
+    tests/test_shn_version_store.cpp
     ../ElleUploadGuard.cpp
+    ../ElleShnVersionStore.cpp
 )
 target_include_directories(elle_shared_tests PRIVATE ..)
 target_link_libraries(elle_shared_tests PRIVATE doctest::doctest)

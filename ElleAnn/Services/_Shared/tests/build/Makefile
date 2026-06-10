@@ -197,6 +197,30 @@ doctest_with_main/fast:
 	$(MAKE) $(MAKESILENT) -f _deps/doctest-build/CMakeFiles/doctest_with_main.dir/build.make _deps/doctest-build/CMakeFiles/doctest_with_main.dir/build
 .PHONY : doctest_with_main/fast
 
+app/ElleAnn/Services/_Shared/ElleShnVersionStore.o: app/ElleAnn/Services/_Shared/ElleShnVersionStore.cpp.o
+.PHONY : app/ElleAnn/Services/_Shared/ElleShnVersionStore.o
+
+# target to build an object file
+app/ElleAnn/Services/_Shared/ElleShnVersionStore.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/app/ElleAnn/Services/_Shared/ElleShnVersionStore.cpp.o
+.PHONY : app/ElleAnn/Services/_Shared/ElleShnVersionStore.cpp.o
+
+app/ElleAnn/Services/_Shared/ElleShnVersionStore.i: app/ElleAnn/Services/_Shared/ElleShnVersionStore.cpp.i
+.PHONY : app/ElleAnn/Services/_Shared/ElleShnVersionStore.i
+
+# target to preprocess a source file
+app/ElleAnn/Services/_Shared/ElleShnVersionStore.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/app/ElleAnn/Services/_Shared/ElleShnVersionStore.cpp.i
+.PHONY : app/ElleAnn/Services/_Shared/ElleShnVersionStore.cpp.i
+
+app/ElleAnn/Services/_Shared/ElleShnVersionStore.s: app/ElleAnn/Services/_Shared/ElleShnVersionStore.cpp.s
+.PHONY : app/ElleAnn/Services/_Shared/ElleShnVersionStore.s
+
+# target to generate assembly for a file
+app/ElleAnn/Services/_Shared/ElleShnVersionStore.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/app/ElleAnn/Services/_Shared/ElleShnVersionStore.cpp.s
+.PHONY : app/ElleAnn/Services/_Shared/ElleShnVersionStore.cpp.s
+
 app/ElleAnn/Services/_Shared/ElleUploadGuard.o: app/ElleAnn/Services/_Shared/ElleUploadGuard.cpp.o
 .PHONY : app/ElleAnn/Services/_Shared/ElleUploadGuard.o
 
@@ -269,6 +293,30 @@ tests/test_main.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/tests/test_main.cpp.s
 .PHONY : tests/test_main.cpp.s
 
+tests/test_shn_version_store.o: tests/test_shn_version_store.cpp.o
+.PHONY : tests/test_shn_version_store.o
+
+# target to build an object file
+tests/test_shn_version_store.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/tests/test_shn_version_store.cpp.o
+.PHONY : tests/test_shn_version_store.cpp.o
+
+tests/test_shn_version_store.i: tests/test_shn_version_store.cpp.i
+.PHONY : tests/test_shn_version_store.i
+
+# target to preprocess a source file
+tests/test_shn_version_store.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/tests/test_shn_version_store.cpp.i
+.PHONY : tests/test_shn_version_store.cpp.i
+
+tests/test_shn_version_store.s: tests/test_shn_version_store.cpp.s
+.PHONY : tests/test_shn_version_store.s
+
+# target to generate assembly for a file
+tests/test_shn_version_store.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/tests/test_shn_version_store.cpp.s
+.PHONY : tests/test_shn_version_store.cpp.s
+
 tests/test_sql_fallback_classifier.o: tests/test_sql_fallback_classifier.cpp.o
 .PHONY : tests/test_sql_fallback_classifier.o
 
@@ -332,6 +380,9 @@ help:
 	@echo "... test"
 	@echo "... doctest_with_main"
 	@echo "... elle_shared_tests"
+	@echo "... app/ElleAnn/Services/_Shared/ElleShnVersionStore.o"
+	@echo "... app/ElleAnn/Services/_Shared/ElleShnVersionStore.i"
+	@echo "... app/ElleAnn/Services/_Shared/ElleShnVersionStore.s"
 	@echo "... app/ElleAnn/Services/_Shared/ElleUploadGuard.o"
 	@echo "... app/ElleAnn/Services/_Shared/ElleUploadGuard.i"
 	@echo "... app/ElleAnn/Services/_Shared/ElleUploadGuard.s"
@@ -341,6 +392,9 @@ help:
 	@echo "... tests/test_main.o"
 	@echo "... tests/test_main.i"
 	@echo "... tests/test_main.s"
+	@echo "... tests/test_shn_version_store.o"
+	@echo "... tests/test_shn_version_store.i"
+	@echo "... tests/test_shn_version_store.s"
 	@echo "... tests/test_sql_fallback_classifier.o"
 	@echo "... tests/test_sql_fallback_classifier.i"
 	@echo "... tests/test_sql_fallback_classifier.s"

@@ -13,12 +13,6 @@ import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import java.util.concurrent.TimeUnit
 
-data class PairingPayload(
-    val host: String,
-    val port: Int,
-    val code: String,
-)
-
 @Serializable
 data class StoredToken(
     val jwt: String,
@@ -90,9 +84,6 @@ interface ElleApi {
 
     @retrofit2.http.GET("/api/emotions")
     suspend fun emotions(): EmotionsResponse
-
-    @retrofit2.http.POST("/api/auth/pair")
-    suspend fun pair(@retrofit2.http.Body body: com.elleann.android.data.models.PairRequest): PairResponse
 
     @retrofit2.http.POST("/api/auth/login")
     suspend fun login(@retrofit2.http.Body body: com.elleann.android.data.models.LoginRequest): PairResponse

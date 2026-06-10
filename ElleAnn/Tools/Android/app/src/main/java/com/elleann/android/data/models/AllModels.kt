@@ -1046,16 +1046,6 @@ data class CreateModelWorkerRequest(
 )
 
 @Serializable
-data class PairRequest(
-
-    val code:                                 String = "",
-    @SerialName("device_name") val deviceName: String,
-    @SerialName("device_id")   val deviceId:   String,
-    @SerialName("game_user")   val gameUser:   String? = null,
-    @SerialName("game_pass")   val gamePass:   String? = null,
-)
-
-@Serializable
 data class LoginRequest(
     val username: String,
     val password: String,

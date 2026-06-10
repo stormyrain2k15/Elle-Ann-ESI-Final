@@ -10,6 +10,95 @@
 > *the audit identified a real problem but the right fix requires a
 > design conversation, not just code*.
 
+## This pass — what landed (Feb 2026 — pass 15)
+
+### Audit row 10 — SHN write rollback — **CLOSED** ✅
+
+New `Services/_Shared/ElleShnVersionStore.{h,cpp}` provides
+`AtomicWriteWithVersioning(absDir, name, bytes, keepVersions=10)`:
+
+1. SHA1-hashes the incoming bytes (header-only SHA1 implementation
+   inside the .cpp — no extra dep).
+2. If the target already exists: reads its bytes, SHA1s them. If
+   the hashes match → **short-circuit success with zero side
+   effects** (no version snapshot, no rewrite, idempotent re-save).
+3. Otherwise: snapshots the previous bytes into
+   `<absDir>/.shn_versions/<stem>/<stem>.<20-digit-ms>.shn`
+   (versioned filename guarantees lexicographic = chronological
+   ordering for cheap pruning), then prunes the directory to the
+   last `keepVersions` entries.
+4. Writes the new bytes via `.tmp` + atomic `std::filesystem::rename`,
+   with a `copy_file + remove` cross-filesystem fallback that
+   still preserves "either-or" semantics from the reader's POV.
+5. Returns a `WriteResult` carrying `{ok, previous_existed,
+   previous_bytes, previous_hash, new_bytes, new_hash,
+   version_path, error}`.
+
+`HTTPServer_SHNRoutes.cpp::POST /api/shn/save` now delegates to this
+helper (removed the inline `.tmp` + `rename` block). The route's
+response payload gained `previous_existed`, `previous_bytes`,
+`previous_hash`, `new_hash`, `version_snapshot`. The per-file
+`shn_history/<name>.log` audit line was extended with
+`prev_hash->new_hash` so operators can grep the log to find the
+exact version snapshot for any byte transition.
+
+Also `ListVersions(absDir, name)` returns the snapshot inventory
+newest-first (ready to wire into a `GET /api/shn/versions/{name}`
+admin route in a follow-up pass).
+
+### Tests (Shared ctest: 34 → 40 PASS)
+
+`Services/_Shared/tests/tests/test_shn_version_store.cpp`:
+- first write — no previous, no snapshot created;
+- identical re-write — hashes match, version dir not created,
+  short-circuit success;
+- real change — old bytes snapshot lands in `.shn_versions/`, new
+  bytes are on disk;
+- pruning keeps only `keepVersions`;
+- `ListVersions` returns newest-first;
+- SHA1 hex is 40 chars, deterministic, distinct for different
+  payloads (verified against the well-known `SHA1("hello") =
+  aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d`).
+
+### Android client — pair UI residue scrubbed
+
+The earlier de-pair pass left dead code behind. This pass:
+
+- Deleted `Tools/Android/app/src/main/java/com/elleann/android/PairScreen.kt` (232-line dead file).
+- Removed `const val PAIR = "pair"` from `navigation/ElleDestinations.kt`.
+- Removed `ElleApi::pair(@Body PairRequest)` Retrofit method from `ElleApp.kt` and the `PairRequest` data class from `data/models/AllModels.kt`.
+- Removed `PairingPayload` data class from `ElleApp.kt`.
+- `ElleNavHost`: dropped the unused `isPaired`, `onPaired`, `prefill: PairingPayload?` parameters. `MainActivity` updated to the new 3-arg call site.
+
+`grep -rn 'PairScreen\|PairRequest\|PairingPayload\|ElleRoutes.PAIR\|auth/pair' Tools/Android/app/src/main/`
+returns **zero hits** post-scrub.
+
+### Wiring updates
+
+`Services/_Shared/ElleCore.Shared.vcxproj` updated to compile the
+new `ElleShnVersionStore.cpp` and ship the `ElleShnVersionStore.h`
+include (so all dependent services pick it up transitively).
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition   | 39/39 PASS |
+| Probability | 85/85 PASS |
+| Composer    | 17/17 PASS |
+| Language    | 1/1 PASS |
+| Shared      | **40/40 PASS** (+6 ShnVersionStore) |
+| **Total local Linux ctest** | **182/182 PASS** |
+
+`ElleShnVersionStore.cpp` clean standalone-compile under
+`g++ -std=c++17 -Wall -Wextra`. `shellcheck -S warning` still clean
+across all three `Tools/*.sh`. NUDE CODE preserved.
+
+Audit row 10 → ✅ CLOSED. Audit row 11 (Android pair UI) now has
+zero residue in the codebase.
+
+---
+
 ## This pass — what landed (Feb 2026 — pass 14)
 
 ### Config schema drift sweep (#12) — **CLOSED** ✅
@@ -715,7 +804,7 @@ Requires `ELLE_SQL_DSN`, `sqlcmd`, and the Windows supervisor binary
 — so it can't run in this Linux container, but it's drop-in for the
 user's local validation rig.
 
-### Android client de-paired — **LANDED**
+### Android client de-paired — **LANDED → SCRUBBED (pass 15)**
 
 - `PairScreen.kt` rewritten as `LoginScreen` (deprecated alias
   `PairScreen → LoginScreen` retained so any dynamic loader keeps
@@ -724,6 +813,16 @@ user's local validation rig.
 - `ElleApiExtended.kt`: `generatePairCode` Retrofit method removed.
 - `DevScreens.kt::PairedDevicesScreen` no longer renders the
   Generate-Code surface (devices list still works).
+- **pass 15**: the deprecated 232-line `PairScreen.kt` file deleted
+  outright (it was no longer referenced by any composable, route, or
+  caller — pure dead code). `ElleRoutes.PAIR = "pair"` constant
+  removed. `ElleApi::pair(@Body PairRequest)` Retrofit method and the
+  `PairRequest` data class removed. `PairingPayload` data class
+  removed from `ElleApp.kt`. `ElleNavHost` `isPaired` / `onPaired` /
+  `prefill: PairingPayload?` parameters removed (none were
+  consumed); `MainActivity` updated to match the new 3-arg
+  signature. `grep -rn 'PairScreen\|PairRequest\|PairingPayload\|ElleRoutes.PAIR\|auth/pair' Tools/Android/app/src/main/`
+  now returns **zero hits**.
 
 ### HTTP god-file split (#8 / #15) — **PLAN-LANDED**
 
@@ -900,7 +999,7 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 | 7 | GoalEngine `OnStart` ignores `Initialize()` return | ↪ | Fixed alongside #6 |
 | 8 | HTTP god-file (6 000 LOC monolith) | 🟢 SPLIT-LANDED | Phase A + Phase B + Phase C all landed. Class declaration extracted into `Services/Elle.Service.HTTP/HTTPServer.h` (file-private types + helpers carried along; globals marked `inline`). `HTTPServer.cpp` shrank from 6 211 to ~1 070 lines and now contains only the non-route methods + `ELLE_SERVICE_MAIN`. Each of the 18 `RegisterXxxRoutes()` lives in its own `HTTPServer_<Name>Routes.cpp` (158 routes preserved verbatim across the split; brace totals 1 902/1 902 conserved). `Elle.Service.HTTP.vcxproj` updated to compile all 19 .cpp files + `<ClInclude>HTTPServer.h`. **Needs MSVC verification on Windows.** |
 | 9 | Upload endpoint validates filename, not content | ✅ FIXED-THIS-PASS | `_Shared/ElleUploadGuard.{h,cpp}` — 24 content-type byte-signature detection; `ValidateUploadContent` returns `{detected, allowed, isExec, reason}`. Both upload routes (`POST /api/memory/{id}/files`, `POST /api/video/avatar/upload`) hardened. Avatar route further restricts to image MIMEs only. 17 doctest cases. |
-| 10 | SHN write endpoint persists raw bytes with no rollback | ⏸ | Needs staging file + diff + atomic rename + version history |
+| 10 | SHN write endpoint persists raw bytes with no rollback | ✅ FIXED-THIS-PASS | New `_Shared/ElleShnVersionStore.{h,cpp}` provides `AtomicWriteWithVersioning(absDir, name, bytes, keepVersions=10)`. The save flow now: (a) computes SHA1 of new bytes; (b) if target exists, reads current bytes, computes SHA1, and **short-circuits with zero side-effects if hashes match**; (c) otherwise snapshots the previous bytes to `<absDir>/.shn_versions/<stem>/<stem>.<ms>.shn` and prunes to the last `keepVersions`; (d) writes the new bytes via `.tmp` + atomic `rename` (with cross-FS `copy_file` fallback). `POST /api/shn/save` response payload now carries `previous_existed`, `previous_bytes`, `previous_hash`, `new_hash`, `version_snapshot`. Per-file `shn_history/<name>.log` line extended with `prev_hash->new_hash`. `_Shared/tests/tests/test_shn_version_store.cpp` adds 6 doctest cases (shared harness 34 → 40 PASS). |
 | 11 | Probability/Composer silent catches | ↪ | 9 silent catches now log (ProbabilityHost ×7, ProbabilityEngine ×1, Composer ×1, GoalEngine.AppendGoalFallback ×1) |
 | 12 | Config schema drift between defaults and master file | 🟢 SWEEP-COMPLETE | Sweep ran via `/tmp/config_drift_sweep.py` against every `ElleConfig::Instance().Get*("key", default)` call in `Services/`. Findings: 0 keys missing from JSON (30 added this pass: `bonding.*`, `cognitive.*` timeouts, `consent.*`, `dream.*`, `family.child_*`, `goals.fallback_*`, `http_server.game_db_*`, `imagination.*`, `innerlife.*`, `probability.*`, `services.named_pipes.max_payload_bytes`, `video.avatar_dir`), 0 true value mismatches (17 false positives properly classified: 5×Windows-path-escape-equivalent, 3×unparseable-constexpr, 4×unresolved-local-variable, 5×intentional-testing-mode `http_server.no_auth`). 340 JSON keys are referenced via `cfg.*` struct accessors or Python tools — not drift. Full report at `Docs/CONFIG_SCHEMA_DRIFT_REPORT.md`. ✅ |
 | 13 | Committed binary artifacts in repo | ⏸ | `.gitignore` + LFS migration |
@@ -977,11 +1076,11 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 
 ## Next pass — recommended priority order
 
-1. ⏸ **MSVC verification** of the HTTP god-file split (Phase A + B + C) + SQL Fallback Phase 2/3. Follow `Docs/HTTP_GOD_FILE_MSVC_VERIFICATION.md`: build `Elle.Service.HTTP.vcxproj`, confirm `Registered 160 API routes` at startup + `SQL fallback poison reaper: enabled, interval=300s`, run the 20-route smoke (one per registrar + `/api/admin/sqlfallback/poison` + the `sql_fallback` block inside `/api/server/status`). When green flip Anti-Slop matrix rows 8/15 to ✅.
-2. ⏸ **Apply `SQL/_Shared/01_sql_fallback_poison.sql`** to the `ElleCore` DB on the Windows host before exercising the new poison admin routes or letting the reaper write.
-3. ⏸ **Run `Tools/ipc_chain_smoke.sh`** on the Windows host once the mesh is up — it's a fast end-to-end gate covering the canonical chat pipeline.
-4. ⏸ **Upload + SHN write hardening** (#9, #10).
-5. ⏸ **Android client rewrite** to remove pair UI.
+1. ⏸ **MSVC verification** of the HTTP god-file split (Phase A + B + C) + SQL Fallback Phase 2/3. Follow `Docs/HTTP_GOD_FILE_MSVC_VERIFICATION.md`. Flip Anti-Slop matrix rows 8/15 to ✅.
+2. ⏸ **Apply `SQL/_Shared/01_sql_fallback_poison.sql`** to `ElleCore` before exercising the SQL-fallback reaper.
+3. ⏸ **Run `Tools/ipc_chain_smoke.sh`** on the live mesh — fast end-to-end gate.
+4. ⏸ **Wire `GET /api/admin/shn/versions/{name}`** to the new `ElleShnVersionStore::ListVersions` (cheap follow-up — schema is in place, just needs the route).
+5. ⏸ **`Tools/Android/` Kotlin lint pass** (e.g. `./gradlew lintDebug`) to catch any latent unused-import warnings from the pair-UI scrub. Cannot run in Linux container without Android SDK.
 
 Every item above keeps its tag in this file. When something moves from
 ⏸ to ✅, the row updates here so the next agent inherits accurate state.

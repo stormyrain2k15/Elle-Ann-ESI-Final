@@ -53,8 +53,6 @@ object ElleRoutes {
     const val WORLD  = "world"
     const val DEV    = "dev"
 
-    const val PAIR   = "pair"
-
     const val CONVERSATION_LIST = "chat/conversations"
     const val CHAT_SCREEN       = "chat/conversation/{conversationId}"
     const val VIDEO_CALL        = "chat/video/{callId}"

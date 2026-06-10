@@ -1,4 +1,5 @@
 #include "HTTPServer.h"
+#include "../_Shared/ElleShnVersionStore.h"
 
 void ElleHTTPService::RegisterSHNRoutes() {
         m_router.Register("POST", "/api/shn/save",
@@ -46,27 +47,20 @@ void ElleHTTPService::RegisterSHNRoutes() {
                 std::filesystem::path path =
                     std::filesystem::path(absDir) / name;
 
-                std::filesystem::path tmp = path; tmp += ".tmp";
-                {
-                    std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-                    if (!f.is_open())
-                        return HTTPResponse::Err(500,
-                            "cannot open " + tmp.string() + " for write");
-                    f.write(decoded.data(), (std::streamsize)decoded.size());
-                    if (!f.good())
-                        return HTTPResponse::Err(500,
-                            "write to " + tmp.string() + " failed");
-                }
-                std::error_code ec;
-                std::filesystem::rename(tmp, path, ec);
-                if (ec) {
-                    std::filesystem::copy_file(tmp, path,
-                        std::filesystem::copy_options::overwrite_existing, ec);
-                    std::filesystem::remove(tmp, ec);
+                ElleShnVersionStore::WriteResult wr =
+                    ElleShnVersionStore::AtomicWriteWithVersioning(
+                        absDir, name, decoded, 10);
+                if (!wr.ok) {
+                    return HTTPResponse::Err(500,
+                        std::string("shn save failed: ") + wr.error);
                 }
 
-                ELLE_INFO("SHN saved: root=%s name=%s size=%zu",
-                          root.c_str(), name.c_str(), decoded.size());
+                ELLE_INFO("SHN saved: root=%s name=%s size=%zu prev_existed=%d "
+                          "prev_hash=%s new_hash=%s ver=%s",
+                          root.c_str(), name.c_str(), decoded.size(),
+                          wr.previous_existed ? 1 : 0,
+                          wr.previous_hash.c_str(), wr.new_hash.c_str(),
+                          wr.version_path.c_str());
                 ELLE_LOG_HTTP("SHN save OK root=%s name=%s size=%zu",
                               root.c_str(), name.c_str(), decoded.size());
 
@@ -99,18 +93,24 @@ void ElleHTTPService::RegisterSHNRoutes() {
                                 std::chrono::system_clock::now()
                                     .time_since_epoch()).count();
                         hf << iso << '|' << ms << '|' << user << '|'
-                           << decoded.size() << '|' << root << '\n';
+                           << decoded.size() << '|' << root << '|'
+                           << wr.previous_hash << "->" << wr.new_hash << '\n';
                     }
                 } catch (...) {
 
                 }
 
                 return HTTPResponse::OK({
-                    {"ok",       true},
-                    {"path",     path.string()},
-                    {"bytes",    (uint64_t)decoded.size()},
-                    {"root",     root},
-                    {"name",     name}
+                    {"ok",                true},
+                    {"path",              path.string()},
+                    {"bytes",             (uint64_t)decoded.size()},
+                    {"root",              root},
+                    {"name",              name},
+                    {"previous_existed",  wr.previous_existed},
+                    {"previous_bytes",    (uint64_t)wr.previous_bytes},
+                    {"previous_hash",     wr.previous_hash},
+                    {"new_hash",          wr.new_hash},
+                    {"version_snapshot",  wr.version_path}
                 });
             } catch (const std::exception& e) {
                 return HTTPResponse::Err(400,

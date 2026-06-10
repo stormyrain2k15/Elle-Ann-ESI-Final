@@ -1,4 +1,88 @@
-## 2026-02 — Config schema drift sweep (#12) ✅ + D34 cross-service IPC chain smoke ✅
+## 2026-02 — SHN write rollback (#10) ✅ + Android pair UI residue scrubbed (#11)
+
+### Audit row 10 — SHN write rollback — CLOSED
+
+New `Services/_Shared/ElleShnVersionStore.{h,cpp}` provides
+`AtomicWriteWithVersioning(absDir, name, bytes, keepVersions=10)`:
+
+1. SHA1-hashes the incoming bytes (header-only SHA1 implementation
+   inside the .cpp, no extra deps).
+2. If target exists: read + SHA1 the previous bytes. If hashes
+   match → **short-circuit success with zero side effects** (no
+   snapshot, no rewrite, idempotent re-save).
+3. Otherwise: snapshot the previous bytes to
+   `<absDir>/.shn_versions/<stem>/<stem>.<20-digit-ms>.shn` (the
+   `%020llu` ms timestamp guarantees lexicographic ordering =
+   chronological ordering for cheap pruning), then prune to the
+   last `keepVersions` entries.
+4. Atomically write new bytes via `.tmp` + `std::filesystem::rename`,
+   with a `copy_file + remove` cross-FS fallback.
+5. Return `WriteResult{ok, previous_existed, previous_bytes,
+   previous_hash, new_bytes, new_hash, version_path, error}`.
+
+`HTTPServer_SHNRoutes.cpp::POST /api/shn/save` delegates to the
+helper. Response payload extended with `previous_existed`,
+`previous_bytes`, `previous_hash`, `new_hash`, `version_snapshot`.
+Per-file `shn_history/<name>.log` audit line gained
+`prev_hash->new_hash` so operators can grep the log to find the
+snapshot for any byte transition.
+
+`ListVersions(absDir, name)` returns the snapshot inventory
+newest-first — ready to wire into a future
+`GET /api/admin/shn/versions/{name}` route.
+
+Tests: `_Shared/tests/tests/test_shn_version_store.cpp` — 6 doctest
+cases covering first write, identical-rewrite short-circuit, real
+change with snapshot, pruning, newest-first listing, and SHA1
+determinism (verified against the well-known
+`SHA1("hello") = aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d`). Shared
+ctest **34 → 40 PASS**.
+
+### Android pair UI residue — scrubbed
+
+The earlier de-pair pass left 232 lines of dead code behind. This
+pass scrubbed:
+
+- Deleted `Tools/Android/app/src/main/java/com/elleann/android/PairScreen.kt`.
+- Removed `const val PAIR = "pair"` from `navigation/ElleDestinations.kt`.
+- Removed `ElleApi::pair(@Body PairRequest)` Retrofit method and
+  the `PairRequest` data class.
+- Removed `PairingPayload` data class from `ElleApp.kt`.
+- `ElleNavHost`: dropped unused `isPaired` / `onPaired` /
+  `prefill: PairingPayload?` parameters; `MainActivity` updated to
+  the new 3-arg call site.
+
+`grep -rn 'PairScreen\|PairRequest\|PairingPayload\|ElleRoutes.PAIR\|auth/pair' Tools/Android/app/src/main/`
+returns **zero hits** post-scrub.
+
+### Wiring
+
+`Services/_Shared/ElleCore.Shared.vcxproj` updated to compile
+`ElleShnVersionStore.cpp` and ship `ElleShnVersionStore.h` so all
+services that link `ElleCore.Shared` (incl. all 19 HTTP TUs) pick
+it up transitively.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition   | 39/39 PASS |
+| Probability | 85/85 PASS |
+| Composer    | 17/17 PASS |
+| Language    | 1/1 PASS |
+| Shared      | **40/40 PASS** (+6 ShnVersionStore) |
+| **Total local Linux ctest** | **182/182 PASS** |
+
+`ElleShnVersionStore.cpp` clean standalone-compile under
+`g++ -std=c++17 -Wall -Wextra`. `shellcheck -S warning` still clean
+across all `Tools/*.sh`. NUDE CODE preserved.
+
+Audit row 10 → ✅ CLOSED. The pair UI residue from row 11 has zero
+hits in the Android tree.
+
+---
+
+
 
 ### Config drift sweep — `Docs/CONFIG_SCHEMA_DRIFT_REPORT.md`
 

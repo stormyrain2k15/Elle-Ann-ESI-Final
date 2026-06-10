@@ -14,7 +14,6 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.elleann.android.AppContainer
 import com.elleann.android.data.AppContainerExtended
-import com.elleann.android.PairingPayload
 import com.elleann.android.ui.chat.ChatScreen
 import com.elleann.android.ui.chat.ConversationListScreen
 import com.elleann.android.ui.chat.VideoCallScreen
@@ -36,10 +35,7 @@ import android.util.Base64 as AndroidBase64
 fun ElleNavHost(
     container: AppContainer,
     containerExtended: AppContainerExtended,
-    isPaired: Boolean,
-    onPaired: () -> Unit,
     onUnpair: () -> Unit,
-    prefill: PairingPayload? = null,
 ) {
     val navController = rememberNavController()
 

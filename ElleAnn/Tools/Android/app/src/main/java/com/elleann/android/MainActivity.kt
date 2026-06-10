@@ -35,9 +35,6 @@ class MainActivity : ComponentActivity() {
                 ElleNavHost(
                     container         = app.container,
                     containerExtended = containerExtended,
-
-                    isPaired          = true,
-                    onPaired          = { },
                     onUnpair          = { },
                 )
             }

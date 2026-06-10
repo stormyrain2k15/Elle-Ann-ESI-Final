@@ -107,12 +107,12 @@ _deps/doctest-build/clean: _deps/doctest-build/CMakeFiles/doctest_with_main.dir/
 CMakeFiles/elle_shared_tests.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/app/ElleAnn/Services/_Shared/tests/build/CMakeFiles --progress-num=3,4,5,6,7,8 "Built target elle_shared_tests"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/app/ElleAnn/Services/_Shared/tests/build/CMakeFiles --progress-num=3,4,5,6,7,8,9,10 "Built target elle_shared_tests"
 .PHONY : CMakeFiles/elle_shared_tests.dir/all
 
 # Build rule for subdir invocation for target.
 CMakeFiles/elle_shared_tests.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /app/ElleAnn/Services/_Shared/tests/build/CMakeFiles 6
+	$(CMAKE_COMMAND) -E cmake_progress_start /app/ElleAnn/Services/_Shared/tests/build/CMakeFiles 8
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/elle_shared_tests.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start /app/ElleAnn/Services/_Shared/tests/build/CMakeFiles 0
 .PHONY : CMakeFiles/elle_shared_tests.dir/rule
@@ -124,7 +124,7 @@ elle_shared_tests: CMakeFiles/elle_shared_tests.dir/rule
 # codegen rule for target.
 CMakeFiles/elle_shared_tests.dir/codegen:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/app/ElleAnn/Services/_Shared/tests/build/CMakeFiles --progress-num=3,4,5,6,7,8 "Finished codegen for target elle_shared_tests"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/app/ElleAnn/Services/_Shared/tests/build/CMakeFiles --progress-num=3,4,5,6,7,8,9,10 "Finished codegen for target elle_shared_tests"
 .PHONY : CMakeFiles/elle_shared_tests.dir/codegen
 
 # clean rule for target.
