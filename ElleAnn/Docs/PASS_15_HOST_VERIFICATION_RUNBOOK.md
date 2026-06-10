@@ -1,5 +1,24 @@
 # Pass 15 — Host-side verification runbook
 
+> ⚡️ **Fast path**: just run
+> ```sh
+> # On the Windows host (Git-for-Windows bash or WSL), from the repo root:
+> ELLE_SQL_DSN="<your-server,port>" \
+> ELLE_HTTP_URL="http://127.0.0.1:8000" \
+>     bash Tools/pass15_host_doctor.sh
+> ```
+> The doctor runs all three checks in sequence, prints `[PASS]` /
+> `[FAIL]` / `[SKIP]` per step, exits 0 only when nothing failed, and
+> drops detailed logs to `/tmp/p15_*.log`. Set
+> `ELLE_SKIP_SQL=1` / `ELLE_SKIP_IPC=1` / `ELLE_SKIP_ANDROID=1` to bypass
+> any step you've already cleared.
+>
+> The doctor was end-to-end-tested in-container against a stub HTTP
+> server — the IPC stage proved its 9 chain-fan-out assertions fire
+> correctly. Shellcheck clean.
+
+---
+
 Three operations the Linux container cannot run for you. Each section
 lists what was pre-validated in-container, the exact commands to run
 on the host, and the expected pass signal.
