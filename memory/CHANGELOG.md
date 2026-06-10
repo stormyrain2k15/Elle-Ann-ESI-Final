@@ -1,4 +1,95 @@
-## 2026-02 — HTTP god-file fully split (Phase A + C) + SQL fallback durability hardening
+## 2026-02 — SQL Fallback Phase 2: poison table + admin routes + MSVC-readiness sweep
+
+### SQL Fallback — Phase 2 — poison table + replay/inspection routes
+
+**Schema** — `SQL/_Shared/01_sql_fallback_poison.sql` (apply to
+`ElleCore`):
+
+- `dbo.SQLFallbackPoison` table — id PK, `loaded_ms`, `ts_ms`,
+  `kind`, `idem`, `retry_count`, `sql_or_proc`, `params_json`,
+  `source_file`, `raw_line`, `replayed`, `replayed_ms`,
+  `replay_error`. Indexes on `(source_file, loaded_ms DESC)` and
+  `(replayed, loaded_ms DESC)`.
+- `usp_SQLFallbackPoisonLoad` — upsert by `(source_file, raw_line)`;
+  returns `{ id, inserted }` so the caller knows whether the row
+  was new.
+- `usp_SQLFallbackPoisonMarkReplayed` — flips `replayed`/`replayed_ms`/
+  `replay_error` for an operator-driven replay UI.
+- `usp_SQLFallbackPoisonList` — top-N listing (default 200,
+  unreplayed-only by default) for the admin dashboard.
+
+**C++** — `Services/_Shared/ElleSQLFallback.{h,cpp}`:
+
+- New `struct PoisonLine` (source_file, raw_line, ts_ms, kind, idem,
+  retry_count, sql_or_proc, params_json).
+- `ListPoison(maxLines)` — walks `<exe>/sqllogs/poison/*.txt`,
+  parses each JSONL line into a `PoisonLine`, returns the vector.
+  Uses existing `ExtractIntField`/`ExtractStringField` helpers plus
+  a new `ExtractRawParamsArray` (bracket-balanced lift of the
+  `"params":[…]` slice).
+- `LoadPoisonIntoSql(maxLines)` — `SELECT 1` probe; on success,
+  feeds each poison line through `usp_SQLFallbackPoisonLoad` and
+  returns the number of newly-inserted rows.
+
+**Routes** — `Services/Elle.Service.HTTP/HTTPServer_AdminRoutes.cpp`
+(both AUTH_ADMIN):
+
+- `GET /api/admin/sqlfallback/poison?limit=N` — returns
+  `{ total_files, total_bytes, returned_lines, limit,
+     lines: [ { source_file, ts_ms, kind, idem, retry_count,
+                 sql_or_proc, params, raw_line }, … ] }`.
+- `POST /api/admin/sqlfallback/poison/load?limit=N` — bulk-load
+  into `dbo.SQLFallbackPoison`. Returns
+  `{ inserted, total_files, total_bytes }`. Idempotent on duplicates
+  (the proc dedupes on `source_file + raw_line`).
+
+Total HTTP routes registered at startup: **160** (was 158 + 2).
+
+### MSVC-readiness sweep on `HTTPServer.h`
+
+Promoted the remaining file-scope `static` declarations in
+`HTTPServer.h` to `inline` so the 19 TUs don't each get their own
+private copy:
+
+- `static const char kB64[…]`               → `inline constexpr const char kB64[…]`
+- `static std::pair<bool,bool> PairedDeviceStatusCached(…)` → `inline …`
+- `static JwtVerifyResult VerifyJwtHs256(…)`               → `inline …`
+- `static inline bool GetIntHeader(…)`                     → `inline …`
+- `static constexpr uint64_t kPairedCacheTtlMs`            → `inline constexpr …`
+
+`HTTPServer.h` no longer carries any `^static\b` namespace-scope
+declarations. Remaining `static` keywords are all inside class
+declarations (correct class statics) or function-local statics
+inside `inline` functions (canonical ODR-safe idiom).
+
+### MSVC verification checklist documented
+
+New `Docs/HTTP_GOD_FILE_MSVC_VERIFICATION.md` provides a
+step-by-step Windows verification path:
+build → service-start (`Registered 160 API routes`) → 19 curl
+smokes (one per registrar + the new SQL-fallback route) → sign-off
+transition for Anti-Slop matrix row 8/15. Includes a likely-error →
+fix table for `LNK2005`, `C2143`, `C2065` and others.
+
+### Verification (Linux ctest)
+
+| Harness | Tests |
+|---|---|
+| Intuition   | 39/39 PASS |
+| Probability | 85/85 PASS |
+| Composer    | 17/17 PASS |
+| Language    | 1/1 PASS |
+| Shared      | 34/34 PASS |
+| **Total local Linux ctest** | **176/176 PASS** |
+
+`ElleSQLFallback.cpp` re-validated standalone under
+`g++ -std=c++17 -Wall -Wextra` with stub deps — clean.
+
+Zero regressions. NUDE CODE preserved across all new files.
+
+---
+
+
 
 ### HTTP Phase A — class declaration extracted to a header
 

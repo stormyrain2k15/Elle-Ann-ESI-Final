@@ -526,3 +526,108 @@ uint32_t ElleSQLFallback::PoisonFileCount() const {
     }
     return n;
 }
+
+static std::string ExtractRawParamsArray(const std::string& jsonLine) {
+    size_t p = jsonLine.find("\"params\":");
+    if (p == std::string::npos) return "[]";
+    p += 9;
+    while (p < jsonLine.size() && jsonLine[p] == ' ') ++p;
+    if (p >= jsonLine.size() || jsonLine[p] != '[') return "[]";
+    size_t depth = 0;
+    bool in_str = false;
+    size_t start = p;
+    for (; p < jsonLine.size(); ++p) {
+        char c = jsonLine[p];
+        if (c == '\\' && p + 1 < jsonLine.size()) { ++p; continue; }
+        if (c == '"') in_str = !in_str;
+        else if (!in_str) {
+            if (c == '[') ++depth;
+            else if (c == ']') {
+                --depth;
+                if (depth == 0) return jsonLine.substr(start, p - start + 1);
+            }
+        }
+    }
+    return "[]";
+}
+
+std::vector<ElleSQLFallback::PoisonLine>
+ElleSQLFallback::ListPoison(uint32_t maxLines) const {
+    std::vector<PoisonLine> out;
+    std::error_code ec;
+    fs::path poison_dir = fs::path(m_dir) / "poison";
+    if (!fs::exists(poison_dir, ec)) return out;
+
+    std::vector<fs::path> files;
+    for (const auto& ent : fs::directory_iterator(poison_dir, ec)) {
+        if (ent.is_regular_file() && ent.path().extension() == ".txt") {
+            files.push_back(ent.path());
+        }
+    }
+    std::sort(files.begin(), files.end());
+
+    for (const auto& path : files) {
+        if (out.size() >= maxLines) break;
+        std::ifstream f(path, std::ios::binary);
+        if (!f.is_open()) continue;
+        std::string line;
+        std::string fname = path.filename().string();
+        while (out.size() < maxLines && std::getline(f, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty()) continue;
+            PoisonLine pl;
+            pl.source_file = fname;
+            pl.raw_line    = line;
+            int64_t v = 0;
+            if (ExtractIntField(line, "ts", v))           pl.ts_ms       = v;
+            if (ExtractIntField(line, "retry_count", v))  pl.retry_count = v;
+            pl.kind        = ExtractStringField(line, "kind");
+            pl.idem        = ExtractStringField(line, "idem");
+            pl.sql_or_proc = ExtractStringField(line, "sql");
+            pl.params_json = ExtractRawParamsArray(line);
+            out.push_back(std::move(pl));
+        }
+    }
+    return out;
+}
+
+uint32_t ElleSQLFallback::LoadPoisonIntoSql(uint32_t maxLines) {
+    SQLResultSet probe = ElleSQLPool::Instance().Query("SELECT 1");
+    if (!probe.success) {
+        ELLE_ERROR("ElleSQLFallback::LoadPoisonIntoSql: SQL unreachable, aborting");
+        return 0;
+    }
+
+    auto rows = ListPoison(maxLines);
+    if (rows.empty()) return 0;
+
+    uint64_t loaded_ms = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    uint32_t inserted = 0;
+    for (const auto& r : rows) {
+        std::vector<std::string> params = {
+            std::to_string(loaded_ms),
+            r.source_file,
+            r.raw_line,
+            r.ts_ms > 0 ? std::to_string(r.ts_ms) : std::string(),
+            r.kind,
+            r.idem,
+            std::to_string(r.retry_count),
+            r.sql_or_proc,
+            r.params_json
+        };
+        auto rs = ElleSQLPool::Instance().CallProc(
+            "ElleCore.dbo.usp_SQLFallbackPoisonLoad", params);
+        if (rs.success) {
+            int64_t was = 0;
+            if (!rs.rows.empty() && rs.rows[0].TryGetInt(1, was) && was == 1) {
+                ++inserted;
+            }
+        } else {
+            ELLE_ERROR("ElleSQLFallback::LoadPoisonIntoSql: row insert failed — %s",
+                       rs.error.c_str());
+        }
+    }
+    return inserted;
+}

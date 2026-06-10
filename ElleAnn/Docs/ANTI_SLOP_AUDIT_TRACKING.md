@@ -10,6 +10,95 @@
 > *the audit identified a real problem but the right fix requires a
 > design conversation, not just code*.
 
+## This pass — what landed (Feb 2026 — pass 12)
+
+### SQL fallback queue — Phase 2 — **LANDED**
+
+`SQL/_Shared/01_sql_fallback_poison.sql` (apply to `ElleCore`)
+defines:
+
+- `dbo.SQLFallbackPoison` table — id (PK), `loaded_ms`, `ts_ms`,
+  `kind`, `idem`, `retry_count`, `sql_or_proc`, `params_json`,
+  `source_file`, `raw_line`, `replayed`, `replayed_ms`,
+  `replay_error`. Two non-unique indexes on
+  `(source_file, loaded_ms DESC)` and `(replayed, loaded_ms DESC)`.
+- `usp_SQLFallbackPoisonLoad` — upsert by `(source_file, raw_line)`;
+  returns `{ id, inserted }` so the caller can count actual inserts.
+- `usp_SQLFallbackPoisonMarkReplayed` — flips `replayed`,
+  `replayed_ms`, `replay_error`. Designed for an operator to use
+  after manually replaying a poison line.
+- `usp_SQLFallbackPoisonList` — top-N listing for the admin UI.
+
+`ElleSQLFallback` (C++) gains:
+
+- `struct PoisonLine` carrying the parsed fields plus the raw line.
+- `ListPoison(maxLines)` — walks `<exe>/sqllogs/poison/*.txt`,
+  parses each JSONL line, returns the structured vector. Re-uses the
+  existing `ExtractIntField` / `ExtractStringField` helpers and a
+  new `ExtractRawParamsArray` (bracket-balanced lift of the
+  `"params":[…]` slice).
+- `LoadPoisonIntoSql(maxLines)` — probes `SELECT 1`, bails if SQL is
+  unreachable; otherwise feeds each poison line into
+  `usp_SQLFallbackPoisonLoad` and counts the rows where
+  `inserted = 1`.
+
+`HTTPServer_AdminRoutes.cpp` gains two routes (both AUTH_ADMIN):
+
+- `GET /api/admin/sqlfallback/poison?limit=N` — returns
+  `{ total_files, total_bytes, returned_lines, limit,
+     lines: [ { source_file, ts_ms, kind, idem, retry_count,
+                 sql_or_proc, params, raw_line }, … ] }`.
+- `POST /api/admin/sqlfallback/poison/load?limit=N` — bulk-loads
+  poison lines into `dbo.SQLFallbackPoison`. Returns
+  `{ inserted, total_files, total_bytes }`. Safe to invoke
+  repeatedly (the proc dedupes on `source_file + raw_line`).
+
+Total HTTP routes registered at startup: **160** (158 + 2). Brace
+balance preserved across all `HTTPServer*.cpp` files.
+
+### MSVC-readiness sweep on `HTTPServer.h`
+
+Promoted the remaining four file-scope `static` declarations in
+`HTTPServer.h` to `inline` so the 19 TUs don't each get their own
+private copy (correctness OK before, just wasteful):
+
+- `static const char kB64[…]`  → `inline constexpr const char kB64[…]`
+- `static std::pair<bool,bool> PairedDeviceStatusCached(…)` → `inline …`
+- `static JwtVerifyResult VerifyJwtHs256(…)` → `inline …`
+- `static inline bool GetIntHeader(…)` → `inline …`
+- `static constexpr uint64_t kPairedCacheTtlMs` → `inline constexpr …`
+
+`HTTPServer.h` no longer has any `^static\b` namespace-scope
+declarations. The only remaining `static` keywords live inside class
+declarations (class statics — correct) or function-local statics
+inside `inline` functions (which is the canonical ODR-safe idiom).
+
+### MSVC verification checklist documented
+
+`Docs/HTTP_GOD_FILE_MSVC_VERIFICATION.md` walks the user through
+build → service-start → 19 curl smokes (one per registrar + the new
+SQL-fallback route) → sign-off transition for Anti-Slop matrix row
+8 / 15. Includes a "likely error → fix" table for the common MSVC
+gotchas (`LNK2005`, `C2143` from `#pragma` boundary crossing,
+`C2065` missing-type-in-header).
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition   | 39/39 PASS |
+| Probability | 85/85 PASS |
+| Composer    | 17/17 PASS |
+| Language    | 1/1 PASS |
+| Shared      | 34/34 PASS |
+| **Total local Linux ctest** | **176/176 PASS** |
+
+`ElleSQLFallback.cpp` re-validated standalone under
+`g++ -std=c++17 -Wall -Wextra` against stub `ElleLogger.h` /
+`ElleSQLConn.h` — clean. NUDE CODE preserved across all new files.
+
+---
+
 ## This pass — what landed (Feb 2026 — pass 11)
 
 ### HTTP god-file — Phase A + Phase C — **LANDED**
@@ -665,7 +754,7 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 |---|------|--------|-------|
 | 1 | Auth defaults / public bind / no-auth flag | ↪ | Fail-closed defaults + runtime guard landed in `SLOPPY_WORK_FIX.md` |
 | 2 | SQL pool drops connection slots on reconnect-fail | ↪ | Slot now returned to pool, `notify_one()` fires |
-| 3 | SQL fallback queue lies about durability | 🟡 PHASE-1-LANDED | `_Shared/ElleSQLFallbackClassifier.h` (header-only) adds idempotency hints `Yes/No/Unknown` via `ClassifyExec` (SELECT/MERGE/TRUNCATE → Yes; INSERT/UPDATE/DELETE → No) and `ClassifyCallProc` (`usp_Record/Upsert/Snapshot/Log/Heartbeat/Bond/Intuition/Ensure/Mark/Touch` → Yes; `usp_Delete/Purge/Insert/Create` → No). JSONL line format now carries `idem` + `retry_count`. `DrainNow()` quarantines non-idempotent lines on first failure and idempotent/unknown lines after `m_maxRetries` failures (default 5) to `<exe>/sqllogs/poison/YYYY-MM-DD.txt`. New API: `EnqueueWithHint`, `PoisonBytes`, `PoisonFileCount`, `SetMaxRetries`. 8 doctest cases in `_Shared/tests/tests/test_sql_fallback_classifier.cpp` (shared harness 26 → 34 PASS). Public `Enqueue(Kind, sql, params)` signature unchanged. **Phase 2 (durable SQL queue table + admin route)** still ⏸. |
+| 3 | SQL fallback queue lies about durability | 🟡 PHASE-2-LANDED | **Phase 1** (pass 11): `ElleSQLFallbackClassifier.h` adds idempotency hints (`ClassifyExec`/`ClassifyCallProc`). JSONL line format carries `idem` + `retry_count`. `DrainNow()` quarantines non-idempotent failures immediately to `<exe>/sqllogs/poison/YYYY-MM-DD.txt`; idempotent/unknown failures retry up to `m_maxRetries` (5) before quarantine. **Phase 2** (pass 12): `SQL/_Shared/01_sql_fallback_poison.sql` adds `dbo.SQLFallbackPoison` table + three stored procs (`usp_SQLFallbackPoisonLoad`, `usp_SQLFallbackPoisonMarkReplayed`, `usp_SQLFallbackPoisonList`). New `ElleSQLFallback::ListPoison(maxLines)` and `LoadPoisonIntoSql(maxLines)` C++ APIs. Two new admin routes wired in `HTTPServer_AdminRoutes.cpp`: `GET /api/admin/sqlfallback/poison` (returns parsed poison-file contents + counts) and `POST /api/admin/sqlfallback/poison/load` (pulls poison rows into the SQL table, idempotent on duplicates via `source_file + raw_line` lookup). Total HTTP routes now **160** (was 158 + 2). Shared ctest 34/34, all suites green. |
 | 4 | Probability silently falls back to in-memory | ↪ | `ELLE_PROBABILITY_ALLOW_INMEMORY=1` opt-in, otherwise fail-closed |
 | 5 | Probability belief store never persisted | ✅ FIXED-THIS-PASS | Full SQL schema `SQL/Elle.Service.Probability/01_belief_persistence.sql` (5 tables + view + 4 procs + table-type). C++ interface `IBeliefPersistence` + `InMemoryBeliefPersistence` (real impl) + 8 doctest cases. Wiring into `BeliefStore::attachPersistence` is the next sub-step. |
 | 6 | GoalEngine LLM dependency | ↪ | Drop-in `GoalEngine.cpp` removed `FormGoal` call |
@@ -749,8 +838,8 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 
 ## Next pass — recommended priority order
 
-1. ⏸ **MSVC verification** of the HTTP god-file split (Phase A + B + C). Build the `Elle.Service.HTTP.vcxproj` on Windows and confirm all 158 routes still register at startup. **Required before declaring #8 closed.**
-2. ⏸ **SQL fallback queue — Phase 2**: surface poison-file contents via an admin route (`GET /api/admin/sqlfallback/poison`) and a stored proc that loads them into a `dbo.SQLFallbackPoison` table for replay/inspection.
+1. ⏸ **MSVC verification** of the HTTP god-file split (Phase A + B + C). Follow `Docs/HTTP_GOD_FILE_MSVC_VERIFICATION.md`: build `Elle.Service.HTTP.vcxproj`, confirm `Registered 160 API routes` at startup, run the 19-route smoke (one per registrar + `/api/admin/sqlfallback/poison`), then flip Anti-Slop matrix row 8/15 to ✅.
+2. ⏸ **SQL Fallback — Phase 3 (auto-load + observability)**: schedule a background task in `Elle.Service.HTTP` (or a dedicated `Elle.Service.SQLReaper`) to call `ElleSQLFallback::Instance().LoadPoisonIntoSql()` every N minutes once SQL is reachable, and expose a count in `/api/server/status`.
 3. ⏸ **Upload + SHN write hardening** (#9, #10).
 4. ⏸ **Restart-persistence + CI smoke tests** (D32–D35 remaining).
 5. ⏸ **Android client rewrite** to remove pair UI.

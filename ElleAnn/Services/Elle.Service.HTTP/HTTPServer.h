@@ -114,7 +114,7 @@ inline void RunGameAuthSelfTest() {
     SetGameAuthDiag(out);
 }
 
-static const char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+inline constexpr const char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 inline std::string Base64Encode(const unsigned char* data, size_t len) {
     std::string out;
@@ -368,9 +368,9 @@ struct PairedCacheEntry {
 };
 inline std::mutex                                     g_pairedCacheMx;
 inline std::unordered_map<std::string, PairedCacheEntry> g_pairedCache;
-static constexpr uint64_t kPairedCacheTtlMs = 30ull * 1000ull;
+inline constexpr uint64_t kPairedCacheTtlMs = 30ull * 1000ull;
 
-static std::pair<bool, bool>
+inline std::pair<bool, bool>
 PairedDeviceStatusCached(const std::string& device_id, uint64_t now_ms) {
     {
         std::lock_guard<std::mutex> lk(g_pairedCacheMx);
@@ -404,9 +404,9 @@ PairedDeviceStatusCached(const std::string& device_id, uint64_t now_ms) {
     return { exists, revoked };
 }
 
-static JwtVerifyResult VerifyJwtHs256(const std::string& token,
-                                       const std::string& secret,
-                                       uint64_t now_ms) {    JwtVerifyResult r;
+inline JwtVerifyResult VerifyJwtHs256(const std::string& token,
+                                      const std::string& secret,
+                                      uint64_t now_ms) {    JwtVerifyResult r;
     if (token.empty() || secret.empty()) {
         r.failureReason = "empty token or secret";
         return r;
@@ -677,7 +677,7 @@ struct WSClient {
     std::mutex  sendMutex;
 };
 
-static inline bool GetIntHeader(const HTTPRequest& req, const std::string& key,
+inline bool GetIntHeader(const HTTPRequest& req, const std::string& key,
                                 long long& out) {
     auto it = req.headers.find(key);
     if (it == req.headers.end() || it->second.empty()) return false;

@@ -42,6 +42,21 @@ public:
     uint64_t PoisonBytes() const;
     uint32_t PoisonFileCount() const;
 
+    struct PoisonLine {
+        std::string source_file;
+        std::string raw_line;
+        int64_t     ts_ms       = 0;
+        std::string kind;
+        std::string idem;
+        int64_t     retry_count = 0;
+        std::string sql_or_proc;
+        std::string params_json;
+    };
+
+    std::vector<PoisonLine> ListPoison(uint32_t maxLines = 200) const;
+
+    uint32_t LoadPoisonIntoSql(uint32_t maxLines = 500);
+
     void SetMaxRetries(uint32_t n) { m_maxRetries.store(n, std::memory_order_release); }
     uint32_t MaxRetries() const { return m_maxRetries.load(std::memory_order_acquire); }
 

@@ -78,4 +78,58 @@ void ElleHTTPService::RegisterAdminRoutes() {
                 return HTTPResponse::OK(ElleBeliefAdmin::BondingTrajectoryToJson(pts));
             }, AUTH_ADMIN);
 
+        m_router.Register("GET", "/api/admin/sqlfallback/poison",
+            [](const HTTPRequest& req) {
+                int limit = req.QueryInt("limit", 200);
+                if (limit <= 0)    limit = 200;
+                if (limit > 5000)  limit = 5000;
+
+                auto& fb = ElleSQLFallback::Instance();
+                auto rows = fb.ListPoison((uint32_t)limit);
+
+                json arr = json::array();
+                for (const auto& r : rows) {
+                    json params = json::array();
+                    try {
+                        params = json::parse(r.params_json);
+                    } catch (...) {
+                        params = json::array();
+                    }
+                    arr.push_back({
+                        {"source_file", r.source_file},
+                        {"ts_ms",       r.ts_ms},
+                        {"kind",        r.kind},
+                        {"idem",        r.idem},
+                        {"retry_count", r.retry_count},
+                        {"sql_or_proc", r.sql_or_proc},
+                        {"params",      params},
+                        {"raw_line",    r.raw_line}
+                    });
+                }
+
+                return HTTPResponse::OK({
+                    {"total_files",     fb.PoisonFileCount()},
+                    {"total_bytes",     fb.PoisonBytes()},
+                    {"returned_lines",  arr.size()},
+                    {"limit",           limit},
+                    {"lines",           arr}
+                });
+            }, AUTH_ADMIN);
+
+        m_router.Register("POST", "/api/admin/sqlfallback/poison/load",
+            [](const HTTPRequest& req) {
+                int limit = req.QueryInt("limit", 500);
+                if (limit <= 0)    limit = 500;
+                if (limit > 5000)  limit = 5000;
+
+                auto& fb = ElleSQLFallback::Instance();
+                uint32_t inserted = fb.LoadPoisonIntoSql((uint32_t)limit);
+
+                return HTTPResponse::OK({
+                    {"inserted",        inserted},
+                    {"total_files",     fb.PoisonFileCount()},
+                    {"total_bytes",     fb.PoisonBytes()}
+                });
+            }, AUTH_ADMIN);
+
     }
