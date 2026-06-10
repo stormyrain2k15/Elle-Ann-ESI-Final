@@ -5,6 +5,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/elle_shared_tests.dir/tests/test_intent_label_vocab.cpp.o.d"
   "CMakeFiles/elle_shared_tests.dir/tests/test_main.cpp.o"
   "CMakeFiles/elle_shared_tests.dir/tests/test_main.cpp.o.d"
+  "CMakeFiles/elle_shared_tests.dir/tests/test_sql_fallback_classifier.cpp.o"
+  "CMakeFiles/elle_shared_tests.dir/tests/test_sql_fallback_classifier.cpp.o.d"
   "CMakeFiles/elle_shared_tests.dir/tests/test_upload_guard.cpp.o"
   "CMakeFiles/elle_shared_tests.dir/tests/test_upload_guard.cpp.o.d"
   "elle_shared_tests"

@@ -8,6 +8,7 @@
 #include <chrono>
 #include <ctime>
 #include <algorithm>
+#include <cstdio>
 
 #ifdef _WIN32
 #  include <windows.h>
@@ -48,6 +49,10 @@ std::string ElleSQLFallback::TodayYmd() const {
     return buf;
 }
 
+std::string ElleSQLFallback::PoisonDir() const {
+    return (fs::path(m_dir) / "poison").string();
+}
+
 void ElleSQLFallback::Initialize(bool enabled) {
     if (!enabled) {
         m_enabled.store(false, std::memory_order_release);
@@ -56,9 +61,9 @@ void ElleSQLFallback::Initialize(bool enabled) {
     fs::path dir = fs::path(ExeDirectory()) / "sqllogs";
     std::error_code ec;
     fs::create_directories(dir, ec);
+    fs::create_directories(dir / "poison", ec);
     m_dir = dir.string();
     m_enabled.store(true, std::memory_order_release);
-
 }
 
 void ElleSQLFallback::Shutdown() {
@@ -123,7 +128,6 @@ static bool ParseJsonString(const std::string& src, size_t& pos, std::string& ou
                         else return false;
                         cp = (cp << 4) | d;
                     }
-
                     if (cp < 0x80) out.push_back((char)cp);
                     else if (cp < 0x800) {
                         out.push_back((char)(0xC0 | (cp >> 6)));
@@ -146,18 +150,18 @@ static bool ParseJsonString(const std::string& src, size_t& pos, std::string& ou
     return true;
 }
 
-bool ElleSQLFallback::Enqueue(Kind kind, const std::string& sqlOrProc,
-                              const std::vector<std::string>& params) {
-    if (!m_enabled.load(std::memory_order_acquire)) return false;
-
+std::string ElleSQLFallback::BuildLine(Kind kind,
+                                       const std::string& sqlOrProc,
+                                       const std::vector<std::string>& params,
+                                       uint64_t ts_ms,
+                                       Idempotency idem,
+                                       uint32_t retry_count) {
     std::string line;
-    line.reserve(64 + sqlOrProc.size());
+    line.reserve(96 + sqlOrProc.size());
     line += "{\"ts\":";
     {
-        uint64_t ms = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
         char buf[32];
-        std::snprintf(buf, sizeof(buf), "%llu", (unsigned long long)ms);
+        std::snprintf(buf, sizeof(buf), "%llu", (unsigned long long)ts_ms);
         line += buf;
     }
     line += ",\"kind\":\"";
@@ -166,7 +170,15 @@ bool ElleSQLFallback::Enqueue(Kind kind, const std::string& sqlOrProc,
         case Kind::QueryParams: line += "QueryParams"; break;
         case Kind::CallProc:    line += "CallProc";    break;
     }
-    line += "\",\"sql\":";
+    line += "\",\"idem\":\"";
+    line += ElleSQLFallbackClassifier::IdempotencyToString(idem);
+    line += "\",\"retry_count\":";
+    {
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%u", retry_count);
+        line += buf;
+    }
+    line += ",\"sql\":";
     AppendJsonEscaped(line, sqlOrProc);
     line += ",\"params\":[";
     for (size_t i = 0; i < params.size(); ++i) {
@@ -174,6 +186,90 @@ bool ElleSQLFallback::Enqueue(Kind kind, const std::string& sqlOrProc,
         AppendJsonEscaped(line, params[i]);
     }
     line += "]}\n";
+    return line;
+}
+
+bool ElleSQLFallback::ExtractIntField(const std::string& jsonLine,
+                                      const std::string& key,
+                                      int64_t& out) {
+    std::string needle = "\"" + key + "\":";
+    size_t p = jsonLine.find(needle);
+    if (p == std::string::npos) return false;
+    p += needle.size();
+    while (p < jsonLine.size() && (jsonLine[p] == ' ' || jsonLine[p] == '"')) ++p;
+    if (p >= jsonLine.size()) return false;
+    int64_t v = 0;
+    bool neg = false;
+    if (jsonLine[p] == '-') { neg = true; ++p; }
+    if (p >= jsonLine.size() || jsonLine[p] < '0' || jsonLine[p] > '9') return false;
+    while (p < jsonLine.size() && jsonLine[p] >= '0' && jsonLine[p] <= '9') {
+        v = v * 10 + (jsonLine[p] - '0');
+        ++p;
+    }
+    out = neg ? -v : v;
+    return true;
+}
+
+std::string ElleSQLFallback::ExtractStringField(const std::string& jsonLine,
+                                                const std::string& key) {
+    std::string needle = "\"" + key + "\":";
+    size_t p = jsonLine.find(needle);
+    if (p == std::string::npos) return std::string();
+    p += needle.size();
+    while (p < jsonLine.size() && jsonLine[p] == ' ') ++p;
+    std::string out;
+    if (!ParseJsonString(jsonLine, p, out)) return std::string();
+    return out;
+}
+
+std::string ElleSQLFallback::ReencodeWithIncrementedRetry(const std::string& jsonLine) {
+    std::string needle = "\"retry_count\":";
+    size_t p = jsonLine.find(needle);
+    if (p == std::string::npos) {
+        std::string s = jsonLine;
+        if (!s.empty() && s.back() == '\n') s.pop_back();
+        if (!s.empty() && s.back() == '}') s.pop_back();
+        s += ",\"retry_count\":1}\n";
+        return s;
+    }
+    size_t value_start = p + needle.size();
+    while (value_start < jsonLine.size() && jsonLine[value_start] == ' ') ++value_start;
+    size_t value_end = value_start;
+    while (value_end < jsonLine.size() && jsonLine[value_end] >= '0' && jsonLine[value_end] <= '9') ++value_end;
+    if (value_end == value_start) return jsonLine;
+    int64_t cur = 0;
+    for (size_t i = value_start; i < value_end; ++i) cur = cur * 10 + (jsonLine[i] - '0');
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%lld", (long long)(cur + 1));
+    return jsonLine.substr(0, value_start) + std::string(buf) + jsonLine.substr(value_end);
+}
+
+void ElleSQLFallback::QuarantineLine(const std::string& path,
+                                     const std::string& jsonLine) {
+    fs::path poison_dir = PoisonDir();
+    std::error_code ec;
+    fs::create_directories(poison_dir, ec);
+    fs::path poison_file = poison_dir / fs::path(path).filename();
+    std::ofstream f(poison_file, std::ios::app | std::ios::binary);
+    if (!f.is_open()) {
+        ELLE_ERROR("ElleSQLFallback: cannot open poison file %s",
+                   poison_file.string().c_str());
+        return;
+    }
+    f.write(jsonLine.data(), (std::streamsize)jsonLine.size());
+    if (!jsonLine.empty() && jsonLine.back() != '\n') f.put('\n');
+    ELLE_ERROR("ElleSQLFallback: line quarantined to %s",
+               poison_file.string().c_str());
+}
+
+bool ElleSQLFallback::EnqueueWithHint(Kind kind, const std::string& sqlOrProc,
+                                      const std::vector<std::string>& params,
+                                      Idempotency idem) {
+    if (!m_enabled.load(std::memory_order_acquire)) return false;
+
+    uint64_t ts_ms = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    std::string line = BuildLine(kind, sqlOrProc, params, ts_ms, idem, 0);
 
     {
         std::lock_guard<std::mutex> lk(m_fileMutex);
@@ -199,6 +295,14 @@ bool ElleSQLFallback::Enqueue(Kind kind, const std::string& sqlOrProc,
     m_pendingWork.store(true, std::memory_order_release);
     m_workerCv.notify_all();
     return true;
+}
+
+bool ElleSQLFallback::Enqueue(Kind kind, const std::string& sqlOrProc,
+                              const std::vector<std::string>& params) {
+    Idempotency idem = (kind == Kind::CallProc)
+        ? ElleSQLFallbackClassifier::ClassifyCallProc(sqlOrProc)
+        : ElleSQLFallbackClassifier::ClassifyExec(sqlOrProc);
+    return EnqueueWithHint(kind, sqlOrProc, params, idem);
 }
 
 void ElleSQLFallback::NudgeDrain() {
@@ -230,23 +334,14 @@ void ElleSQLFallback::WorkerLoop() {
 }
 
 bool ElleSQLFallback::ReplayLine(const std::string& jsonLine, std::string& outErr) {
+    std::string kind = ExtractStringField(jsonLine, "kind");
+    if (kind.empty()) { outErr = "missing kind"; return false; }
 
-    size_t p = jsonLine.find("\"kind\":");
-    if (p == std::string::npos) { outErr = "missing kind"; return false; }
-    p += 7;
-    while (p < jsonLine.size() && jsonLine[p] != '"') ++p;
-    std::string kind;
-    if (!ParseJsonString(jsonLine, p, kind)) { outErr = "bad kind"; return false; }
-
-    p = jsonLine.find("\"sql\":");
-    if (p == std::string::npos) { outErr = "missing sql"; return false; }
-    p += 6;
-    while (p < jsonLine.size() && jsonLine[p] != '"') ++p;
-    std::string sql;
-    if (!ParseJsonString(jsonLine, p, sql)) { outErr = "bad sql"; return false; }
+    std::string sql = ExtractStringField(jsonLine, "sql");
+    if (sql.empty()) { outErr = "missing sql"; return false; }
 
     std::vector<std::string> params;
-    p = jsonLine.find("\"params\":[");
+    size_t p = jsonLine.find("\"params\":[");
     if (p != std::string::npos) {
         p += 10;
         while (p < jsonLine.size() && jsonLine[p] != ']') {
@@ -283,17 +378,21 @@ uint32_t ElleSQLFallback::DrainNow() {
         std::lock_guard<std::mutex> lk(m_fileMutex);
         std::error_code ec;
         if (!fs::exists(m_dir, ec)) return 0;
+        fs::path poison_dir = PoisonDir();
         for (const auto& ent : fs::directory_iterator(m_dir, ec)) {
             if (!ent.is_regular_file()) continue;
             const auto& p = ent.path();
-            if (p.extension() == ".txt") files.push_back(p);
+            if (p.extension() != ".txt") continue;
+            if (p.parent_path() == poison_dir) continue;
+            files.push_back(p);
         }
     }
     std::sort(files.begin(), files.end());
 
+    const uint32_t maxRetries = m_maxRetries.load(std::memory_order_acquire);
     uint32_t replayed = 0;
-    for (const auto& path : files) {
 
+    for (const auto& path : files) {
         std::vector<std::string> lines;
         {
             std::lock_guard<std::mutex> lk(m_fileMutex);
@@ -313,21 +412,41 @@ uint32_t ElleSQLFallback::DrainNow() {
         }
 
         std::vector<std::string> retained;
-        for (const auto& line : lines) {
+        bool stalled = false;
+        for (size_t idx = 0; idx < lines.size(); ++idx) {
+            const std::string& line = lines[idx];
             std::string err;
             if (ReplayLine(line, err)) {
                 replayed++;
-            } else {
-
-                retained.push_back(line);
-
-                auto it = std::find(lines.begin(), lines.end(), line);
-                if (it != lines.end()) {
-                    for (auto jt = it + 1; jt != lines.end(); ++jt)
-                        retained.push_back(*jt);
-                }
-                break;
+                continue;
             }
+
+            int64_t retry_count = 0;
+            ExtractIntField(line, "retry_count", retry_count);
+            std::string idemField = ExtractStringField(line, "idem");
+            ElleSQLFallbackClassifier::Idempotency idem =
+                ElleSQLFallbackClassifier::IdempotencyFromString(idemField);
+
+            bool quarantine_now = (idem == ElleSQLFallbackClassifier::Idempotency::No)
+                               || ((uint32_t)retry_count + 1 >= maxRetries);
+
+            if (quarantine_now) {
+                QuarantineLine(path.string(), line);
+                ELLE_ERROR("ElleSQLFallback: poison line %s after %u retries (idem=%s) — %s",
+                           path.filename().string().c_str(),
+                           (unsigned)retry_count,
+                           idemField.c_str(),
+                           err.c_str());
+                continue;
+            }
+
+            std::string bumped = ReencodeWithIncrementedRetry(line);
+            retained.push_back(bumped);
+            for (size_t j = idx + 1; j < lines.size(); ++j) {
+                retained.push_back(lines[j]);
+            }
+            stalled = true;
+            break;
         }
 
         std::lock_guard<std::mutex> lk(m_fileMutex);
@@ -340,18 +459,16 @@ uint32_t ElleSQLFallback::DrainNow() {
                 std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
                 for (const auto& l : retained) {
                     f.write(l.data(), (std::streamsize)l.size());
-                    f.put('\n');
+                    if (l.empty() || l.back() != '\n') f.put('\n');
                 }
             }
             std::error_code ec;
             fs::rename(tmp, path, ec);
-
             if (ec) {
                 fs::copy_file(tmp, path, fs::copy_options::overwrite_existing, ec);
                 fs::remove(tmp, ec);
             }
-
-            break;
+            if (stalled) break;
         }
     }
 
@@ -362,10 +479,12 @@ uint64_t ElleSQLFallback::PendingBytes() const {
     uint64_t total = 0;
     std::error_code ec;
     if (!fs::exists(m_dir, ec)) return 0;
+    fs::path poison_dir = fs::path(m_dir) / "poison";
     for (const auto& ent : fs::directory_iterator(m_dir, ec)) {
-        if (ent.is_regular_file() && ent.path().extension() == ".txt") {
-            total += (uint64_t)ent.file_size(ec);
-        }
+        if (!ent.is_regular_file()) continue;
+        if (ent.path().extension() != ".txt") continue;
+        if (ent.path().parent_path() == poison_dir) continue;
+        total += (uint64_t)ent.file_size(ec);
     }
     return total;
 }
@@ -374,7 +493,35 @@ uint32_t ElleSQLFallback::FileCount() const {
     uint32_t n = 0;
     std::error_code ec;
     if (!fs::exists(m_dir, ec)) return 0;
+    fs::path poison_dir = fs::path(m_dir) / "poison";
     for (const auto& ent : fs::directory_iterator(m_dir, ec)) {
+        if (!ent.is_regular_file()) continue;
+        if (ent.path().extension() != ".txt") continue;
+        if (ent.path().parent_path() == poison_dir) continue;
+        ++n;
+    }
+    return n;
+}
+
+uint64_t ElleSQLFallback::PoisonBytes() const {
+    uint64_t total = 0;
+    std::error_code ec;
+    fs::path poison_dir = fs::path(m_dir) / "poison";
+    if (!fs::exists(poison_dir, ec)) return 0;
+    for (const auto& ent : fs::directory_iterator(poison_dir, ec)) {
+        if (ent.is_regular_file() && ent.path().extension() == ".txt") {
+            total += (uint64_t)ent.file_size(ec);
+        }
+    }
+    return total;
+}
+
+uint32_t ElleSQLFallback::PoisonFileCount() const {
+    uint32_t n = 0;
+    std::error_code ec;
+    fs::path poison_dir = fs::path(m_dir) / "poison";
+    if (!fs::exists(poison_dir, ec)) return 0;
+    for (const auto& ent : fs::directory_iterator(poison_dir, ec)) {
         if (ent.is_regular_file() && ent.path().extension() == ".txt") ++n;
     }
     return n;

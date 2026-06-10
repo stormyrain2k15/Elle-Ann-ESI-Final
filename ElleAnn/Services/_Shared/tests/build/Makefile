@@ -269,6 +269,30 @@ tests/test_main.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/tests/test_main.cpp.s
 .PHONY : tests/test_main.cpp.s
 
+tests/test_sql_fallback_classifier.o: tests/test_sql_fallback_classifier.cpp.o
+.PHONY : tests/test_sql_fallback_classifier.o
+
+# target to build an object file
+tests/test_sql_fallback_classifier.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/tests/test_sql_fallback_classifier.cpp.o
+.PHONY : tests/test_sql_fallback_classifier.cpp.o
+
+tests/test_sql_fallback_classifier.i: tests/test_sql_fallback_classifier.cpp.i
+.PHONY : tests/test_sql_fallback_classifier.i
+
+# target to preprocess a source file
+tests/test_sql_fallback_classifier.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/tests/test_sql_fallback_classifier.cpp.i
+.PHONY : tests/test_sql_fallback_classifier.cpp.i
+
+tests/test_sql_fallback_classifier.s: tests/test_sql_fallback_classifier.cpp.s
+.PHONY : tests/test_sql_fallback_classifier.s
+
+# target to generate assembly for a file
+tests/test_sql_fallback_classifier.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/elle_shared_tests.dir/build.make CMakeFiles/elle_shared_tests.dir/tests/test_sql_fallback_classifier.cpp.s
+.PHONY : tests/test_sql_fallback_classifier.cpp.s
+
 tests/test_upload_guard.o: tests/test_upload_guard.cpp.o
 .PHONY : tests/test_upload_guard.o
 
@@ -317,6 +341,9 @@ help:
 	@echo "... tests/test_main.o"
 	@echo "... tests/test_main.i"
 	@echo "... tests/test_main.s"
+	@echo "... tests/test_sql_fallback_classifier.o"
+	@echo "... tests/test_sql_fallback_classifier.i"
+	@echo "... tests/test_sql_fallback_classifier.s"
 	@echo "... tests/test_upload_guard.o"
 	@echo "... tests/test_upload_guard.i"
 	@echo "... tests/test_upload_guard.s"

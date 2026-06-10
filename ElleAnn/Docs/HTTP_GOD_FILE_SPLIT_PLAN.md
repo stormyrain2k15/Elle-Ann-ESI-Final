@@ -137,37 +137,43 @@ the next one starts.
 ## What's already landed
 
 - Tracking row in `Docs/ANTI_SLOP_AUDIT_TRACKING.md` for #8 / #15
-  carries the ⏸ status with a pointer to this doc.
+  carries 🟢 SPLIT-LANDED.
 - Lexical Completeness plumbing (`Docs/LEXICAL_COMPLETENESS.md`) is
-  ready for an admin route to surface incomplete words once Phase C
-  lands `HTTPServer_AdminRoutes.cpp`.
-- **Phase B (Feb 2026)**: `ElleHTTPService::RegisterRoutes()` body
-  split into 18 private helper methods (in-class, same TU). 158
-  route registrations preserved verbatim; brace-balanced (verified
-  per-method). Three local lambdas
-  (`ResolveAuthenticatedUser`, `RequireUserId`,
-  `RequireAuthOrBodyUser`) promoted to `static` class members so
-  they remain reachable across the split route registrars. Lambda
-  captures of these names at routes were rewritten from
-  `[ResolveAuthenticatedUser]` / `[RequireAuthOrBodyUser]` to `[]`
-  (unqualified lookup now resolves to the static class members).
-  The 18 helpers are, in file order:
-  `RegisterIntroRoutes`, `RegisterAuthRoutes`,
-  `RegisterDiagRoutes`, `RegisterAdminRoutes`,
-  `RegisterMemoryRoutes`, `RegisterEmotionRoutes`,
-  `RegisterMeTokensRoutes`, `RegisterVideoIdentityRoutes`,
-  `RegisterAIRoutes`, `RegisterDictionaryRoutes`,
-  `RegisterEducationRoutes`, `RegisterEmotionalContextRoutes`,
-  `RegisterXLifecycleRoutes`, `RegisterServerRoutes`,
-  `RegisterModelsRoutes`, `RegisterMoralsGoalsRoutes`,
-  `RegisterMiscRoutes`, `RegisterSHNRoutes`.
+  ready for an admin route to surface incomplete words.
+- **Phase B (Feb 2026 — pass 10)**: `RegisterRoutes()` body split
+  into 18 private in-class helpers; 3 local lambdas promoted to
+  `static` class members.
+- **Phase A (Feb 2026 — pass 11)**: `ElleHTTPService` class
+  declaration moved into `Services/Elle.Service.HTTP/HTTPServer.h`
+  along with file-private types (`HTTPRequest`, `HTTPResponse`,
+  `HttpAuthLevel`, `RouteEntry`, `RouteDispatch`, `WSClient`,
+  `PendingChat`, `ChatCorrelator`, `JwtVerifyResult`,
+  `PairedCacheEntry`, `WsFrameStatus`, `LLMMsg`) and file-scope
+  free helpers. State-bearing globals (`g_diagMx`,
+  `g_gameAuthDiag`, `g_pairedCacheMx`, `g_pairedCache`) re-tagged
+  as `inline` for ODR-safe sharing across all TUs.
+  `HTTPServer.cpp` now `#include "HTTPServer.h"` and holds the 27
+  non-route methods as out-of-class definitions +
+  `ELLE_SERVICE_MAIN(ElleHTTPService)`.
+- **Phase C (Feb 2026 — pass 11)**: Each `RegisterXxxRoutes()` body
+  moved into its own TU (`HTTPServer_IntroRoutes.cpp` …
+  `HTTPServer_SHNRoutes.cpp`, 18 files). 158 routes preserved
+  verbatim; brace total across the 19 .cpp files = 1 902 / 1 902.
+  `Elle.Service.HTTP.vcxproj` compiles all 19 .cpp files and lists
+  `<ClInclude>HTTPServer.h</ClInclude>`.
 
 ## Next agent's instructions
 
-1. ~~Start with Phase A only.~~ **(superseded by Phase B landing first;
-   Phase A still required for Phase C.)**
-2. Run the Windows build locally before declaring Phase B done.
-3. ~~Phase B in a single commit (it's a pure brace migration).~~ **DONE.**
-4. Phase A (extract class declaration into `HTTPServer.h`) is the
-   next prerequisite for Phase C.
-5. Phase C one file at a time, each its own commit, once Phase A lands.
+1. **Build the project on Windows MSVC** — this is the only
+   remaining verification gate.
+2. Run an HTTP smoke covering at least one route from each
+   registrar (intro/auth/diag/admin/memory/emotions/me-tokens/
+   video-identity/ai/dictionary/education/emotional-context/
+   x-lifecycle/server/models/morals-goals/misc/shn).
+3. If link errors surface (likely candidates: a remaining `static`
+   free helper in `HTTPServer.h` that should be `inline`), promote
+   the helper from `static` → `inline`. There are still a couple
+   of `static` file-scope helpers in the header that compile fine
+   in single-TU mode but bloat each TU; promoting them is a follow-up
+   optimisation, not a correctness fix.
+4. Once Windows-green, flip the Anti-Slop matrix row 8 / 15 to ✅.

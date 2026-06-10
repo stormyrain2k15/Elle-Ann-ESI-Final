@@ -1,3 +1,118 @@
+## 2026-02 — HTTP god-file fully split (Phase A + C) + SQL fallback durability hardening
+
+### HTTP Phase A — class declaration extracted to a header
+
+`ElleHTTPService` class declaration moved out of `HTTPServer.cpp`
+into `Services/Elle.Service.HTTP/HTTPServer.h`. The header now
+carries:
+- the class declaration (method signatures only, no in-class bodies),
+- every file-private type the class touches by value (`HTTPRequest`,
+  `HTTPResponse`, `HttpAuthLevel`, `RouteEntry`, `RouteDispatch`,
+  `WSClient`, `PendingChat`, `ChatCorrelator`, `JwtVerifyResult`,
+  `PairedCacheEntry`, `WsFrameStatus`, `LLMMsg`),
+- the file-scope free helpers that the route lambdas/lambda bodies
+  invoke (Base64Encode, SHA1Hash, WsSendText, IsValidUtf8, …).
+
+State-bearing globals (`g_diagMx`, `g_gameAuthDiag`,
+`g_pairedCacheMx`, `g_pairedCache`) re-tagged as `inline` so all 19
+TUs share one ODR-safe definition. `HTTPServer.cpp` now
+`#include "HTTPServer.h"` and holds **out-of-class** definitions for
+the 27 non-route methods + `ELLE_SERVICE_MAIN(ElleHTTPService)`.
+
+### HTTP Phase C — 18 RegisterXxxRoutes() now live in their own TUs
+
+Each `RegisterXxxRoutes()` body moved into its own translation unit
+under `Services/Elle.Service.HTTP/`:
+`HTTPServer_IntroRoutes.cpp`, `HTTPServer_AuthRoutes.cpp`,
+`HTTPServer_DiagRoutes.cpp`, `HTTPServer_AdminRoutes.cpp`,
+`HTTPServer_MemoryRoutes.cpp`, `HTTPServer_EmotionRoutes.cpp`,
+`HTTPServer_MeTokensRoutes.cpp`,
+`HTTPServer_VideoIdentityRoutes.cpp`, `HTTPServer_AIRoutes.cpp`,
+`HTTPServer_DictionaryRoutes.cpp`,
+`HTTPServer_EducationRoutes.cpp`,
+`HTTPServer_EmotionalContextRoutes.cpp`,
+`HTTPServer_XLifecycleRoutes.cpp`, `HTTPServer_ServerRoutes.cpp`,
+`HTTPServer_ModelsRoutes.cpp`, `HTTPServer_MoralsGoalsRoutes.cpp`,
+`HTTPServer_MiscRoutes.cpp`, `HTTPServer_SHNRoutes.cpp`.
+
+Each new file = `#include "HTTPServer.h"` + one
+`void ElleHTTPService::RegisterXxxRoutes() { … }` definition.
+158 route registrations preserved verbatim. Brace total across the
+19 .cpp files = 1 902 / 1 902. `Elle.Service.HTTP.vcxproj`'s
+`<ItemGroup>` updated to compile all 19 .cpp files and add
+`<ClInclude>HTTPServer.h</ClInclude>`. **Windows MSVC build
+verification is the only remaining gate before #8 / #15 close.**
+
+### SQL fallback queue — Phase 1: idempotency hints + poison quarantine
+
+New header-only classifier at
+`Services/_Shared/ElleSQLFallbackClassifier.h`:
+- `enum class Idempotency { Yes, No, Unknown }`
+- `ClassifyExec(sql)` — SELECT / MERGE / TRUNCATE → Yes;
+  INSERT / UPDATE / DELETE → No; CREATE / EXEC → Unknown.
+- `ClassifyCallProc(name)` —
+  `usp_Record/Upsert/Snapshot/Log/Heartbeat/Bond/Intuition/Ensure/Mark/Touch`
+  → Yes; `usp_Delete/Purge/Insert/Create` → No.
+- Round-trip `Idempotency↔string`, plus `ToUpperAscii` and
+  `LeadingTokens` parsing helpers.
+
+`Services/_Shared/ElleSQLFallback.h/.cpp` upgraded:
+- JSONL line format now carries `idem` (`Yes`/`No`/`Unknown`) and
+  `retry_count` alongside `ts`/`kind`/`sql`/`params`.
+- New public API: `EnqueueWithHint(kind, sql, params, Idempotency)`,
+  `PoisonBytes()`, `PoisonFileCount()`, `SetMaxRetries(n)`.
+- Legacy `Enqueue(Kind, sql, params)` preserved — auto-classifies
+  through the new classifier (so every call site in
+  `_Shared/ElleSQLConn.cpp` keeps working unchanged).
+- `DrainNow()`:
+  * On `ReplayLine` failure for `idem=No` lines → **quarantine
+    immediately** to `<exe>/sqllogs/poison/YYYY-MM-DD.txt` and keep
+    draining. No more poison-line stall.
+  * On failure for `idem=Yes`/`Unknown` lines → increment the line's
+    `retry_count`, re-write the daily file atomically, and stop
+    drain.
+  * After `m_maxRetries` (default 5) → quarantine.
+- `Initialize()` creates the `poison/` subdir under `sqllogs/`.
+- `PendingBytes()` and `FileCount()` now exclude the `poison/`
+  subdir from live-queue size.
+
+### Tests (Shared ctest: 26 → 34 PASS)
+
+`Services/_Shared/tests/tests/test_sql_fallback_classifier.cpp`:
+- ClassifyExec: read-only verbs (`SELECT`, `WITH`, `MERGE`,
+  `TRUNCATE`) → Yes.
+- ClassifyExec: mutating verbs (`INSERT`, `UPDATE`, `DELETE`) → No.
+- ClassifyExec: empty / `EXEC sp_who2` / `CREATE` → Unknown.
+- ClassifyCallProc:
+  `usp_Record*/Upsert*/Snapshot*/Log*/Heartbeat*/Bond*/Intuition*/Ensure*/Mark*/Touch*`
+  → Yes (incl. `dbo.` and `ElleCore.dbo.` prefixes).
+- ClassifyCallProc: `usp_Delete*/Purge*/Insert*/Create*` → No.
+- ClassifyCallProc: unknown prefix / `sp_who2` / empty → Unknown.
+- Idempotency string round-trip.
+- `ToUpperAscii` + `LeadingTokens` helpers.
+
+`ElleSQLFallback.cpp` standalone-compiled under
+`g++ -std=c++17 -Wall -Wextra` against stub `ElleLogger.h` /
+`ElleSQLConn.h` — clean (after a `char buf[16]` → `char buf[32]`
+bump on the snprintf for the retry counter).
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition   | 39/39 PASS |
+| Probability | 85/85 PASS |
+| Composer    | 17/17 PASS |
+| Language    | 1/1 PASS |
+| Shared      | **34/34 PASS** (+8 classifier) |
+| **Total local Linux ctest** | **176/176 PASS** |
+
+Zero regressions. NUDE CODE preserved across all new files.
+
+---
+
+
+
 ## 2026-02 — HTTP Phase B split landed + MultiplexBeliefPersistence
 
 ### HTTP god-file Phase B (`Docs/HTTP_GOD_FILE_SPLIT_PLAN.md`)

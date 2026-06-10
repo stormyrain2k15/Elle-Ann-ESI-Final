@@ -10,6 +10,95 @@
 > *the audit identified a real problem but the right fix requires a
 > design conversation, not just code*.
 
+## This pass — what landed (Feb 2026 — pass 11)
+
+### HTTP god-file — Phase A + Phase C — **LANDED**
+
+Phase A: `ElleHTTPService` class declaration extracted from
+`Services/Elle.Service.HTTP/HTTPServer.cpp` into
+`Services/Elle.Service.HTTP/HTTPServer.h`. The header carries the
+file-private types (`HTTPRequest`, `HTTPResponse`, `HttpAuthLevel`,
+`RouteEntry`, `RouteDispatch`, `WSClient`, `PendingChat`,
+`ChatCorrelator`, `JwtVerifyResult`, `PairedCacheEntry`,
+`WsFrameStatus`, `LLMMsg`) plus the file-scope free helpers, with
+state-bearing globals (`g_diagMx`, `g_gameAuthDiag`,
+`g_pairedCacheMx`, `g_pairedCache`) re-tagged as `inline` so all 19
+TUs share one definition (ODR-safe). `HTTPServer.cpp` now `#include
+"HTTPServer.h"` and holds **out-of-class** definitions of the 27
+non-route methods (`OnStart`, `OnStop`, `OnMessage`,
+`GetDependencies`, `AcceptLoop`, `HttpWorkerLoop`, `HandleClient`,
+`SendResponse`, `ParseRequest`, … plus the three `static` auth
+helpers `ResolveAuthenticatedUser` / `RequireUserId` /
+`RequireAuthOrBodyUser`) and `ELLE_SERVICE_MAIN(ElleHTTPService)`.
+
+Phase C: Each of the 18 `RegisterXxxRoutes()` bodies moved into its
+own translation unit. New files:
+`HTTPServer_IntroRoutes.cpp`, `HTTPServer_AuthRoutes.cpp`,
+`HTTPServer_DiagRoutes.cpp`, `HTTPServer_AdminRoutes.cpp`,
+`HTTPServer_MemoryRoutes.cpp`, `HTTPServer_EmotionRoutes.cpp`,
+`HTTPServer_MeTokensRoutes.cpp`,
+`HTTPServer_VideoIdentityRoutes.cpp`, `HTTPServer_AIRoutes.cpp`,
+`HTTPServer_DictionaryRoutes.cpp`,
+`HTTPServer_EducationRoutes.cpp`,
+`HTTPServer_EmotionalContextRoutes.cpp`,
+`HTTPServer_XLifecycleRoutes.cpp`, `HTTPServer_ServerRoutes.cpp`,
+`HTTPServer_ModelsRoutes.cpp`, `HTTPServer_MoralsGoalsRoutes.cpp`,
+`HTTPServer_MiscRoutes.cpp`, `HTTPServer_SHNRoutes.cpp`. Each is a
+single `#include "HTTPServer.h"` + one
+`void ElleHTTPService::RegisterXxxRoutes() { … }` definition.
+158 route registrations preserved verbatim; brace total across all
+19 .cpp files = 1 902 / 1 902. `Elle.Service.HTTP.vcxproj`'s
+`<ItemGroup>` updated to compile all 19 .cpp files and add
+`<ClInclude>HTTPServer.h</ClInclude>`. **Requires MSVC verification
+on Windows.**
+
+### SQL fallback queue — idempotency + poison quarantine — **LANDED**
+
+New header-only classifier
+`Services/_Shared/ElleSQLFallbackClassifier.h` exposes
+`enum class Idempotency { Yes, No, Unknown }`,
+`ClassifyExec(sql)` (SELECT/MERGE/TRUNCATE → Yes;
+INSERT/UPDATE/DELETE → No), and `ClassifyCallProc(name)`
+(`usp_Record/Upsert/Snapshot/Log/Heartbeat/Bond/Intuition/Ensure/Mark/Touch`
+→ Yes; `usp_Delete/Purge/Insert/Create` → No). `Idempotency↔string`
+helpers + `ToUpperAscii` / `LeadingTokens` parsing utilities.
+
+`ElleSQLFallback.h/.cpp` upgraded:
+- JSONL line format now carries `idem` (`Yes`/`No`/`Unknown`) and
+  `retry_count` alongside `ts`/`kind`/`sql`/`params`.
+- New API: `EnqueueWithHint(kind, sql, params, Idempotency)`,
+  `PoisonBytes()`, `PoisonFileCount()`, `SetMaxRetries(n)`.
+- `Enqueue(...)` (legacy 3-arg) preserved — auto-classifies via the
+  new classifier. All existing call sites in
+  `_Shared/ElleSQLConn.cpp` keep working unchanged.
+- `DrainNow()` now:
+  * On `ReplayLine` failure for an `idem=No` line → quarantine
+    immediately to `<exe>/sqllogs/poison/YYYY-MM-DD.txt`.
+  * On failure for `idem=Yes`/`Unknown` line → increment the line's
+    `retry_count`, re-write the file atomically, and stop drain.
+  * After `m_maxRetries` (default 5) total failures → quarantine.
+  * `Initialize()` creates the `poison/` subdir.
+- `PendingBytes()` and `FileCount()` now correctly exclude the
+  `poison/` subdir from the live queue size.
+
+### Verification
+
+| Harness | Tests |
+|---|---|
+| Intuition  | 39/39 PASS |
+| Probability | 85/85 PASS |
+| Composer   | 17/17 PASS |
+| Language   | 1/1 PASS |
+| Shared (Upload + Vocab + **SQL classifier**) | **34/34 PASS** (+8) |
+| **Total local Linux ctest** | **176/176 PASS** |
+
+Additionally compiled `ElleSQLFallback.cpp` standalone under
+`g++ -std=c++17 -Wall -Wextra` with stub `ElleLogger.h` /
+`ElleSQLConn.h` headers — clean (no warnings after `snprintf` buffer
+bump). NUDE CODE preserved across all new files.
+
+---
+
 ## This pass — what landed (Feb 2026 — pass 10)
 
 ### HTTP god-file split — Phase B — **CLOSED**
@@ -576,12 +665,12 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 |---|------|--------|-------|
 | 1 | Auth defaults / public bind / no-auth flag | ↪ | Fail-closed defaults + runtime guard landed in `SLOPPY_WORK_FIX.md` |
 | 2 | SQL pool drops connection slots on reconnect-fail | ↪ | Slot now returned to pool, `notify_one()` fires |
-| 3 | SQL fallback queue lies about durability | ⏸ | Full op-classifier + durable queue table + poison quarantine — separate pass |
+| 3 | SQL fallback queue lies about durability | 🟡 PHASE-1-LANDED | `_Shared/ElleSQLFallbackClassifier.h` (header-only) adds idempotency hints `Yes/No/Unknown` via `ClassifyExec` (SELECT/MERGE/TRUNCATE → Yes; INSERT/UPDATE/DELETE → No) and `ClassifyCallProc` (`usp_Record/Upsert/Snapshot/Log/Heartbeat/Bond/Intuition/Ensure/Mark/Touch` → Yes; `usp_Delete/Purge/Insert/Create` → No). JSONL line format now carries `idem` + `retry_count`. `DrainNow()` quarantines non-idempotent lines on first failure and idempotent/unknown lines after `m_maxRetries` failures (default 5) to `<exe>/sqllogs/poison/YYYY-MM-DD.txt`. New API: `EnqueueWithHint`, `PoisonBytes`, `PoisonFileCount`, `SetMaxRetries`. 8 doctest cases in `_Shared/tests/tests/test_sql_fallback_classifier.cpp` (shared harness 26 → 34 PASS). Public `Enqueue(Kind, sql, params)` signature unchanged. **Phase 2 (durable SQL queue table + admin route)** still ⏸. |
 | 4 | Probability silently falls back to in-memory | ↪ | `ELLE_PROBABILITY_ALLOW_INMEMORY=1` opt-in, otherwise fail-closed |
 | 5 | Probability belief store never persisted | ✅ FIXED-THIS-PASS | Full SQL schema `SQL/Elle.Service.Probability/01_belief_persistence.sql` (5 tables + view + 4 procs + table-type). C++ interface `IBeliefPersistence` + `InMemoryBeliefPersistence` (real impl) + 8 doctest cases. Wiring into `BeliefStore::attachPersistence` is the next sub-step. |
 | 6 | GoalEngine LLM dependency | ↪ | Drop-in `GoalEngine.cpp` removed `FormGoal` call |
 | 7 | GoalEngine `OnStart` ignores `Initialize()` return | ↪ | Fixed alongside #6 |
-| 8 | HTTP god-file (6 000 LOC monolith) | 🟡 PHASE-B-LANDED | Phase B done: `RegisterRoutes()` body split into 18 in-class helper methods (`RegisterIntroRoutes`…`RegisterSHNRoutes`); 3 local lambdas promoted to `static` class members. 158 routes preserved verbatim, per-method braces verified. Phase A (header extraction) is now the next prerequisite for Phase C. Plan at `Docs/HTTP_GOD_FILE_SPLIT_PLAN.md`. |
+| 8 | HTTP god-file (6 000 LOC monolith) | 🟢 SPLIT-LANDED | Phase A + Phase B + Phase C all landed. Class declaration extracted into `Services/Elle.Service.HTTP/HTTPServer.h` (file-private types + helpers carried along; globals marked `inline`). `HTTPServer.cpp` shrank from 6 211 to ~1 070 lines and now contains only the non-route methods + `ELLE_SERVICE_MAIN`. Each of the 18 `RegisterXxxRoutes()` lives in its own `HTTPServer_<Name>Routes.cpp` (158 routes preserved verbatim across the split; brace totals 1 902/1 902 conserved). `Elle.Service.HTTP.vcxproj` updated to compile all 19 .cpp files + `<ClInclude>HTTPServer.h`. **Needs MSVC verification on Windows.** |
 | 9 | Upload endpoint validates filename, not content | ✅ FIXED-THIS-PASS | `_Shared/ElleUploadGuard.{h,cpp}` — 24 content-type byte-signature detection; `ValidateUploadContent` returns `{detected, allowed, isExec, reason}`. Both upload routes (`POST /api/memory/{id}/files`, `POST /api/video/avatar/upload`) hardened. Avatar route further restricts to image MIMEs only. 17 doctest cases. |
 | 10 | SHN write endpoint persists raw bytes with no rollback | ⏸ | Needs staging file + diff + atomic rename + version history |
 | 11 | Probability/Composer silent catches | ↪ | 9 silent catches now log (ProbabilityHost ×7, ProbabilityEngine ×1, Composer ×1, GoalEngine.AppendGoalFallback ×1) |
@@ -660,13 +749,12 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 
 ## Next pass — recommended priority order
 
-1. ⏸ **HTTP god-file Phase A** — extract `ElleHTTPService` class declaration into `Services/Elle.Service.HTTP/HTTPServer.h`. Prerequisite for Phase C. Requires Windows MSVC verification.
-2. ⏸ **HTTP god-file Phase C** — move each `RegisterXxxRoutes()` body into its own per-file translation unit (`HTTPServer_AuthRoutes.cpp`, etc.) once Phase A lands. Each file = one commit, each commit a single helper.
-3. ⏸ **SQL fallback queue durability** (#3).
-4. ⏸ **Upload + SHN write hardening** (#9, #10).
-5. ⏸ **Restart-persistence + CI smoke tests** (D32–D35 remaining).
-6. ⏸ **Android client rewrite** to remove pair UI.
-7. ⏸ **Config schema drift sweep** (#12).
+1. ⏸ **MSVC verification** of the HTTP god-file split (Phase A + B + C). Build the `Elle.Service.HTTP.vcxproj` on Windows and confirm all 158 routes still register at startup. **Required before declaring #8 closed.**
+2. ⏸ **SQL fallback queue — Phase 2**: surface poison-file contents via an admin route (`GET /api/admin/sqlfallback/poison`) and a stored proc that loads them into a `dbo.SQLFallbackPoison` table for replay/inspection.
+3. ⏸ **Upload + SHN write hardening** (#9, #10).
+4. ⏸ **Restart-persistence + CI smoke tests** (D32–D35 remaining).
+5. ⏸ **Android client rewrite** to remove pair UI.
+6. ⏸ **Config schema drift sweep** (#12).
 
 Every item above keeps its tag in this file. When something moves from
 ⏸ to ✅, the row updates here so the next agent inherits accurate state.

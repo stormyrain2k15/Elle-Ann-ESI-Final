@@ -39,6 +39,27 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="HTTPServer.cpp" />
+    <ClCompile Include="HTTPServer_IntroRoutes.cpp" />
+    <ClCompile Include="HTTPServer_AuthRoutes.cpp" />
+    <ClCompile Include="HTTPServer_DiagRoutes.cpp" />
+    <ClCompile Include="HTTPServer_AdminRoutes.cpp" />
+    <ClCompile Include="HTTPServer_MemoryRoutes.cpp" />
+    <ClCompile Include="HTTPServer_EmotionRoutes.cpp" />
+    <ClCompile Include="HTTPServer_MeTokensRoutes.cpp" />
+    <ClCompile Include="HTTPServer_VideoIdentityRoutes.cpp" />
+    <ClCompile Include="HTTPServer_AIRoutes.cpp" />
+    <ClCompile Include="HTTPServer_DictionaryRoutes.cpp" />
+    <ClCompile Include="HTTPServer_EducationRoutes.cpp" />
+    <ClCompile Include="HTTPServer_EmotionalContextRoutes.cpp" />
+    <ClCompile Include="HTTPServer_XLifecycleRoutes.cpp" />
+    <ClCompile Include="HTTPServer_ServerRoutes.cpp" />
+    <ClCompile Include="HTTPServer_ModelsRoutes.cpp" />
+    <ClCompile Include="HTTPServer_MoralsGoalsRoutes.cpp" />
+    <ClCompile Include="HTTPServer_MiscRoutes.cpp" />
+    <ClCompile Include="HTTPServer_SHNRoutes.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="HTTPServer.h" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\_Shared\ElleCore.Shared.vcxproj">

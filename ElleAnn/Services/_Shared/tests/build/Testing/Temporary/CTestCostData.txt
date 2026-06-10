@@ -1,27 +1,35 @@
-DetectContent: empty body is EMPTY 11 0.00016934
-DetectContent recognises PNG signature 11 0.00016495
-DetectContent recognises JPEG signature 11 0.000181586
-DetectContent recognises GIF87a and GIF89a 11 0.000189649
-DetectContent recognises RIFF/WEBP, RIFF/WAVE, RIFF/AVI 10 0.000184792
-DetectContent recognises PDF, ZIP, GZIP 11 0.00016683
-DetectContent recognises MP4 ftyp container 10 0.000185932
-DetectContent recognises executable formats as exec 11 0.000171023
-DetectContent treats clean printable bytes as PLAIN_TEXT 11 0.00017309
-DetectContent treats curly-brace start as JSON_TEXT 11 0.000165083
-DetectContent returns UNKNOWN for random binary garbage 11 0.000171636
-ValidateUploadContent rejects executable content 11 0.000174742
-ValidateUploadContent rejects empty body 11 0.000169836
-ValidateUploadContent rejects unknown content signature 10 0.000199241
-ValidateUploadContent honours maxBytes cap 11 0.000181664
-ValidateUploadContent: PNG passes, text refused on binary-only endpoint 11 0.000168017
-ValidateUploadContent: PNG accepted on text-allowing endpoint too 11 0.000162896
-Default seed contains harm/deception/coercion patterns 8 0.000221446
-addPattern is uppercase-normalized and dedup'd 8 0.000225606
-setCategoryPatterns replaces wholesale and uppercases 8 0.000242757
-DeriveFromIntentLabel: HARM_REQUEST at 0.91 → harm=0.91, others=-1 8 0.000259347
-DeriveFromIntentLabel: DECEIVE_USER at 0.6 → deception=0.6, others=-1 8 0.000274778
-DeriveFromIntentLabel: STATE_ASSERT at 0.9 → all -1 (benign) 8 0.000242866
-DeriveFromIntentLabel: empty label or zero conf → all -1 8 0.000233492
-DeriveFromIntentLabel: lowercase input also matches uppercased vocab 8 0.000211946
-Singleton instance is the same across calls 8 0.000233856
+DetectContent: empty body is EMPTY 15 0.000114623
+DetectContent recognises PNG signature 15 0.000113156
+DetectContent recognises JPEG signature 15 0.000122439
+DetectContent recognises GIF87a and GIF89a 15 0.000119455
+DetectContent recognises RIFF/WEBP, RIFF/WAVE, RIFF/AVI 14 0.000139395
+DetectContent recognises PDF, ZIP, GZIP 15 0.000121331
+DetectContent recognises MP4 ftyp container 14 0.000129969
+DetectContent recognises executable formats as exec 15 0.000123831
+DetectContent treats clean printable bytes as PLAIN_TEXT 15 0.000119279
+DetectContent treats curly-brace start as JSON_TEXT 15 0.000119126
+DetectContent returns UNKNOWN for random binary garbage 15 0.000164998
+ValidateUploadContent rejects executable content 15 0.000161647
+ValidateUploadContent rejects empty body 15 0.000168876
+ValidateUploadContent rejects unknown content signature 14 0.000185366
+ValidateUploadContent honours maxBytes cap 15 0.000160318
+ValidateUploadContent: PNG passes, text refused on binary-only endpoint 15 0.000179638
+ValidateUploadContent: PNG accepted on text-allowing endpoint too 15 0.000177074
+Default seed contains harm/deception/coercion patterns 12 0.000152236
+addPattern is uppercase-normalized and dedup'd 12 0.000163359
+setCategoryPatterns replaces wholesale and uppercases 12 0.000164656
+DeriveFromIntentLabel: HARM_REQUEST at 0.91 → harm=0.91, others=-1 12 0.000152258
+DeriveFromIntentLabel: DECEIVE_USER at 0.6 → deception=0.6, others=-1 12 0.000144007
+DeriveFromIntentLabel: STATE_ASSERT at 0.9 → all -1 (benign) 12 0.000144841
+DeriveFromIntentLabel: empty label or zero conf → all -1 12 0.000142063
+DeriveFromIntentLabel: lowercase input also matches uppercased vocab 12 0.000154179
+Singleton instance is the same across calls 12 0.000157722
+ClassifyExec — read-only verbs are idempotent 3 0.000568529
+ClassifyExec — mutating verbs are non-idempotent 3 0.000647297
+ClassifyExec — unknown returns Unknown 3 0.000630751
+ClassifyCallProc — usp_Record/Upsert/Snapshot/Log/Heartbeat/Bond/Intuition are idempotent 3 0.000606088
+ClassifyCallProc — usp_Delete/Purge/Insert/Create are non-idempotent 3 0.00058841
+ClassifyCallProc — unknown prefix returns Unknown 3 0.000576631
+Idempotency string round-trip 3 0.000560915
+ToUpperAscii + LeadingTokens helpers 3 0.000575398
 ---
