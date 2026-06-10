@@ -213,10 +213,16 @@ private fun IssuesPanel(
 
 @Composable
 private fun LLMHealthPanel(health: DiagHealthResponse?) {
-    val llm = health?.llm
-    val healthy = llm?.healthy == true
-    val bg = if (healthy) Color(0xFF0D2B0D) else Color(0xFF3A0D0D)
-    val accent = if (healthy) Color(0xFF00FF88) else Color(0xFFFF6F6F)
+    // Composer is Elle's deterministic response engine. Elle is tensor-free —
+    // there is no LLM provider. This panel shows Composer/service health instead.
+    val wiresUp    = health?.wiresUp ?: 0
+    val wiresTotal = health?.wiresTotal ?: 0
+    val hbUp       = health?.heartbeatsUp ?: 0
+    val hbTotal    = health?.heartbeatsTotal ?: 0
+    val allUp      = wiresUp == wiresTotal && hbUp == hbTotal && wiresTotal > 0
+    val bg     = if (allUp) Color(0xFF0D2B0D) else Color(0xFF3A2A0D)
+    val accent = if (allUp) Color(0xFF00FF88) else IsyaGold
+
     Surface(
         shape = RoundedCornerShape(10.dp),
         color = bg,
@@ -224,16 +230,17 @@ private fun LLMHealthPanel(health: DiagHealthResponse?) {
     ) {
         Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("LLM", color = accent, fontWeight = FontWeight.Bold)
+                Text("Composer Engine", color = accent, fontWeight = FontWeight.Bold)
                 Text(
-                    if (llm == null) "—" else "${llm.provider}  ·  ${llm.model.ifBlank { "(no model)" }}",
+                    if (health == null) "—"
+                    else "wires $wiresUp/$wiresTotal  ·  heartbeats $hbUp/$hbTotal",
                     color = Color(0xFFCCFFCC),
                     fontSize = 13.sp,
                     fontFamily = FontFamily.Monospace,
                 )
             }
             Text(
-                if (healthy) "READY" else "DOWN",
+                if (allUp) "READY" else "CHECK",
                 color = accent,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,

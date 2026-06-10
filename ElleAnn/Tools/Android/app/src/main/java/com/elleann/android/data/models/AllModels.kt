@@ -239,12 +239,6 @@ data class UploadAvatarRequest(
 )
 
 @Serializable
-data class VideoCallSession(
-    val id: Long,
-    @SerialName("started_ms") val startedMs: Long,
-)
-
-@Serializable
 data class Goal(
     val id: Long,
     val description: String,
@@ -970,12 +964,6 @@ data class CreateMemoryRequest(
     @SerialName("user_id") val userId: Int? = null,
     @SerialName("conversation_id") val conversationId: Long? = null,
     val tags: List<String> = emptyList(),
-)
-
-@Serializable
-data class StartVideoCallRequest(
-    @SerialName("conversation_id") val conversationId: Long? = null,
-    @SerialName("user_id") val userId: Int = 1,
 )
 
 @Serializable

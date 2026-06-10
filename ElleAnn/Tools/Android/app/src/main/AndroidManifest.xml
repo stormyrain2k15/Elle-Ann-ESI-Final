@@ -3,13 +3,10 @@
 
     <!-- Network access for REST API and WebSocket -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Camera for QR code scanning -->
-    <uses-permission android:name="android.permission.CAMERA" />
-    <!-- Text-to-speech (no special permission needed, uses system TTS) -->
+    <!-- Microphone for speech-to-text input -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Vibration for optional haptic feedback -->
     <uses-permission android:name="android.permission.VIBRATE" />
-
-    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:name=".ElleApp"

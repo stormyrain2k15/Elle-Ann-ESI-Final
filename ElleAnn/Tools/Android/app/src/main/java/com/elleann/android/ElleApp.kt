@@ -104,7 +104,6 @@ class AppContainer(context: Context) {
         .build()
 
     fun apiFor(host: String, port: Int): ElleApi {
-
         return Retrofit.Builder()
             .baseUrl("http://$host:$port/")
             .client(baseOkHttpClient)
@@ -130,17 +129,22 @@ class ElleApp : Application() {
         chatCacheManager = com.elleann.android.data.ChatCacheManager(applicationContext)
         com.elleann.android.data.ChatCacheManager.installAsGlobal(chatCacheManager)
 
+        // Flush cache on crash
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             runCatching { com.elleann.android.data.ChatCacheManager.crashFlush() }
-            previousHandler?.uncaughtException(thread, throwable)
-                ?: Thread.getDefaultUncaughtExceptionHandler()?.uncaughtException(thread, throwable)
+            previousHandler?.uncaughtException(thread, throwable) ?: run {
+                android.os.Process.killProcess(android.os.Process.myPid())
+                kotlin.system.exitProcess(10)
+            }
         }
 
+        // Flush cache when app goes to background (user closes app or switches away)
+        // This is the CORRECT place to flush — not on page navigation
         androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(
             object : androidx.lifecycle.DefaultLifecycleObserver {
                 override fun onStop(owner: androidx.lifecycle.LifecycleOwner) {
-                    runCatching { chatCacheManager.flushAllBlocking() }
+                    runCatching { chatCacheManager.flushAllSync() }
                 }
             }
         )

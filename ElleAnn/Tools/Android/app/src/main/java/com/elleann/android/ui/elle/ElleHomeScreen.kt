@@ -6,6 +6,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,6 +18,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.elleann.android.data.AppContainerExtended
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import com.elleann.android.data.ElleWebSocket
 import com.elleann.android.data.WsEvent
 import com.elleann.android.EmotionsResponse
@@ -214,8 +224,12 @@ fun ElleHomeScreen(
 
             IsyaTopBar(
                 title = {
-                    Text("ElleAnn", style = MaterialTheme.typography.titleMedium,
-                        color = IsyaGold, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        ElleProfilePicture(container = containerExtended)
+                        Spacer(Modifier.width(10.dp))
+                        Text("ElleAnn", style = MaterialTheme.typography.titleMedium,
+                            color = IsyaGold, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    }
                 },
                 subtitle = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -445,6 +459,66 @@ private fun HealthBanner(container: AppContainerExtended) {
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ElleProfilePicture — locked avatar shown in the Elle home screen top bar.
+// Tap to set if not locked. Once locked, tapping does nothing.
+// ---------------------------------------------------------------------------
+@Composable
+private fun ElleProfilePicture(container: com.elleann.android.data.AppContainerExtended) {
+    val scope   = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val store   = container.profileStore
+
+    // Load local cache on first composition
+    LaunchedEffect(Unit) {
+        store.loadLocal()
+        // If no local cache, try fetching from server
+        if (store.bitmap.value == null && container.isPaired) {
+            runCatching { store.fetchFromServer(container.extendedApi, container.authenticatedHttpClient, container.restBaseUrl) }
+        }
+    }
+
+    val bitmap by store.bitmap.collectAsState()
+    val isLocked by store.isLockedFlow.collectAsState()
+
+    // Image picker launcher — only active when not locked
+    val launcher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null && !isLocked) {
+            scope.launch {
+                store.uploadAndLock(uri, container.extendedApi)
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            .background(IsyaDusk)
+            .clickable(enabled = !isLocked) { launcher.launch("image/*") },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = "Elle",
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().clip(CircleShape),
+            )
+        } else {
+            // Placeholder — tap to set
+            Icon(
+                Icons.Rounded.Person,
+                contentDescription = if (isLocked) "Elle" else "Set Elle's picture",
+                tint = IsyaMuted,
+                modifier = Modifier.size(20.dp),
+            )
         }
     }
 }

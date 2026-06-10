@@ -19,7 +19,12 @@ import com.elleann.android.navigation.ElleRoutes
 import com.elleann.android.ui.components.*
 import com.elleann.android.ui.theme.*
 
-data class WorldSection(val label: String, val icon: ImageVector, val route: String, val subtitle: String)
+data class WorldSection(
+    val label: String,
+    val icon: ImageVector,
+    val route: String,
+    val subtitle: String,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -28,22 +33,50 @@ fun WorldScreen(
     onNavigate: (String) -> Unit,
     onSettings: () -> Unit,
 ) {
+    // Grouped down from 15 flat items to 7 logical sections
     val sections = listOf(
-        WorldSection("Goals",           Icons.Rounded.Flag,          ElleRoutes.WORLD_GOALS,        "Active drives and progress"),
-        WorldSection("Thoughts",        Icons.Rounded.Psychology,    ElleRoutes.WORLD_THOUGHTS,     "Elle's autonomous thought log"),
-        WorldSection("Private Inner Life", Icons.Rounded.Lock,       ElleRoutes.WORLD_INNER_LIFE,   "Unguarded internal monologue"),
-        WorldSection("Autobiography",   Icons.Rounded.MenuBook,      ElleRoutes.WORLD_AUTOBIOGRAPHY,"Self-written life story"),
-        WorldSection("Identity",        Icons.Rounded.Person,        ElleRoutes.WORLD_IDENTITY,     "Traits, snapshots, growth log"),
-        WorldSection("Felt Time",       Icons.Rounded.Schedule,      ElleRoutes.WORLD_FELT_TIME,    "Subjective experience of time"),
-        WorldSection("Consent Log",     Icons.Rounded.VerifiedUser,  ElleRoutes.WORLD_CONSENT,      "What Elle agreed or refused"),
-        WorldSection("Observatory",     Icons.Rounded.Radar,         ElleRoutes.WORLD_OBSERVATORY,  "All 102 emotion dimensions live"),
-        WorldSection("Patterns",        Icons.Rounded.Timeline,      ElleRoutes.WORLD_PATTERNS,     "Recurring emotional threads"),
-        WorldSection("Learning",        Icons.Rounded.School,        ElleRoutes.WORLD_LEARNING,     "Subjects, skills, milestones"),
-        WorldSection("Capabilities",    Icons.Rounded.Build,         ElleRoutes.WORLD_CAPABILITIES, "What Elle can do"),
-        WorldSection("Ethics",          Icons.Rounded.Balance,       ElleRoutes.WORLD_ETHICS,       "Moral framework"),
-        WorldSection("Autonomy",        Icons.Rounded.AutoMode,      ElleRoutes.WORLD_AUTONOMY,     "Trust level, self-prompting"),
-        WorldSection("Self-Image",      Icons.Rounded.Face,          ElleRoutes.WORLD_SELF_IMAGE,   "How Elle sees herself"),
-        WorldSection("X-Chronicle",     Icons.Rounded.Favorite,      ElleRoutes.WORLD_X_CHRONICLE,  "Biological cycle and lifecycle"),
+        WorldSection(
+            "Goals",
+            Icons.Rounded.Flag,
+            ElleRoutes.WORLD_GOALS,
+            "What Elle is working toward"
+        ),
+        WorldSection(
+            "Inner Life",
+            Icons.Rounded.Psychology,
+            ElleRoutes.WORLD_INNER,
+            "Thoughts, private monologue, consent"
+        ),
+        WorldSection(
+            "Identity",
+            Icons.Rounded.Person,
+            ElleRoutes.WORLD_IDENTITY,
+            "Traits, autobiography, self-image, felt time"
+        ),
+        WorldSection(
+            "Observatory",
+            Icons.Rounded.Radar,
+            ElleRoutes.WORLD_OBSERVATORY,
+            "All 102 emotion dimensions live"
+        ),
+        WorldSection(
+            "Patterns",
+            Icons.Rounded.Timeline,
+            ElleRoutes.WORLD_PATTERNS,
+            "Recurring emotional threads"
+        ),
+        WorldSection(
+            "Learning",
+            Icons.Rounded.School,
+            ElleRoutes.WORLD_LEARNING,
+            "Subjects, skills, milestones"
+        ),
+        WorldSection(
+            "X-Chronicle",
+            Icons.Rounded.Favorite,
+            ElleRoutes.WORLD_X_CHRONICLE,
+            "Biological cycle and lifecycle"
+        ),
     )
 
     Scaffold(
@@ -52,7 +85,9 @@ fun WorldScreen(
             TopAppBar(
                 title = { Text("Elle's World", color = IsyaGold) },
                 actions = {
-                    IconButton(onClick = onSettings) { Icon(Icons.Rounded.Settings, "Settings", tint = IsyaMuted) }
+                    IconButton(onClick = onSettings) {
+                        Icon(Icons.Rounded.Settings, "Settings", tint = IsyaMuted)
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = IsyaNight),
             )
@@ -64,6 +99,7 @@ fun WorldScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(sections) { sec ->
+                if (sec.route.isBlank()) return@items
                 Surface(
                     modifier = Modifier.fillMaxWidth().clickable { onNavigate(sec.route) },
                     shape = RoundedCornerShape(12.dp),
@@ -76,8 +112,10 @@ fun WorldScreen(
                         Icon(sec.icon, null, tint = IsyaMagic, modifier = Modifier.size(28.dp))
                         Spacer(Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(sec.label, style = MaterialTheme.typography.titleSmall, color = IsyaCream, fontWeight = FontWeight.Medium)
-                            Text(sec.subtitle, style = MaterialTheme.typography.bodySmall, color = IsyaMuted)
+                            Text(sec.label, style = MaterialTheme.typography.titleSmall,
+                                color = IsyaCream, fontWeight = FontWeight.Medium)
+                            Text(sec.subtitle, style = MaterialTheme.typography.bodySmall,
+                                color = IsyaMuted)
                         }
                         Icon(Icons.Rounded.ChevronRight, null, tint = IsyaMuted)
                     }

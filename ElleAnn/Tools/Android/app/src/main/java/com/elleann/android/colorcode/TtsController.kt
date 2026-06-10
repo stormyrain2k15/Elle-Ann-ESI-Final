@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.util.Locale
 import java.util.UUID
 
+enum class TtsPlayState { IDLE, PLAYING, PAUSED }
+
 class TtsController(context: Context) {
 
     companion object {
@@ -19,8 +21,8 @@ class TtsController(context: Context) {
     private val _currentWordIndex = MutableStateFlow(-1)
     val currentWordIndex: StateFlow<Int> = _currentWordIndex.asStateFlow()
 
-    private val _isSpeaking = MutableStateFlow(false)
-    val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
+    private val _playState = MutableStateFlow(TtsPlayState.IDLE)
+    val playState: StateFlow<TtsPlayState> = _playState.asStateFlow()
 
     private val _isReady = MutableStateFlow(false)
     val isReady: StateFlow<Boolean> = _isReady.asStateFlow()
@@ -28,6 +30,7 @@ class TtsController(context: Context) {
     private var tts: TextToSpeech? = null
     private var currentText: String = ""
     private var wordRanges: List<IntRange> = emptyList()
+    private var pausedWordIndex: Int = -1
 
     var speed: Float = 1.0f
         set(value) { field = value.coerceIn(0.5f, 2.0f); tts?.setSpeechRate(field) }
@@ -38,9 +41,8 @@ class TtsController(context: Context) {
     var locale: Locale = Locale.US
         set(value) { field = value; tts?.language = value }
 
-    var highlightMode: HighlightMode = HighlightMode.WORD
-
     enum class HighlightMode { WORD, SENTENCE }
+    var highlightMode: HighlightMode = HighlightMode.WORD
 
     init {
         tts = TextToSpeech(context) { status ->
@@ -50,63 +52,76 @@ class TtsController(context: Context) {
                 tts?.setPitch(pitch)
                 setupUtteranceListener()
                 _isReady.value = true
-                Log.i(TAG, "TTS initialized successfully")
+                Log.i(TAG, "TTS initialized")
             } else {
-                Log.e(TAG, "TTS initialization failed with status: $status")
+                Log.e(TAG, "TTS init failed: $status")
             }
         }
     }
 
     private fun setupUtteranceListener() {
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-
             override fun onStart(utteranceId: String?) {
-                _isSpeaking.value = true
+                _playState.value = TtsPlayState.PLAYING
                 _currentWordIndex.value = 0
             }
-
             override fun onDone(utteranceId: String?) {
-                _isSpeaking.value = false
+                _playState.value = TtsPlayState.IDLE
                 _currentWordIndex.value = -1
+                pausedWordIndex = -1
             }
-
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
-                _isSpeaking.value = false
+                _playState.value = TtsPlayState.IDLE
                 _currentWordIndex.value = -1
             }
-
             override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
-
                 val idx = wordRanges.indexOfFirst { range -> start in range }
                 if (idx >= 0) _currentWordIndex.value = idx
             }
         })
     }
 
+    // Play from beginning — or resume from pause point if same text
     fun speak(text: String) {
-        if (!_isReady.value) {
-            Log.w(TAG, "TTS not ready — queuing speak after init")
-            return
+        if (!_isReady.value) return
+        if (_playState.value == TtsPlayState.PAUSED && text == currentText && pausedWordIndex > 0) {
+            // Resume from paused word
+            val resumeFrom = wordRanges.getOrNull(pausedWordIndex)?.let { range ->
+                text.substring(range.first.coerceAtMost(text.length))
+            } ?: text
+            tts?.stop()
+            _currentWordIndex.value = pausedWordIndex
+            tts?.speak(resumeFrom, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+            _playState.value = TtsPlayState.PLAYING
+        } else {
+            // Fresh play
+            currentText = text
+            wordRanges = computeWordRanges(text)
+            pausedWordIndex = -1
+            tts?.stop()
+            _currentWordIndex.value = 0
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
         }
-
-        currentText = text
-        wordRanges = computeWordRanges(text)
-
-        tts?.stop()
-        _currentWordIndex.value = 0
-
-        val utteranceId = UUID.randomUUID().toString()
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
     }
 
+    // Pause — saves word position for resume
+    fun pause() {
+        if (_playState.value == TtsPlayState.PLAYING) {
+            pausedWordIndex = _currentWordIndex.value
+            tts?.stop()
+            _playState.value = TtsPlayState.PAUSED
+        }
+    }
+
+    // Stop — clears everything
     fun stop() {
         tts?.stop()
-        _isSpeaking.value = false
+        _playState.value = TtsPlayState.IDLE
         _currentWordIndex.value = -1
+        pausedWordIndex = -1
+        currentText = ""
     }
-
-    fun pause() = stop()
 
     fun shutdown() {
         tts?.stop()
@@ -116,10 +131,7 @@ class TtsController(context: Context) {
 
     private fun computeWordRanges(text: String): List<IntRange> {
         val ranges = mutableListOf<IntRange>()
-        val pattern = Regex("""\b\w+\b""")
-        pattern.findAll(text).forEach { match ->
-            ranges.add(match.range)
-        }
+        Regex("""\b\w+\b""").findAll(text).forEach { ranges.add(it.range) }
         return ranges
     }
 }

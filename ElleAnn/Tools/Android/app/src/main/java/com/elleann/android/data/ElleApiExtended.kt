@@ -103,12 +103,6 @@ interface ElleApiExtended {
     @POST("/api/tokens/interactions")
     suspend fun logInteraction(@Body request: InteractionRequest): OkResponse
 
-    @POST("/api/tokens/video-calls")
-    suspend fun startVideoCall(@Body body: StartVideoCallRequest): VideoCallSession
-
-    @PUT("/api/tokens/video-calls/{id}/end")
-    suspend fun endVideoCall(@Path("id") id: Long): OkResponse
-
     @POST("/api/ai/chat")
     suspend fun chat(@Body request: ChatRequest): ChatResponse
 
@@ -147,9 +141,6 @@ interface ElleApiExtended {
         @Path("id") id: Long,
         @Body body: CompleteHardwareActionRequest,
     ): OkResponse
-
-    @POST("/api/ai/voice-call/{id}/end")
-    suspend fun endVoiceCall(@Path("id") id: Long): OkResponse
 
     @GET("/api/ai/agents")
     suspend fun getAgents(): AgentListResponse

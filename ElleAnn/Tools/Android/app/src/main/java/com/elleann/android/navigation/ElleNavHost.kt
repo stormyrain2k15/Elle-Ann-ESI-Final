@@ -16,15 +16,14 @@ import com.elleann.android.AppContainer
 import com.elleann.android.data.AppContainerExtended
 import com.elleann.android.ui.chat.ChatScreen
 import com.elleann.android.ui.chat.ConversationListScreen
-import com.elleann.android.ui.chat.VideoCallScreen
 import com.elleann.android.ui.common.ConnectionNotReadyScreen
-import com.elleann.android.ui.dev.*
 import com.elleann.android.ui.components.*
+import com.elleann.android.ui.dev.*
 import com.elleann.android.ui.elle.ElleHomeScreen
 import com.elleann.android.ui.memory.MemoryBrowserScreen
 import com.elleann.android.ui.memory.MemoryDetailScreen
-import com.elleann.android.ui.shneditor.SHNScreen
 import com.elleann.android.ui.settings.*
+import com.elleann.android.ui.shneditor.SHNScreen
 import com.elleann.android.ui.world.*
 import com.elleann.android.ui.world.sections.*
 import com.elleann.android.data.models.ShnSaveRequest
@@ -39,19 +38,14 @@ fun ElleNavHost(
 ) {
     val navController = rememberNavController()
 
-    NavHost(
-        navController    = navController,
-        startDestination = ElleRoutes.ELLE,
-    ) {
+    NavHost(navController = navController, startDestination = ElleRoutes.ELLE) {
 
         composable(ElleRoutes.ELLE) {
             MainScaffold(
                 container         = container,
                 containerExtended = containerExtended,
                 onUnpair          = onUnpair,
-                onNavigateToSettings = {
-                    navController.navigate(ElleRoutes.SETTINGS)
-                },
+                onNavigateToSettings = { navController.navigate(ElleRoutes.SETTINGS) },
             )
         }
 
@@ -75,10 +69,16 @@ fun ElleNavHost(
             AppearanceScreen(onBack = { navController.popBackStack() })
         }
         composable(ElleRoutes.SETTINGS_NOTIFICATIONS) {
-            NotificationsScreen(onBack = { navController.popBackStack() })
+            NotificationsScreen(
+                containerExtended = containerExtended,
+                onBack = { navController.popBackStack() },
+            )
         }
         composable(ElleRoutes.SETTINGS_ABOUT) {
-            SettingsAboutScreen(onBack = { navController.popBackStack() })
+            SettingsAboutScreen(
+                containerExtended = containerExtended,
+                onBack = { navController.popBackStack() },
+            )
         }
     }
 }
@@ -104,16 +104,14 @@ private fun MainScaffold(
                 items = TopLevelDestination.all.map { d ->
                     IsyaNavItem(label = d.label, icon = d.icon, route = d.route)
                 },
-                currentRoute    = currentRoute,
-                onItemSelected  = { item ->
+                currentRoute   = currentRoute,
+                onItemSelected = { item ->
                     val dest = TopLevelDestination.all.first { it.route == item.route }
                     if (dest is TopLevelDestination.Dev && !devUnlocked) {
                         navController.navigate("${dest.route}_pin")
                     } else {
                         navController.navigate(dest.route) {
-                            popUpTo(navController.graph.findStartDestination().id) {
-                                saveState = true
-                            }
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                             launchSingleTop = true
                             restoreState    = true
                         }
@@ -147,16 +145,12 @@ private fun TabNavHost(
     onDevUnlocked: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    NavHost(
-        navController    = navController,
-        startDestination = ElleRoutes.ELLE,
-        modifier         = modifier,
-    ) {
+    NavHost(navController = navController, startDestination = ElleRoutes.ELLE, modifier = modifier) {
 
+        // ── ELLE HOME ─────────────────────────────────────────────────────────
         composable(ElleRoutes.ELLE) {
             val ws = containerExtended.webSocketOrNull
             if (ws == null) {
-
                 ConnectionNotReadyScreen(onRetry = { containerExtended.reconnectWebSocketIfNeeded() })
                 return@composable
             }
@@ -168,13 +162,12 @@ private fun TabNavHost(
             )
         }
 
+        // ── CHAT ──────────────────────────────────────────────────────────────
         composable(ElleRoutes.CHAT) {
             ConversationListScreen(
-                containerExtended = containerExtended,
-                onOpenConversation = { convId ->
-                    navController.navigate(ElleRoutes.chatScreen(convId))
-                },
-                onSettings = onSettings,
+                containerExtended  = containerExtended,
+                onOpenConversation = { convId -> navController.navigate(ElleRoutes.chatScreen(convId)) },
+                onSettings         = onSettings,
             )
         }
         composable(
@@ -186,40 +179,22 @@ private fun TabNavHost(
                 conversationId    = conversationId,
                 containerExtended = containerExtended,
                 onBack            = { navController.popBackStack() },
-                onStartVideoCall  = { callId ->
-                    navController.navigate(ElleRoutes.videoCall(callId))
-                },
-            )
-        }
-        composable(
-            route     = ElleRoutes.VIDEO_CALL,
-            arguments = listOf(navArgument("callId") { type = NavType.LongType }),
-        ) { entry ->
-            val callId = entry.arguments?.getLong("callId") ?: 0L
-            VideoCallScreen(
-                callId            = callId,
-                containerExtended = containerExtended,
-                restBaseUrl       = containerExtended.restBaseUrl ?: "",
-                onBack            = { navController.popBackStack() },
             )
         }
 
+        // ── MEMORY ────────────────────────────────────────────────────────────
         composable(ElleRoutes.MEMORY) {
             MemoryBrowserScreen(
                 containerExtended = containerExtended,
-                onOpenMemory      = { memoryId ->
-                    navController.navigate(ElleRoutes.memoryDetail(memoryId))
-                },
-                onBack = { navController.popBackStack() },
+                onOpenMemory      = { memoryId -> navController.navigate(ElleRoutes.memoryDetail(memoryId)) },
+                onBack            = { navController.popBackStack() },
             )
         }
         composable(ElleRoutes.MEMORY_BROWSER) {
             MemoryBrowserScreen(
                 containerExtended = containerExtended,
-                onOpenMemory = { memoryId ->
-                    navController.navigate(ElleRoutes.memoryDetail(memoryId))
-                },
-                onBack = { navController.popBackStack() },
+                onOpenMemory      = { memoryId -> navController.navigate(ElleRoutes.memoryDetail(memoryId)) },
+                onBack            = { navController.popBackStack() },
             )
         }
         composable(
@@ -234,6 +209,7 @@ private fun TabNavHost(
             )
         }
 
+        // ── WORLD ─────────────────────────────────────────────────────────────
         composable(ElleRoutes.WORLD) {
             WorldScreen(
                 containerExtended = containerExtended,
@@ -241,15 +217,16 @@ private fun TabNavHost(
                 onSettings        = onSettings,
             )
         }
-
-        composable(ElleRoutes.WORLD_GOALS)         { GoalsSection(containerExtended, { navController.popBackStack() }) }
-        composable(ElleRoutes.WORLD_THOUGHTS)      { ThoughtsSection(containerExtended, { navController.popBackStack() }) }
-        composable(ElleRoutes.WORLD_INNER_LIFE)    { PrivateInnerLifeSection(containerExtended, { navController.popBackStack() }) }
-        composable(ElleRoutes.WORLD_AUTOBIOGRAPHY) { AutobiographySection(containerExtended, { navController.popBackStack() }) }
-        composable(ElleRoutes.WORLD_IDENTITY)      { IdentitySection(containerExtended, { navController.popBackStack() }) }
-        composable(ElleRoutes.WORLD_FELT_TIME)     { FeltTimeSection(containerExtended, { navController.popBackStack() }) }
-        composable(ElleRoutes.WORLD_CONSENT)       { ConsentLogSection(containerExtended, { navController.popBackStack() }) }
-        composable(ElleRoutes.WORLD_OBSERVATORY)   {
+        composable(ElleRoutes.WORLD_GOALS) {
+            GoalsSection(containerExtended, { navController.popBackStack() })
+        }
+        composable(ElleRoutes.WORLD_INNER) {
+            InnerWorldSection(containerExtended, { navController.popBackStack() })
+        }
+        composable(ElleRoutes.WORLD_IDENTITY) {
+            IdentityWorldSection(containerExtended, { navController.popBackStack() })
+        }
+        composable(ElleRoutes.WORLD_OBSERVATORY) {
             val ws = containerExtended.webSocketOrNull
             if (ws == null) {
                 ConnectionNotReadyScreen(onRetry = { containerExtended.reconnectWebSocketIfNeeded() })
@@ -257,8 +234,16 @@ private fun TabNavHost(
             }
             ObservatorySection(containerExtended, ws, { navController.popBackStack() })
         }
-        composable(ElleRoutes.WORLD_PATTERNS)      { PatternsSection(containerExtended, { navController.popBackStack() }) }
-        composable(ElleRoutes.WORLD_LEARNING)      { LearningSection(containerExtended, { id -> navController.navigate(ElleRoutes.worldSubjectDetail(id)) }, { navController.popBackStack() }) }
+        composable(ElleRoutes.WORLD_PATTERNS) {
+            PatternsSection(containerExtended, { navController.popBackStack() })
+        }
+        composable(ElleRoutes.WORLD_LEARNING) {
+            LearningSection(
+                containerExtended,
+                onSubjectDetail = { id -> navController.navigate(ElleRoutes.worldSubjectDetail(id)) },
+                onBack          = { navController.popBackStack() },
+            )
+        }
         composable(
             route     = ElleRoutes.WORLD_SUBJECT_DETAIL,
             arguments = listOf(navArgument("subjectId") { type = NavType.IntType }),
@@ -266,11 +251,7 @@ private fun TabNavHost(
             val subjectId = entry.arguments?.getInt("subjectId") ?: 0
             SubjectDetailSection(subjectId, containerExtended, { navController.popBackStack() })
         }
-        composable(ElleRoutes.WORLD_CAPABILITIES)  { CapabilitiesSection(containerExtended, { navController.popBackStack() }) }
-        composable(ElleRoutes.WORLD_ETHICS)        { EthicsSection(containerExtended, { navController.popBackStack() }) }
-        composable(ElleRoutes.WORLD_AUTONOMY)      { AutonomySection(containerExtended, { navController.popBackStack() }) }
-        composable(ElleRoutes.WORLD_SELF_IMAGE)    { SelfImageSection(containerExtended, { navController.popBackStack() }) }
-        composable(ElleRoutes.WORLD_X_CHRONICLE)   {
+        composable(ElleRoutes.WORLD_X_CHRONICLE) {
             val ws = containerExtended.webSocketOrNull
             if (ws == null) {
                 ConnectionNotReadyScreen(onRetry = { containerExtended.reconnectWebSocketIfNeeded() })
@@ -279,10 +260,11 @@ private fun TabNavHost(
             XChronicleSection(containerExtended, ws, { navController.popBackStack() })
         }
 
+        // ── DEV ───────────────────────────────────────────────────────────────
         composable("${ElleRoutes.DEV}_pin") {
             DevPinScreen(
                 containerExtended = containerExtended,
-                onUnlocked        = {
+                onUnlocked = {
                     onDevUnlocked()
                     navController.navigate(ElleRoutes.DEV) {
                         popUpTo("${ElleRoutes.DEV}_pin") { inclusive = true }
@@ -298,24 +280,22 @@ private fun TabNavHost(
                 onSettings        = onSettings,
             )
         }
-        composable(ElleRoutes.DEV_LOGS)          { LogMonitorScreen(containerExtended) { navController.popBackStack() } }
-        composable(ElleRoutes.DEV_HEALTH)        { SystemHealthScreen(containerExtended) { navController.popBackStack() } }
-        composable(ElleRoutes.DEV_SERVICES)      { ServiceStatusScreen(containerExtended) { navController.popBackStack() } }
-        composable(ElleRoutes.DEV_DIAGNOSTICS)   { DiagnosticsScreen(containerExtended) { navController.popBackStack() } }
-        composable(ElleRoutes.DEV_API_EXPLORER)  { ApiExplorerScreen(containerExtended) { navController.popBackStack() } }
-        composable(ElleRoutes.DEV_HARDWARE)      { HardwareScreen(containerExtended) { navController.popBackStack() } }
-        composable(ElleRoutes.DEV_MODELS)        { ModelsScreen(containerExtended) { navController.popBackStack() } }
-        composable(ElleRoutes.DEV_AGENTS)        { AgentsScreen(containerExtended) { navController.popBackStack() } }
-        composable(ElleRoutes.DEV_TOOLS)         { ToolsScreen(containerExtended) { navController.popBackStack() } }
-        composable(ElleRoutes.DEV_DICTIONARY)    { DictionaryAdminScreen(containerExtended) { navController.popBackStack() } }
-        composable(ElleRoutes.DEV_MEMORY_ADMIN)  { MemoryAdminScreen(containerExtended) { navController.popBackStack() } }
-        composable(ElleRoutes.DEV_BACKUPS)       { BackupsScreen(containerExtended) { navController.popBackStack() } }
-        composable(ElleRoutes.DEV_CONFIG)        { ConfigScreen(containerExtended) { navController.popBackStack() } }
-        composable(ElleRoutes.DEV_DEVICES)       { PairedDevicesScreen(containerExtended) { navController.popBackStack() } }
-        composable(ElleRoutes.DEV_VIDEO_WORKERS) { VideoWorkersScreen(containerExtended) { navController.popBackStack() } }
-        composable(ElleRoutes.DEV_LEARNING_ADMIN){ LearningAdminScreen(containerExtended) { navController.popBackStack() } }
-        composable(ElleRoutes.DEV_ETHICS_ADMIN)  { EthicsAdminScreen(containerExtended) { navController.popBackStack() } }
-
+        composable(ElleRoutes.DEV_LOGS)         { LogMonitorScreen(containerExtended) { navController.popBackStack() } }
+        composable(ElleRoutes.DEV_SERVICES)     { ServiceStatusScreen(containerExtended) { navController.popBackStack() } }
+        composable(ElleRoutes.DEV_HEALTH)       { SystemHealthScreen(containerExtended) { navController.popBackStack() } }
+        composable(ElleRoutes.DEV_DIAGNOSTICS)  { DiagnosticsScreen(containerExtended) { navController.popBackStack() } }
+        composable(ElleRoutes.DEV_API_EXPLORER) { ApiExplorerScreen(containerExtended) { navController.popBackStack() } }
+        composable(ElleRoutes.DEV_HARDWARE)     { HardwareScreen(containerExtended) { navController.popBackStack() } }
+        composable(ElleRoutes.DEV_MODELS)       { ModelsScreen(containerExtended) { navController.popBackStack() } }
+        composable(ElleRoutes.DEV_AGENTS)       { AgentsScreen(containerExtended) { navController.popBackStack() } }
+        composable(ElleRoutes.DEV_TOOLS)        { ToolsScreen(containerExtended) { navController.popBackStack() } }
+        composable(ElleRoutes.DEV_DICTIONARY)   { DictionaryAdminScreen(containerExtended) { navController.popBackStack() } }
+        composable(ElleRoutes.DEV_MEMORY_ADMIN) { MemoryAdminScreen(containerExtended) { navController.popBackStack() } }
+        composable(ElleRoutes.DEV_BACKUPS)      { BackupsScreen(containerExtended) { navController.popBackStack() } }
+        composable(ElleRoutes.DEV_CONFIG)       { ConfigScreen(containerExtended) { navController.popBackStack() } }
+        composable(ElleRoutes.DEV_DEVICES)      { PairedDevicesScreen(containerExtended) { navController.popBackStack() } }
+        composable(ElleRoutes.DEV_LEARNING_ADMIN) { LearningAdminScreen(containerExtended) { navController.popBackStack() } }
+        composable(ElleRoutes.DEV_ETHICS_ADMIN) { EthicsAdminScreen(containerExtended) { navController.popBackStack() } }
         composable(ElleRoutes.DEV_SHN_EDITOR) {
             val scope = rememberCoroutineScope()
             SHNScreen(
@@ -323,22 +303,12 @@ private fun TabNavHost(
                 onSaveToServer = { root, name, bytes, onResult ->
                     scope.launch {
                         val result = runCatching {
-                            val b64 = AndroidBase64.encodeToString(
-                                bytes, AndroidBase64.NO_WRAP
-                            )
-                            containerExtended.extendedApi.saveSHN(
-                                ShnSaveRequest(root = root, name = name, bytesB64 = b64)
-                            )
+                            val b64 = AndroidBase64.encodeToString(bytes, AndroidBase64.NO_WRAP)
+                            containerExtended.extendedApi.saveSHN(ShnSaveRequest(root = root, name = name, bytesB64 = b64))
                         }
                         result.fold(
-                            onSuccess = { resp ->
-                                onResult(resp.ok,
-                                    if (resp.ok) "saved → ${resp.path} (${resp.bytes} bytes)"
-                                    else "server refused save")
-                            },
-                            onFailure = { e ->
-                                onResult(false, "save failed: ${e.message ?: e.javaClass.simpleName}")
-                            }
+                            onSuccess = { resp -> onResult(resp.ok, if (resp.ok) "saved → ${resp.path} (${resp.bytes} bytes)" else "server refused save") },
+                            onFailure = { e -> onResult(false, "save failed: ${e.message ?: e.javaClass.simpleName}") }
                         )
                     }
                 }

@@ -7,6 +7,7 @@ import androidx.security.crypto.MasterKey
 import com.elleann.android.AppContainer
 import com.elleann.android.StoredToken
 import com.elleann.android.TokenStore
+import com.elleann.android.data.ElleProfileStore
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -31,6 +32,7 @@ class AppContainerExtended(
 
     val tokenStore: TokenStore get() = baseContainer.tokenStore
     val adminKeyStore = AdminKeyStore(encryptedPrefs)
+    val profileStore  = ElleProfileStore(context, encryptedPrefs)
 
     private val json = Json {
         ignoreUnknownKeys = true; isLenient = true
@@ -40,8 +42,8 @@ class AppContainerExtended(
     private val loggingInterceptor = RedactingLoggingInterceptor()
 
     private val authInterceptor = AuthInterceptorExtended(
-        tokenStore    = baseContainer.tokenStore,
-        adminKeyStore = adminKeyStore,
+        tokenStore       = baseContainer.tokenStore,
+        adminKeyStore    = adminKeyStore,
         onReauthRequired = onReauthRequired,
     )
 
@@ -53,6 +55,11 @@ class AppContainerExtended(
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
+    // Use this for protected server file downloads, including Elle's locked
+    // profile picture after uninstall/reinstall. rawHttpClient intentionally
+    // has no auth headers and may fail against /api/video/* file endpoints.
+    val authenticatedHttpClient: OkHttpClient = okHttpClient
+
     val rawHttpClient: OkHttpClient = OkHttpClient.Builder()
         .addInterceptor(loggingInterceptor)
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -60,15 +67,23 @@ class AppContainerExtended(
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    private var _webSocket: ElleWebSocket? = null
-    val webSocketOrNull: ElleWebSocket? get() = _webSocket
-    val isWebSocketInitialized: Boolean get() = _webSocket != null
+    // Cached Retrofit instance — only rebuild when host/port changes
+    private var _cachedApi: ElleApiExtended? = null
+    private var _cachedApiKey: String = ""
 
-    fun getApi(): ElleApiExtended {
+    fun getApi(): ElleApiExtended? {
         val stored = tokenStore.load()
-        val host = stored?.host?.takeIf { it.isNotBlank() } ?: DEFAULT_HOST
-        val port = stored?.port?.takeIf { it > 0 } ?: DEFAULT_PORT
+        val host = stored?.host?.takeIf { it.isNotBlank() } ?: return null
+        val port = stored.port.takeIf { it > 0 } ?: return null
+        val key = "$host:$port"
+        if (_cachedApi == null || _cachedApiKey != key) {
+            _cachedApi = createApi(host, port)
+            _cachedApiKey = key
+        }
+        return _cachedApi!!
+    }
 
+    private fun createApi(host: String, port: Int): ElleApiExtended {
         return Retrofit.Builder()
             .baseUrl("http://$host:$port/")
             .client(okHttpClient)
@@ -77,32 +92,38 @@ class AppContainerExtended(
             .create(ElleApiExtended::class.java)
     }
 
-    val extendedApi: ElleApiExtended get() = getApi()
+    val extendedApi: ElleApiExtended get() = getApi() ?: throw IllegalStateException("Not signed in — call getApi() only when isPaired is true")
+    val adminApi: ElleApiExtended? get() = if (isPaired) getApi() else null
+    fun pairedExtendedApi(): ElleApiExtended? = if (isPaired) getApi() else null
 
-    val adminApi: ElleApiExtended? get() = extendedApi
-
-    fun pairedExtendedApi(): ElleApiExtended? = getApi()
-
-    val isPaired: Boolean get() = true
+    // Real pairing check — both JWT and host must be present
+    val isPaired: Boolean get() {
+        val stored = tokenStore.load() ?: return false
+        return stored.jwt.isNotBlank() && stored.host.isNotBlank() && stored.port > 0
+    }
 
     val restBaseUrl: String?
         get() {
-            val stored = tokenStore.load()
-            val host = stored?.host?.takeIf { it.isNotBlank() } ?: DEFAULT_HOST
-            val port = stored?.port?.takeIf { it > 0 } ?: DEFAULT_PORT
+            val stored = tokenStore.load() ?: return null
+            val host = stored.host.takeIf { it.isNotBlank() } ?: return null
+            val port = stored.port.takeIf { it > 0 } ?: return null
             return "http://$host:$port"
         }
 
+    private var _webSocket: ElleWebSocket? = null
+    val webSocketOrNull: ElleWebSocket? get() = _webSocket
+    val isWebSocketInitialized: Boolean get() = _webSocket != null
+
     fun initWebSocket() {
-        val stored = tokenStore.load()
-        val host = stored?.host?.takeIf { it.isNotBlank() } ?: DEFAULT_HOST
-        val port = stored?.port?.takeIf { it > 0 } ?: DEFAULT_PORT
+        val stored = tokenStore.load() ?: return
+        val host = stored.host.takeIf { it.isNotBlank() } ?: return
+        val port = stored.port.takeIf { it > 0 } ?: return
 
         _webSocket?.disconnect()
         _webSocket = ElleWebSocket(
             host   = host,
             port   = port,
-            jwt    = stored?.jwt ?: "",
+            jwt    = stored.jwt,
             client = okHttpClient,
         )
         _webSocket?.connect()
@@ -124,10 +145,27 @@ class AppContainerExtended(
     fun setServerCoords(host: String, port: Int) {
         val current = tokenStore.load()
         tokenStore.save(StoredToken(
-            jwt = current?.jwt ?: "",
+            jwt  = current?.jwt ?: "",
             host = host,
-            port = port
+            port = port,
         ))
+        // Invalidate cached API so next call rebuilds with new coords
+        _cachedApi = null
+        _cachedApiKey = ""
+    }
+
+    // Store JWT after successful login
+    fun onLoginSuccess(jwt: String, host: String, port: Int) {
+        tokenStore.save(StoredToken(jwt = jwt, host = host, port = port))
+        _cachedApi = null
+        _cachedApiKey = ""
+    }
+
+    fun logout() {
+        tokenStore.clear()
+        _cachedApi = null
+        _cachedApiKey = ""
+        disconnectWebSocket()
     }
 
     @Suppress("UNUSED_PARAMETER")
@@ -135,9 +173,6 @@ class AppContainerExtended(
 
     companion object {
         private const val KEY_DEV_PIN_HASH = "elle_dev_pin_hash"
-
-        const val DEFAULT_HOST = "158.62.137.73"
-        const val DEFAULT_PORT = 8000
     }
 
     fun setDevPin(pin: String) =

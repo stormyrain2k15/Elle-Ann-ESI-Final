@@ -1,3 +1,38 @@
+## 2026-02 — Android profile-fix overlay applied & verified (#12)
+
+User uploaded `ElleAnn_Android_FINAL_profile_fixed_source.zip`
+(SHA-256 `14892821e93c57c112a3be5957f878edb18b31035d8fe0addafc3092fa0d4a2a`,
+108 entries, 350878 bytes). Applied as **additive overlay** onto
+`Tools/Android/` per user instruction — no orphans deleted.
+
+Overlay result: 4 new Kotlin files (`ElleProfileStore.kt`,
+`SttController.kt`, `LoginScreen.kt`, `WorldGroupedSections.kt`),
+1 new doc, 84 byte-identical no-op overwrites, 19 real content
+changes (largest: `ChatScreen.kt` +225/-60, `DevScreens.kt`
++221/-74, `SettingsScreens.kt` +187/-14, `ElleHomeScreen.kt`
++76/-2). One orphan preserved: `ui/chat/VideoCallScreen.kt`
+(unreachable post-overlay; all symbols it imports still exist
+so it compiles cleanly as dead code).
+
+Verification (all PASS):
+- Brace balance + package declaration across all 44 `.kt` files.
+- No TODO / FIXME / `throw NotImplementedError` markers.
+- VideoCall/voiceCall purged from active source.
+- No hardcoded URLs (`$host:$port` template only).
+- Profile flow contract intact: `fetchFromServer(extendedApi,
+  authenticatedHttpClient, restBaseUrl)`, `isLockedFlow`,
+  `profileStore`, `restBaseUrl`, `extendedApi` all wired;
+  `/api/video/avatars`, `/api/video/avatar`,
+  `/api/video/avatar/upload` retained; `UserAvatar`,
+  `AvatarListResponse`, `UploadAvatarRequest` models retained.
+- New screens hooked into nav (`LoginScreen` in `MainActivity`).
+- Build not attempted in container (no Android SDK / no gradle
+  binary / `gradle-wrapper.jar` intentionally absent from bundle).
+  Run on host: `gradle wrapper --gradle-version 8.9 && ./gradlew :app:assembleDebug`.
+
+Full verification artifact: `Docs/ANDROID_PROFILE_FIX_OVERLAY_VERIFICATION.md`.
+
+
 ## 2026-02 — SHN write rollback (#10) ✅ + Android pair UI residue scrubbed (#11)
 
 ### Audit row 10 — SHN write rollback — CLOSED

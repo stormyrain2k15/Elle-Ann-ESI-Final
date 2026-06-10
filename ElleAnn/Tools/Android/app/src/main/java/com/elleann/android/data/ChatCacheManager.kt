@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import com.elleann.android.data.models.Message
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -20,12 +19,16 @@ class ChatCacheManager(private val context: Context) {
         private const val CACHE_PREFIX = "elle_chat_"
         private const val CACHE_EXT    = ".txt"
 
+        // Maximum messages to cache — last 50 from user and Elle only
+        const val MAX_CACHED_MESSAGES = 50
+
         private val instanceRef = AtomicReference<ChatCacheManager?>(null)
 
         fun installAsGlobal(mgr: ChatCacheManager) {
             instanceRef.set(mgr)
         }
 
+        // Called on app crash — flush everything to disk
         fun crashFlush() {
             instanceRef.get()?.flushAllSync()
         }
@@ -37,6 +40,7 @@ class ChatCacheManager(private val context: Context) {
         encodeDefaults    = true
     }
 
+    // Track which conversations are currently open so we know what to flush
     private val openConversations = ConcurrentHashMap<Long, List<Message>>()
 
     private fun cacheFile(conversationId: Long): File =
@@ -45,10 +49,13 @@ class ChatCacheManager(private val context: Context) {
     private fun pathLockFor(conversationId: Long): Any =
         ("ChatCache_$conversationId").intern()
 
+    // Register a conversation as open — keeps its messages tracked for flush
     fun track(conversationId: Long, messages: List<Message>) {
         openConversations[conversationId] = messages
     }
 
+    // Unregister — called when navigating AWAY (but NOT flushing yet)
+    // Cache is flushed on logout/close, not on navigation
     fun untrack(conversationId: Long) {
         openConversations.remove(conversationId)
     }
@@ -61,7 +68,8 @@ class ChatCacheManager(private val context: Context) {
         if (!file.exists()) return emptyList()
         return runCatching {
             val raw = file.readText()
-            if (raw.isBlank()) emptyList() else json.decodeFromString<List<Message>>(raw)
+            if (raw.isBlank()) emptyList()
+            else json.decodeFromString<List<Message>>(raw)
         }.onFailure { e ->
             Log.w(TAG, "Cache read failed for conv $conversationId: ${e.message}")
             file.delete()
@@ -74,28 +82,36 @@ class ChatCacheManager(private val context: Context) {
     fun writeCacheSync(conversationId: Long, messages: List<Message>) {
         synchronized(pathLockFor(conversationId)) {
             runCatching {
-                val toCache = messages.filter { it.isUser || it.isElle }
+                // Keep only user and Elle messages (roles 1 and 2), last 50
+                val toCache = messages
+                    .filter { it.isUser || it.isElle }
+                    .takeLast(MAX_CACHED_MESSAGES)
+
                 val encoded = json.encodeToString(toCache)
                 val target  = cacheFile(conversationId)
                 val tmp     = File(target.parentFile, target.name + ".tmp")
                 tmp.writeText(encoded)
 
+                // Atomic rename
                 if (!tmp.renameTo(target)) {
-
                     tmp.copyTo(target, overwrite = true)
                     tmp.delete()
                 }
+
+                Log.d(TAG, "Cached ${toCache.size} messages for conv $conversationId")
             }.onFailure { e ->
                 Log.e(TAG, "Cache write failed for conv $conversationId: ${e.message}")
             }
         }
     }
 
-    suspend fun writeAfterMessage(conversationId: Long, currentMessages: List<Message>) {
-        track(conversationId, currentMessages)
-        writeCache(conversationId, currentMessages)
+    // Called when a new message is sent — update tracked state but don't flush to disk yet
+    fun trackMessage(conversationId: Long, messages: List<Message>) {
+        openConversations[conversationId] = messages
     }
 
+    // Flush to disk — called on logout, app close, or crash
+    // NOT called on page navigation
     fun flushAllSync() {
         for ((id, msgs) in openConversations) {
             runCatching { writeCacheSync(id, msgs) }
@@ -108,8 +124,11 @@ class ChatCacheManager(private val context: Context) {
         for ((id, msgs) in snapshot) writeCacheSync(id, msgs)
     }
 
-    fun flushAllBlocking() = runBlocking(Dispatchers.IO) { flushAll() }
+    fun flushAllBlocking() {
+        flushAllSync()
+    }
 
+    // Verify cached messages against server — returns updated list if mismatch
     sealed class VerifyResult {
         data object Match : VerifyResult()
         data class Updated(val messages: List<Message>) : VerifyResult()

@@ -1,5 +1,8 @@
 package com.elleann.android.ui.chat
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,6 +22,9 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModel
@@ -27,6 +33,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.elleann.android.colorcode.*
+import com.elleann.android.colorcode.TtsPlayState
+import com.elleann.android.ui.chat.SttController
+import com.elleann.android.ui.chat.SttState
 import com.elleann.android.data.AppContainerExtended
 import com.elleann.android.data.ChatCacheManager
 import com.elleann.android.data.ElleWebSocket
@@ -51,6 +60,8 @@ data class ChatState(
     val streamingRequestId: String   = "",
     val colorCodeMode: ColorCodeMode = ColorCodeMode.OFF,
     val ttsWordIndex: Int            = -1,
+    val ttsTargetMessageId: Long     = -1L,
+    val pendingText: String          = "", // preserved on failed send
 )
 
 class ChatViewModel(
@@ -64,7 +75,7 @@ class ChatViewModel(
     val state: StateFlow<ChatState> = _state.asStateFlow()
 
     init {
-
+        // Track messages in memory as they change — but DON'T flush to disk here
         viewModelScope.launch {
             _state.collect { st ->
                 cacheManager.track(conversationId, st.messages)
@@ -75,22 +86,22 @@ class ChatViewModel(
     }
 
     override fun onCleared() {
-
-        cacheManager.writeCacheSync(conversationId, _state.value.messages)
+        // Untrack when VM is destroyed — the app-level flush handles disk write
         cacheManager.untrack(conversationId)
         super.onCleared()
     }
 
     private fun loadCacheThenVerify() {
         viewModelScope.launch {
-
+            // Load from disk first — fast, no network
             val cached = cacheManager.loadCache(conversationId)
             if (cached.isNotEmpty()) {
                 _state.update { it.copy(messages = cached, cacheLoaded = true, loading = false) }
             }
 
+            // Then verify against server in background
             val api = container.pairedExtendedApi() ?: run {
-                _state.update { it.copy(loading = false, error = "Not paired") }
+                _state.update { it.copy(loading = false, error = "Not signed in") }
                 return@launch
             }
             when (val result = cacheManager.verifyWithServer(conversationId, cached, api)) {
@@ -103,19 +114,13 @@ class ChatViewModel(
                         serverVerified = true,
                         loading        = false,
                     )}
-                    cacheManager.writeCache(conversationId, result.messages)
+                    // Update tracked state but don't flush — will flush on close
+                    cacheManager.track(conversationId, result.messages)
                 }
                 is ChatCacheManager.VerifyResult.Error -> {
-
                     _state.update { it.copy(serverVerified = false, loading = false) }
                 }
             }
-        }
-    }
-
-    fun flushCache() {
-        viewModelScope.launch {
-            cacheManager.writeCache(conversationId, _state.value.messages)
         }
     }
 
@@ -129,7 +134,6 @@ class ChatViewModel(
                                 streamingResponse = event.response,
                                 sending = false,
                             )}
-
                             refreshMessages()
                         }
                     }
@@ -145,17 +149,18 @@ class ChatViewModel(
                 container.extendedApi.getMessages(conversationId)
             }.onSuccess { r ->
                 _state.update { it.copy(messages = r.messages, streamingResponse = "") }
-                cacheManager.writeCache(conversationId, r.messages)
+                // Keep in-memory state current — flush happens at app close/logout
+                cacheManager.track(conversationId, r.messages)
             }
         }
     }
 
-    fun onInput(text: String) = _state.update { it.copy(inputText = text) }
+    fun onInput(text: String) = _state.update { it.copy(inputText = text, pendingText = "") }
 
     fun send() {
         val text = _state.value.inputText.trim()
         if (text.isBlank() || _state.value.sending) return
-        val requestId = java.util.UUID.randomUUID().toString()
+        val requestId = UUID.randomUUID().toString()
 
         val optimisticMsg = Message(
             messageId      = -System.nanoTime(),
@@ -168,6 +173,7 @@ class ChatViewModel(
 
         _state.update { it.copy(
             inputText          = "",
+            pendingText        = "",
             sending            = true,
             streamingRequestId = requestId,
             streamingResponse  = "",
@@ -175,15 +181,16 @@ class ChatViewModel(
         )}
 
         viewModelScope.launch {
-            cacheManager.writeAfterMessage(conversationId, withOptimistic)
             val sent = webSocket.sendChat(text, requestId, conversationId)
             if (!sent) {
-
+                // Restore input text so user doesn't lose their message
                 _state.update { s ->
                     s.copy(
-                        messages  = s.messages.filterNot { it.messageId < 0 },
-                        sending   = false,
-                        error     = "Message failed to send — WebSocket not connected.",
+                        messages    = s.messages.filterNot { it.messageId < 0 },
+                        sending     = false,
+                        inputText   = text, // put it back
+                        pendingText = text,
+                        error       = "Send failed — WebSocket not connected. Your message is restored.",
                     )
                 }
             }
@@ -196,15 +203,23 @@ class ChatViewModel(
         _state.update { it.copy(colorCodeMode = next) }
     }
 
-    fun toggleTts(text: String, tts: TtsController) {
-        if (_state.value.ttsWordIndex >= 0) {
-            tts.stop(); _state.update { it.copy(ttsWordIndex = -1) }
-        } else {
-            tts.speak(text)
-        }
+    fun playMessage(messageId: Long, text: String, tts: TtsController) {
+        _state.update { it.copy(ttsTargetMessageId = messageId) }
+        tts.speak(text)
+    }
+
+    fun pauseTts(tts: TtsController) {
+        tts.pause()
+    }
+
+    fun stopTts(tts: TtsController) {
+        tts.stop()
+        _state.update { it.copy(ttsTargetMessageId = -1L, ttsWordIndex = -1) }
     }
 
     fun updateTtsWord(idx: Int) = _state.update { it.copy(ttsWordIndex = idx) }
+
+    fun dismissError() = _state.update { it.copy(error = null) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -213,11 +228,24 @@ fun ChatScreen(
     conversationId: Long,
     containerExtended: AppContainerExtended,
     onBack: () -> Unit,
-    onStartVideoCall: (Long) -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val tts = remember { TtsController(context) }
+    val stt = remember { SttController(context) }
+    val sttState by stt.state.collectAsState()
+    val appearancePrefs = remember {
+        context.getSharedPreferences("elle_appearance", Context.MODE_PRIVATE)
+    }
+
+    val bubbleFontSize = remember {
+        appearancePrefs.getInt("bubble_font_size", 14)
+    }
+
+    LaunchedEffect(Unit) {
+        tts.speed = appearancePrefs.getFloat("tts_speed", 1.0f)
+        tts.pitch = appearancePrefs.getFloat("tts_pitch", 1.0f)
+    }
 
     val cacheManager = remember {
         (context.applicationContext as com.elleann.android.ElleApp).chatCacheManager
@@ -232,7 +260,7 @@ fun ChatScreen(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Live connection not ready", color = IsyaMuted, style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(8.dp))
-                Text("Return to Elle home and wait for WebSocket to connect",
+                Text("Return to Elle home and wait for connection",
                     color = IsyaMuted.copy(alpha = 0.6f), style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -250,17 +278,31 @@ fun ChatScreen(
 
     DisposableEffect(lifecycleOwner) {
         val observer = object : DefaultLifecycleObserver {
-            override fun onPause(owner: LifecycleOwner)  { vm.flushCache() }
-            override fun onStop(owner: LifecycleOwner)   { vm.flushCache() }
-            override fun onDestroy(owner: LifecycleOwner) { tts.shutdown() }
+            // DO NOT flush cache on pause/stop — only on explicit close/logout
+            override fun onDestroy(owner: LifecycleOwner) { tts.shutdown(); stt.destroy() }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val state by vm.state.collectAsState()
-    val ttsWord by tts.currentWordIndex.collectAsState()
+    val ttsWord     by tts.currentWordIndex.collectAsState()
+    val ttsPlayState by tts.playState.collectAsState()
     val listState = rememberLazyListState()
+
+    fun beginSpeechInput() {
+        stt.startListening { recognized ->
+            val current = vm.state.value.inputText
+            val appended = if (current.isBlank()) recognized else "$current $recognized"
+            vm.onInput(appended)
+        }
+    }
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) beginSpeechInput()
+    }
 
     LaunchedEffect(ttsWord) { vm.updateTtsWord(ttsWord) }
     LaunchedEffect(state.messages.size, state.streamingResponse) {
@@ -291,12 +333,11 @@ fun ChatScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = { vm.flushCache(); onBack() }) {
+                    IconButton(onClick = { onBack() }) {
                         Icon(Icons.Rounded.ArrowBack, "Back", tint = IsyaMuted)
                     }
                 },
                 actions = {
-
                     IconButton(onClick = { vm.cycleColorCode() }) {
                         Icon(Icons.Rounded.Palette, "ColorCode", tint = when (state.colorCodeMode) {
                             ColorCodeMode.OFF      -> IsyaMuted
@@ -311,12 +352,41 @@ fun ChatScreen(
             )
         },
         bottomBar = {
-            ChatInputBar(
-                text    = state.inputText,
-                onChange = vm::onInput,
-                onSend  = vm::send,
-                sending = state.sending,
-            )
+            Column {
+                state.error?.let { err ->
+                    Surface(color = Color(0xFF2A0D0D), modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(err, color = IsyaError, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                            IconButton(onClick = vm::dismissError, modifier = Modifier.size(24.dp)) {
+                                Icon(Icons.Rounded.Close, "Dismiss", tint = IsyaError, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+                ChatInputBar(
+                    text      = state.inputText,
+                    onChange  = vm::onInput,
+                    onSend    = vm::send,
+                    sending   = state.sending,
+                    sttState  = sttState,
+                    onMic     = {
+                        if (sttState == SttState.LISTENING) {
+                            stt.stopListening()
+                        } else if (ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.RECORD_AUDIO,
+                            ) == PackageManager.PERMISSION_GRANTED
+                        ) {
+                            beginSpeechInput()
+                        } else {
+                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    },
+                )
+            }
         }
     ) { padding ->
         if (state.loading && !state.cacheLoaded) {
@@ -332,10 +402,16 @@ fun ChatScreen(
         ) {
             items(state.messages, key = { it.messageId }) { msg ->
                 MessageBubble(
-                    message       = msg,
-                    colorCodeMode = state.colorCodeMode,
-                    ttsWordIndex  = if (msg.isElle) state.ttsWordIndex else -1,
-                    onTts         = { vm.toggleTts(msg.content, tts) },
+                    message         = msg,
+                    colorCodeMode   = state.colorCodeMode,
+                    ttsWordIndex    = if (msg.isElle && state.ttsTargetMessageId == msg.messageId)
+                                          state.ttsWordIndex else -1,
+                    ttsPlayState    = if (state.ttsTargetMessageId == msg.messageId)
+                                          ttsPlayState else TtsPlayState.IDLE,
+                    bubbleFontSize  = bubbleFontSize,
+                    onPlay          = { vm.playMessage(msg.messageId, msg.content, tts) },
+                    onPause         = { vm.pauseTts(tts) },
+                    onStop          = { vm.stopTts(tts) },
                 )
             }
             if (state.streamingResponse.isNotBlank()) {
@@ -352,12 +428,17 @@ private fun MessageBubble(
     message: Message,
     colorCodeMode: ColorCodeMode,
     ttsWordIndex: Int,
-    onTts: () -> Unit,
+    ttsPlayState: TtsPlayState,
+    bubbleFontSize: Int = 14,
+    onPlay: () -> Unit,
+    onPause: () -> Unit,
+    onStop: () -> Unit,
 ) {
     val isUser = message.isUser
     val timeStr = remember(message.timestampMs) {
         SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(message.timestampMs))
     }
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -367,6 +448,7 @@ private fun MessageBubble(
             modifier = Modifier.widthIn(max = 300.dp),
             horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
         ) {
+            // Message bubble
             Box(
                 modifier = Modifier
                     .background(
@@ -380,20 +462,79 @@ private fun MessageBubble(
                     .padding(horizontal = 14.dp, vertical = 10.dp)
             ) {
                 if (colorCodeMode == ColorCodeMode.OFF || isUser) {
-                    Text(message.content, style = MaterialTheme.typography.bodyMedium, color = IsyaCream)
+                    Text(message.content, style = MaterialTheme.typography.bodyMedium.copy(fontSize = bubbleFontSize.sp), color = IsyaCream)
                 } else {
-                    ColorCodedText(message.content, colorCodeMode, ttsWordIndex)
+                    ColorCodedText(message.content, colorCodeMode, ttsWordIndex, bubbleFontSize)
                 }
             }
-            Row(
+
+            // Timestamp
+            Text(
+                timeStr,
+                style = MaterialTheme.typography.labelSmall,
+                color = IsyaMuted,
                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+            )
+
+            // Action bar — Copy always shown, Play/Pause/Stop on Elle messages only
+            Row(
+                modifier = Modifier.padding(horizontal = 2.dp, vertical = 0.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(0.dp),
             ) {
-                Text(timeStr, style = MaterialTheme.typography.labelSmall, color = IsyaMuted)
+                // Copy — both user and Elle messages
+                IconButton(
+                    onClick = {
+                        clipboardManager.setText(
+                            androidx.compose.ui.text.AnnotatedString(message.content)
+                        )
+                    },
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(Icons.Rounded.ContentCopy, "Copy",
+                        tint = IsyaMuted, modifier = Modifier.size(16.dp))
+                }
+
+                // Play / Pause / Stop — Elle messages only
                 if (!isUser) {
-                    IconButton(onClick = onTts, modifier = Modifier.size(20.dp)) {
-                        Icon(Icons.Rounded.VolumeUp, "Speak", tint = IsyaMuted, modifier = Modifier.size(14.dp))
+                    // Play (or Resume if paused)
+                    IconButton(
+                        onClick  = onPlay,
+                        enabled  = ttsPlayState != TtsPlayState.PLAYING,
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            Icons.Rounded.PlayArrow, "Play",
+                            tint = if (ttsPlayState == TtsPlayState.PLAYING) IsyaMuted
+                                   else IsyaMagic,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    // Pause
+                    IconButton(
+                        onClick  = onPause,
+                        enabled  = ttsPlayState == TtsPlayState.PLAYING,
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            Icons.Rounded.Pause, "Pause",
+                            tint = if (ttsPlayState == TtsPlayState.PLAYING) IsyaGold
+                                   else IsyaMuted,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    // Stop
+                    IconButton(
+                        onClick  = onStop,
+                        enabled  = ttsPlayState != TtsPlayState.IDLE,
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            Icons.Rounded.Stop, "Stop",
+                            tint = if (ttsPlayState != TtsPlayState.IDLE) IsyaError
+                                   else IsyaMuted,
+                            modifier = Modifier.size(16.dp),
+                        )
                     }
                 }
             }
@@ -420,7 +561,7 @@ private fun StreamingBubble(text: String, colorCodeMode: ColorCodeMode) {
 }
 
 @Composable
-private fun ColorCodedText(text: String, mode: ColorCodeMode, ttsWordIndex: Int) {
+private fun ColorCodedText(text: String, mode: ColorCodeMode, ttsWordIndex: Int, fontSize: Int = 14) {
     val tokens = remember(text, mode) { ColorCodeEngine.tokenize(text, mode) }
     var wordIdx = 0
     val annotated = buildAnnotatedString {
@@ -429,7 +570,7 @@ private fun ColorCodedText(text: String, mode: ColorCodeMode, ttsWordIndex: Int)
             else {
                 val i = wordIdx++
                 val color = if (ttsWordIndex == i) IsyaGoldBright else token.color
-                withStyle(SpanStyle(color = color, fontSize = 14.sp)) { append(token.word) }
+                withStyle(SpanStyle(color = color, fontSize = fontSize.sp)) { append(token.word) }
             }
         }
     }
@@ -437,7 +578,14 @@ private fun ColorCodedText(text: String, mode: ColorCodeMode, ttsWordIndex: Int)
 }
 
 @Composable
-private fun ChatInputBar(text: String, onChange: (String) -> Unit, onSend: () -> Unit, sending: Boolean) {
+private fun ChatInputBar(
+    text: String,
+    onChange: (String) -> Unit,
+    onSend: () -> Unit,
+    sending: Boolean,
+    sttState: SttState = SttState.IDLE,
+    onMic: () -> Unit = {},
+) {
     Surface(color = IsyaHeader, tonalElevation = 8.dp) {
         Row(
             modifier = Modifier
@@ -447,6 +595,22 @@ private fun ChatInputBar(text: String, onChange: (String) -> Unit, onSend: () ->
                 .imePadding(),
             verticalAlignment = Alignment.Bottom,
         ) {
+            // Microphone button — standard Android mic icon
+            IconButton(
+                onClick  = onMic,
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(
+                    imageVector = if (sttState == SttState.LISTENING)
+                        Icons.Rounded.MicOff else Icons.Rounded.Mic,
+                    contentDescription = if (sttState == SttState.LISTENING) "Stop" else "Speak",
+                    tint = when (sttState) {
+                        SttState.LISTENING -> IsyaError       // red while recording
+                        SttState.ERROR     -> IsyaWarn
+                        SttState.IDLE      -> IsyaMuted
+                    },
+                )
+            }
             OutlinedTextField(
                 value = text, onValueChange = onChange,
                 placeholder = { Text("Say something to Elle…", color = IsyaMuted, fontSize = 14.sp) },
@@ -455,15 +619,16 @@ private fun ChatInputBar(text: String, onChange: (String) -> Unit, onSend: () ->
                 shape = RoundedCornerShape(20.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedTextColor = IsyaCream, unfocusedTextColor = IsyaCream,
-                    focusedBorderColor = IsyaMagic, unfocusedBorderColor = IsyaMist,
+                    focusedBorderColor = if (sttState == SttState.LISTENING) IsyaError else IsyaMagic,
+                    unfocusedBorderColor = IsyaMist,
                     focusedContainerColor = IsyaDusk, unfocusedContainerColor = IsyaDusk,
                     cursorColor = IsyaMagicBright,
                 ),
             )
             Spacer(Modifier.width(8.dp))
             IconButton(
-                onClick = onSend,
-                enabled = text.isNotBlank() && !sending,
+                onClick  = onSend,
+                enabled  = text.isNotBlank() && !sending,
                 modifier = Modifier
                     .size(48.dp)
                     .background(

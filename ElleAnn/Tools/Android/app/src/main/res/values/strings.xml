@@ -17,10 +17,7 @@
     <string name="colorcode_mode_semantic">ColorCode: Semantic</string>
     <string name="colorcode_mode_cycling">ColorCode: Cycling</string>
     <string name="tts_speak">Speak text</string>
-    <string name="tts_stop">Stop speaking</string>
-    <string name="video_call_start">Start video call</string>
-    <string name="video_call_end">End call</string>
-    <string name="memory_space">Memory Space</string>
+    <string name="tts_stop">Stop speaking</string>    <string name="memory_space">Memory Space</string>
     <string name="memory_3d">3D Memory Space</string>
     <string name="dev_access">Dev Access</string>
     <string name="dev_pin_prompt">Enter Dev PIN</string>
