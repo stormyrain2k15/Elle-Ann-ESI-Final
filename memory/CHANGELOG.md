@@ -1,3 +1,64 @@
+## 2026-02 — Deception audit CSV route + weekly cron (#18)
+
+### `GET /api/admin/deception/audit_csv?section=feedback|signals|speakers|correlation`
+New AUTH_ADMIN route in `HTTPServer_AdminRoutes.cpp` that runs one of
+four canned rollup queries against `ElleCore.dbo.deception_signals` /
+`deception_feedback` and returns RFC 4180-formatted CSV with
+`Content-Type: text/csv` and a `Content-Disposition: attachment`
+header so browsers/curl save it cleanly.
+
+| section | what it returns |
+|---|---|
+| `feedback` (default) | 30-day per-signal_type rollup: occurrences, challenge_rate, denial_rate, deflect_rate, follow_through_rate |
+| `signals` | 30-day per-signal_type rollup: count, avg/min/max score, distinct speakers, distinct subjects |
+| `speakers` | top 25 speakers by signal density: signals_seen, distinct types, avg score, times_challenged |
+| `correlation` | 60-second-window join of signals to feedback: paired_observations, avg_score_when_fired, challenge_rate, challenge_then_denial_rate |
+
+Invalid section names return 400 with an enumeration of the four
+valid values. Queries identical to the four already in
+`Tools/deception_signal_audit.sql` (kept in sync — the SQL file is the
+documentation, the route is the operationalization).
+
+CSV escaping is RFC 4180: fields containing comma, quote, CR, or LF
+are wrapped in quotes; internal quotes doubled.
+
+### `Tools/deception_audit_cron.sh`
+New 102-line bash wrapper that fetches all four CSV sections in
+sequence and writes them to date-stamped files atomically
+(`tmp + mv`). Designed for cron/Task Scheduler. Features:
+
+- Flags: `--url`, `--admin-key`, `--out-dir`; env equivalents
+  `ELLE_HTTP_URL`, `ELLE_ADMIN_KEY`, `ELLE_AUDIT_OUT_DIR`.
+- `--help` block with a paste-ready cron line (`15 3 * * 0`).
+- Bogus arg rejection with exit code 2.
+- HTTP code captured via curl `-w '%{http_code}'`; anything ≠ 200
+  treated as a section failure, partial `.tmp` removed, run continues
+  to the next section.
+- Exit non-zero if **any** section failed (so cron's MAILTO actually
+  alerts on partial failures, not just total ones).
+- Empty-response detection: zero-byte CSVs are rejected even on
+  HTTP 200 (defends against a server quirk dropping the body).
+- Output format: `<out-dir>/<YYYY-MM-DD>_deception_<section>.csv`
+  — date in UTC so cron across timezones still produces consistent
+  filenames.
+- Sends `X-Admin-Key` header only when `ELLE_ADMIN_KEY` is non-empty
+  (so a dev can test the route unauth-locally without the script
+  fighting them).
+
+Verified:
+- `bash -n` clean.
+- Failure path tested with unreachable URL: 4 sections fail with
+  `http=000`, no partial `.tmp` left behind, exit code 1.
+- Per-section success/failure logged with consistent `[deception-audit]`
+  prefix for grep/awk pipelines.
+
+### Verification
+- `Linux/run_all_ctests.sh`: **229/229 cases green**.
+- `HTTPServer_AdminRoutes.cpp` literal-aware brace/paren balance:
+  67/67 braces, 153/153 parens. NUDE clean.
+- Both new files lint-clean.
+
+
 ## 2026-02 — Backlog sweep: feedback sender wired, filtered replay, audit SQL (#17)
 
 Burned down the three remaining actionable items from the prior pass's backlog. The two host-blocked items (Pass-15 doctor, Android lint) remain pending on the user.

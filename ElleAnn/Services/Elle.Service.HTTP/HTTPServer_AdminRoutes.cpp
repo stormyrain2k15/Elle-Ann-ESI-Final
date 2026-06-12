@@ -163,6 +163,116 @@ void ElleHTTPService::RegisterAdminRoutes() {
                 });
             }, AUTH_ADMIN);
 
+        m_router.Register("GET", "/api/admin/deception/audit_csv",
+            [](const HTTPRequest& req) {
+                std::string section = req.QueryString("section", "feedback");
+
+                auto csvEscape = [](const std::string& s) -> std::string {
+                    bool needsQuote = false;
+                    for (char c : s) {
+                        if (c == ',' || c == '"' || c == '\n' || c == '\r') {
+                            needsQuote = true; break;
+                        }
+                    }
+                    if (!needsQuote) return s;
+                    std::string out;
+                    out.reserve(s.size() + 4);
+                    out.push_back('"');
+                    for (char c : s) {
+                        if (c == '"') out.push_back('"');
+                        out.push_back(c);
+                    }
+                    out.push_back('"');
+                    return out;
+                };
+
+                static const char kFeedbackSql[] =
+                    "WITH feedback_30d AS ("
+                    "  SELECT * FROM ElleCore.dbo.deception_feedback "
+                    "  WHERE logged_ms >= (CAST(DATEDIFF(SECOND,'1970-01-01',GETUTCDATE()) AS BIGINT) * 1000) "
+                    "                     - (30LL * 24 * 3600 * 1000)) "
+                    "SELECT ISNULL(signal_type,'(unspecified)') AS signal_type, "
+                    "       COUNT(*) AS occurrences, "
+                    "       CAST(ROUND(AVG(CASE WHEN elle_chose_to_challenge=1 THEN 1.0 ELSE 0.0 END),4) AS DECIMAL(8,4)) AS challenge_rate, "
+                    "       CAST(ROUND(AVG(CASE WHEN user_response_polarity='denies'   THEN 1.0 ELSE 0.0 END),4) AS DECIMAL(8,4)) AS denial_rate, "
+                    "       CAST(ROUND(AVG(CASE WHEN user_response_polarity='deflects' THEN 1.0 ELSE 0.0 END),4) AS DECIMAL(8,4)) AS deflect_rate, "
+                    "       CAST(ROUND(AVG(CASE WHEN user_response_polarity IS NOT NULL AND user_response_polarity<>'' THEN 1.0 ELSE 0.0 END),4) AS DECIMAL(8,4)) AS follow_through_rate "
+                    "FROM feedback_30d GROUP BY signal_type ORDER BY occurrences DESC;";
+
+                static const char kSignalsSql[] =
+                    "SELECT signal_type, COUNT(*) AS occurrences, "
+                    "       CAST(ROUND(AVG(score),4) AS DECIMAL(8,4)) AS avg_score, "
+                    "       CAST(ROUND(MIN(score),4) AS DECIMAL(8,4)) AS min_score, "
+                    "       CAST(ROUND(MAX(score),4) AS DECIMAL(8,4)) AS max_score, "
+                    "       COUNT(DISTINCT speaker) AS distinct_speakers, "
+                    "       COUNT(DISTINCT subject_id) AS distinct_subjects "
+                    "FROM ElleCore.dbo.deception_signals "
+                    "WHERE logged_ms >= (CAST(DATEDIFF(SECOND,'1970-01-01',GETUTCDATE()) AS BIGINT) * 1000) "
+                    "                   - (30LL * 24 * 3600 * 1000) "
+                    "GROUP BY signal_type ORDER BY occurrences DESC;";
+
+                static const char kSpeakersSql[] =
+                    "SELECT TOP 25 s.speaker, COUNT(*) AS signals_seen, "
+                    "       COUNT(DISTINCT s.signal_type) AS distinct_signal_types, "
+                    "       CAST(ROUND(AVG(s.score),4) AS DECIMAL(8,4)) AS avg_signal_score, "
+                    "       SUM(CASE WHEN f.elle_chose_to_challenge=1 THEN 1 ELSE 0 END) AS times_challenged "
+                    "FROM ElleCore.dbo.deception_signals s "
+                    "LEFT JOIN ElleCore.dbo.deception_feedback f "
+                    "       ON f.speaker = s.speaker AND ABS(f.logged_ms - s.logged_ms) < 60000 "
+                    "WHERE s.logged_ms >= (CAST(DATEDIFF(SECOND,'1970-01-01',GETUTCDATE()) AS BIGINT) * 1000) "
+                    "                     - (30LL * 24 * 3600 * 1000) "
+                    "GROUP BY s.speaker ORDER BY signals_seen DESC;";
+
+                static const char kCorrelationSql[] =
+                    "WITH joined AS ("
+                    "  SELECT s.signal_type, s.score, f.elle_chose_to_challenge, f.user_response_polarity "
+                    "  FROM ElleCore.dbo.deception_signals s "
+                    "  INNER JOIN ElleCore.dbo.deception_feedback f "
+                    "          ON f.speaker = s.speaker AND f.signal_type = s.signal_type "
+                    "         AND ABS(f.logged_ms - s.logged_ms) < 60000 "
+                    "  WHERE s.logged_ms >= (CAST(DATEDIFF(SECOND,'1970-01-01',GETUTCDATE()) AS BIGINT) * 1000) "
+                    "                       - (30LL * 24 * 3600 * 1000)) "
+                    "SELECT signal_type, COUNT(*) AS paired_observations, "
+                    "       CAST(ROUND(AVG(score),4) AS DECIMAL(8,4)) AS avg_score_when_fired, "
+                    "       CAST(ROUND(AVG(CASE WHEN elle_chose_to_challenge=1 THEN 1.0 ELSE 0.0 END),4) AS DECIMAL(8,4)) AS challenge_rate, "
+                    "       CAST(ROUND(AVG(CASE WHEN elle_chose_to_challenge=1 AND user_response_polarity='denies' THEN 1.0 ELSE 0.0 END),4) AS DECIMAL(8,4)) AS challenge_then_denial_rate "
+                    "FROM joined GROUP BY signal_type ORDER BY paired_observations DESC;";
+
+                const char* sql = nullptr;
+                if      (section == "feedback")    sql = kFeedbackSql;
+                else if (section == "signals")     sql = kSignalsSql;
+                else if (section == "speakers")    sql = kSpeakersSql;
+                else if (section == "correlation") sql = kCorrelationSql;
+                else return HTTPResponse::Err(400,
+                    "section must be one of: feedback, signals, speakers, correlation");
+
+                auto rs = ElleSQLPool::Instance().Query(sql);
+                if (!rs.success) {
+                    return HTTPResponse::Err(500,
+                        std::string("deception audit query failed: ") + rs.error);
+                }
+
+                std::string csv;
+                csv.reserve(4096);
+                for (size_t i = 0; i < rs.columns.size(); ++i) {
+                    if (i) csv.push_back(',');
+                    csv += csvEscape(rs.columns[i].name);
+                }
+                csv += "\r\n";
+                for (const auto& row : rs.rows) {
+                    for (size_t i = 0; i < row.values.size(); ++i) {
+                        if (i) csv.push_back(',');
+                        csv += csvEscape(row.values[i]);
+                    }
+                    csv += "\r\n";
+                }
+
+                HTTPResponse r = HTTPResponse::Binary("text/csv; charset=utf-8", std::move(csv));
+                r.headers["Content-Disposition"] =
+                    "attachment; filename=\"deception_audit_" + section + ".csv\"";
+                return r;
+            }, AUTH_ADMIN);
+
         m_router.Register("GET", "/api/admin/sqlfallback/console",
             [](const HTTPRequest&) {
                 static const char kHtml[] =
