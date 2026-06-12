@@ -67,7 +67,7 @@ TEST_CASE("MeaningObject JSON renders successfully and is parseable") {
     Engine engine(db, EngineConfig::defaults());
 
     auto r = engine.analyze("I'm fine.");
-    const auto json = meaningObjectToJson(r.meaning, 2);
-    REQUIRE_FALSE(json.empty());
-    CHECK_NOTHROW((void)nlohmann::json::parse(json));
+    const auto js = meaningObjectToJson(r.meaning, 2);
+    REQUIRE_FALSE(js.empty());
+    CHECK_NOTHROW((void)nlohmann::json::parse(js));
 }
