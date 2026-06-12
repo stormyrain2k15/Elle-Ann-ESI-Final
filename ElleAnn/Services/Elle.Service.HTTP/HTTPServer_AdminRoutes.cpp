@@ -122,11 +122,20 @@ void ElleHTTPService::RegisterAdminRoutes() {
                 if (limit <= 0)    limit = 500;
                 if (limit > 5000)  limit = 5000;
 
+                std::string kind = req.QueryString("kind", "");
+                if (!kind.empty() && kind != "Exec" && kind != "CallProc" && kind != "QueryParams") {
+                    return HTTPResponse::Err(400,
+                        "kind must be one of Exec, CallProc, QueryParams (or omitted for all)");
+                }
+
                 auto& fb = ElleSQLFallback::Instance();
-                uint32_t inserted = fb.LoadPoisonIntoSql((uint32_t)limit);
+                uint32_t inserted = kind.empty()
+                    ? fb.LoadPoisonIntoSql((uint32_t)limit)
+                    : fb.LoadPoisonIntoSqlFiltered(kind, (uint32_t)limit);
 
                 return HTTPResponse::OK({
                     {"inserted",        inserted},
+                    {"kind_filter",     kind},
                     {"total_files",     fb.PoisonFileCount()},
                     {"total_bytes",     fb.PoisonBytes()}
                 });
@@ -206,7 +215,15 @@ void ElleHTTPService::RegisterAdminRoutes() {
 "<h2>Poison ledger</h2>\n"
 "<div class=\"panel\">\n"
 "  <button hx-get=\"/api/admin/sqlfallback/poison?limit=100\" hx-target=\"#poison-panel\" hx-swap=\"innerHTML\">Show last 100 poison lines</button>\n"
-"  <button class=\"danger\" hx-post=\"/api/admin/sqlfallback/poison/load?limit=500\" hx-target=\"#load-result\" hx-swap=\"innerHTML\" hx-confirm=\"Replay up to 500 poisoned lines back into SQL. Continue?\">Bulk replay (limit 500)</button>\n"
+"  <label style=\"margin-left:1rem;color:#88c0d0;font-size:.85rem;\">Kind:\n"
+"    <select id=\"kind-filter\" style=\"background:#252b36;color:#eceff4;border:1px solid #3b4252;border-radius:4px;padding:.4rem;margin-left:.4rem;\">\n"
+"      <option value=\"\">All</option>\n"
+"      <option value=\"Exec\">Exec</option>\n"
+"      <option value=\"CallProc\">CallProc</option>\n"
+"      <option value=\"QueryParams\">QueryParams</option>\n"
+"    </select>\n"
+"  </label>\n"
+"  <button class=\"danger\" hx-post=\"/api/admin/sqlfallback/poison/load?limit=500\" hx-target=\"#load-result\" hx-swap=\"innerHTML\" hx-vals=\"js:{kind: document.getElementById('kind-filter').value}\" hx-confirm=\"Replay up to 500 poisoned lines (filtered by selected kind) back into SQL. Continue?\">Replay (limit 500)</button>\n"
 "  <div id=\"load-result\"></div>\n"
 "  <div id=\"poison-panel\" style=\"margin-top: 1rem;\"></div>\n"
 "</div>\n"
@@ -252,7 +269,8 @@ void ElleHTTPService::RegisterAdminRoutes() {
 "    if (target.id === 'load-result') {\n"
 "      try {\n"
 "        const j = JSON.parse(e.detail.xhr.responseText);\n"
-"        target.innerHTML = `<div class=\"result ok\">Inserted ${j.inserted} line(s) from poison ledger back into SQL. ${j.total_files} file(s) remaining (${fmtBytes(j.total_bytes)}).</div>`;\n"
+"        const filter = j.kind_filter ? ` (filtered to kind=${j.kind_filter})` : '';\n"
+"        target.innerHTML = `<div class=\"result ok\">Inserted ${j.inserted} line(s)${filter} from poison ledger back into SQL. ${j.total_files} file(s) remaining (${fmtBytes(j.total_bytes)}).</div>`;\n"
 "      } catch (err) { target.innerHTML = '<div class=\"result err\">'+err.message+'</div>'; }\n"
 "    }\n"
 "  });\n"

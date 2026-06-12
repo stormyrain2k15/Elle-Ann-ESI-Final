@@ -57,6 +57,9 @@ public:
 
     uint32_t LoadPoisonIntoSql(uint32_t maxLines = 500);
 
+    uint32_t LoadPoisonIntoSqlFiltered(const std::string& kindFilter,
+                                        uint32_t maxLines = 500);
+
     void SetMaxRetries(uint32_t n) { m_maxRetries.store(n, std::memory_order_release); }
     uint32_t MaxRetries() const { return m_maxRetries.load(std::memory_order_acquire); }
 

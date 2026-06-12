@@ -1064,6 +1064,68 @@ protected:
         return ss.str();
     }
 
+    static bool ResponseChallengedClaim(const std::string& responseText) {
+        if (responseText.empty()) return false;
+        std::string lower = ToLower(responseText);
+        static const char* kChallengeMarkers[] = {
+            "are you sure", "are you certain", "i thought you",
+            "didn't you", "didn\u2019t you", "didnt you",
+            "wait,", "hmm,", "that doesn't match", "that doesn\u2019t match",
+            "i remember it", "last time you said", "earlier you said",
+            "but you said", "doesn't line up", "doesn\u2019t line up",
+            "is that right", "is that what happened", "i'm not sure that",
+            "i\u2019m not sure that", "im not sure that"
+        };
+        for (const auto* m : kChallengeMarkers) {
+            if (lower.find(m) != std::string::npos) return true;
+        }
+        return false;
+    }
+
+    void EmitDeceptionFeedback(const nlohmann::json& decep,
+                                const std::string& speaker,
+                                const std::string& responseText) {
+        if (decep.is_null() || decep.empty()) return;
+        if (!decep.contains("signals") || !decep["signals"].is_array()
+            || decep["signals"].empty()) return;
+
+        std::string requestId = decep.value("request_id", std::string());
+        if (requestId.empty()) return;
+
+        std::string primarySignal;
+        float bestScore = -1.0f;
+        for (const auto& sig : decep["signals"]) {
+            float s = sig.value("score", 0.0f);
+            if (s > bestScore) {
+                bestScore = s;
+                primarySignal = sig.value("type", std::string());
+            }
+        }
+
+        bool challenged = ResponseChallengedClaim(responseText);
+        int32_t subjectId = 0;
+        if (decep.contains("subject_id") && decep["subject_id"].is_number_integer()) {
+            subjectId = decep.value("subject_id", 0);
+        }
+
+        nlohmann::json fb;
+        fb["request_id"]               = requestId;
+        fb["speaker"]                  = speaker.empty() ? std::string("default") : speaker;
+        fb["subject_id"]               = subjectId;
+        fb["signal_type"]              = primarySignal;
+        fb["elle_chose_to_challenge"]  = challenged;
+        fb["user_response_polarity"]   = std::string();
+        fb["detail"]                   = challenged
+            ? std::string("Composer response contains challenge phrasing.")
+            : std::string("Composer response did not challenge; credibility was downweighted silently.");
+
+        auto out = ElleIPCMessage::Create(IPC_DECEPTION_FEEDBACK, SVC_COGNITIVE, SVC_DECEPTION);
+        out.SetStringPayload(fb.dump());
+        if (!GetIPCHub().Send(SVC_DECEPTION, out)) {
+            ELLE_DEBUG("IPC_DECEPTION_FEEDBACK send failed (rid=%s) — non-fatal", requestId.c_str());
+        }
+    }
+
     void SendIntuitionFeedback(const nlohmann::json& intu, bool wasCorrect) {
         if (intu.is_null() || intu.empty()) return;
         std::string recAct = intu.value("recommended_act", std::string());
@@ -1965,6 +2027,8 @@ private:
             SendChatError(reply_to, requestId, "composer_timeout_or_failure");
             return;
         }
+
+        EmitDeceptionFeedback(decepResult, userId, responseText);
 
         try { ElleDB::StoreMessage(convId, 2 , responseText, m_cachedEmotions, 0.0f); }
         catch (const std::exception& e) {

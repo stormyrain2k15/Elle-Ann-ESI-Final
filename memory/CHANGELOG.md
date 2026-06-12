@@ -1,3 +1,50 @@
+## 2026-02 — Backlog sweep: feedback sender wired, filtered replay, audit SQL (#17)
+
+Burned down the three remaining actionable items from the prior pass's backlog. The two host-blocked items (Pass-15 doctor, Android lint) remain pending on the user.
+
+### (P2) Cognitive-side `IPC_DECEPTION_FEEDBACK` sender — first-shot wired
+Added `ResponseChallengedClaim()` (lexical detector: 17 challenge phrases incl. typographic variants) and `EmitDeceptionFeedback()` to `CognitiveEngine.cpp`. Called once at line 2031 — immediately after composer returns and before `StoreMessage`. Fires only when the deception result actually contains signals; picks the highest-scoring signal as the `primary signal_type`; sends fire-and-forget; non-fatal on IPC failure.
+
+Second-shot wiring (next-turn user polarity classification with same `request_id`) deferred — needs Cognitive's per-conversation correlation state and a polarity classifier hook, both larger surface changes. Documented in `Docs/DECEPTION_EXTENSIONS.md` for next pass.
+
+Companion fix in `Deception.cpp`: `IPC_DECEPTION_RESULT` payload now includes `subject_id` (was missing; the feedback emitter now has full attribution context).
+
+### (P3) Per-line replay filtering — `kind=` support
+- `ElleSQLFallback.{h,cpp}`: new public `LoadPoisonIntoSqlFiltered(kindFilter, maxLines)`. Original `LoadPoisonIntoSql` now delegates to it with an empty filter, so all callers are backward-compatible. Filter is one line in the loop: `if (!kindFilter.empty() && r.kind != kindFilter) continue;`
+- `POST /api/admin/sqlfallback/poison/load` extended with optional `kind=Exec|CallProc|QueryParams` query param. Validates the value, returns 400 on invalid kind. Response payload gained `kind_filter` field so the UI can show what was filtered.
+- HTMX console: added a `<select>` dropdown next to the replay button with `All|Exec|CallProc|QueryParams`. Used `hx-vals="js:{kind: …}"` to pass the live value at click-time. Result strip now annotates with the filter that was applied.
+
+### (Friendly suggestion) `Tools/deception_signal_audit.sql`
+92-line standalone analysis script ready to drop into `sqlcmd`. Four queries:
+1. `deception_signals` 30-day rollup by signal_type (count, avg/min/max score, distinct speakers/subjects).
+2. `deception_feedback` 30-day rollup: per signal_type, computes `challenge_rate`, `denial_rate`, `deflect_rate`, `follow_through_rate` — the exact metrics needed to retune `CredibilityTuning` constants empirically.
+3. Per-speaker signal density (top 25): how many signals a given speaker triggers, distinct types, avg score, times Elle challenged them.
+4. Signal→challenge correlation via 60-second-window join between `deception_signals` and `deception_feedback`: paired_observations, avg_score_when_fired, challenge_rate, challenge_then_denial_rate.
+
+Run via:
+```
+sqlcmd -S <dsn> -d ElleCore -i ElleAnn/Tools/deception_signal_audit.sql
+```
+
+Once `deception_feedback` accumulates a few hundred rows, query #4 is the empirical input for replacing seat-of-the-pants defaults like `CredibilityTuning::PROFILE_INCONSISTENCY_PENALTY = -0.35`.
+
+### Verification
+- Linux ctest harness: **229/229 cases green** (no regressions).
+- Literal-aware brace/paren balance on all 5 modified files:
+  - `CognitiveEngine.cpp` 432/432, 1510/1510
+  - `Deception.cpp` 148/148, 383/383
+  - `ElleSQLFallback.cpp` 112/112, 540/540
+  - `ElleSQLFallback.h` 20/20, 39/39
+  - `HTTPServer_AdminRoutes.cpp` 58/58, 114/114
+- NUDE: zero comments across all modified C++.
+- `Tools/deception_signal_audit.sql` lints clean.
+
+### Remaining backlog
+- **(P1, user host)** `Tools/pass15_host_doctor.sh` to flip Anti-Slop rows 8/15 ✅. **Blocked: Windows host.**
+- **(P1, user host)** `Tools/Android/` Kotlin `./gradlew lintDebug`. **Blocked: Android SDK.**
+- **(P2)** Second-shot of `IPC_DECEPTION_FEEDBACK` (next-turn user polarity correlated to same `request_id`). Needs per-conversation request-id retention + polarity classifier hook.
+
+
 ## 2026-02 — P-task sweep: CI consolidation + prometheus textfile + SHN versions route + deception extensions + SQL fallback console (#16)
 
 Big batch executing the priority/backlog list from the prior finish.

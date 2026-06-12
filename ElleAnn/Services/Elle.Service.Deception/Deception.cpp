@@ -759,6 +759,7 @@ protected:
 
                     json reply = {
                         { "request_id",           requestId },
+                        { "subject_id",           subjectId },
                         { "overall_concern",      deception.overallConcern },
                         { "classification",       VeracityClassName(veracity.classification) },
                         { "baseline_credibility", deception.baselineCredibility },

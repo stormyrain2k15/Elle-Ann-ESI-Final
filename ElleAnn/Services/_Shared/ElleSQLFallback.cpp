@@ -637,9 +637,14 @@ ElleSQLFallback::ListPoison(uint32_t maxLines) const {
 }
 
 uint32_t ElleSQLFallback::LoadPoisonIntoSql(uint32_t maxLines) {
+    return LoadPoisonIntoSqlFiltered(std::string(), maxLines);
+}
+
+uint32_t ElleSQLFallback::LoadPoisonIntoSqlFiltered(const std::string& kindFilter,
+                                                     uint32_t maxLines) {
     SQLResultSet probe = ElleSQLPool::Instance().Query("SELECT 1");
     if (!probe.success) {
-        ELLE_ERROR("ElleSQLFallback::LoadPoisonIntoSql: SQL unreachable, aborting");
+        ELLE_ERROR("ElleSQLFallback::LoadPoisonIntoSqlFiltered: SQL unreachable, aborting");
         return 0;
     }
 
@@ -651,6 +656,7 @@ uint32_t ElleSQLFallback::LoadPoisonIntoSql(uint32_t maxLines) {
 
     uint32_t inserted = 0;
     for (const auto& r : rows) {
+        if (!kindFilter.empty() && r.kind != kindFilter) continue;
         std::vector<std::string> params = {
             std::to_string(loaded_ms),
             r.source_file,
@@ -670,7 +676,7 @@ uint32_t ElleSQLFallback::LoadPoisonIntoSql(uint32_t maxLines) {
                 ++inserted;
             }
         } else {
-            ELLE_ERROR("ElleSQLFallback::LoadPoisonIntoSql: row insert failed — %s",
+            ELLE_ERROR("ElleSQLFallback::LoadPoisonIntoSqlFiltered: row insert failed — %s",
                        rs.error.c_str());
         }
     }
