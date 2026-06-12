@@ -266,4 +266,35 @@ void ElleHTTPService::RegisterSHNRoutes() {
             });
         }, AUTH_ADMIN);
 
+        m_router.Register("GET", "/api/admin/shn/versions",
+            [shnResolveRoot, shnValidateName](const HTTPRequest& req) {
+            std::string root = req.QueryString("root", "Hero");
+            std::string name = req.QueryString("name", "");
+            std::string err;
+            if (!shnValidateName(name, err))
+                return HTTPResponse::Err(400, err);
+            std::string absDir;
+            if (!shnResolveRoot(root, absDir, err))
+                return HTTPResponse::Err(400, err);
+
+            auto versions = ElleShnVersionStore::ListVersions(absDir, name);
+
+            json arr = json::array();
+            for (const auto& v : versions) {
+                arr.push_back({
+                    {"filename", v.filename},
+                    {"path",     v.path},
+                    {"ms",       (uint64_t)v.ms},
+                    {"bytes",    (uint64_t)v.bytes}
+                });
+            }
+            return HTTPResponse::OK({
+                {"root",     root},
+                {"name",     name},
+                {"abs_dir",  absDir},
+                {"count",    (int)arr.size()},
+                {"versions", arr}
+            });
+        }, AUTH_ADMIN);
+
     }

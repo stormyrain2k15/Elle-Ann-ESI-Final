@@ -1,6 +1,78 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PROM_TEXTFILE=""
+
+while (( "$#" )); do
+    case "$1" in
+        --prometheus-textfile)
+            if [[ $# -lt 2 ]]; then
+                echo "[ipc-chain] --prometheus-textfile requires a path argument" >&2
+                exit 2
+            fi
+            PROM_TEXTFILE="$2"
+            shift 2
+            ;;
+        --prometheus-textfile=*)
+            PROM_TEXTFILE="${1#*=}"
+            shift
+            ;;
+        -h|--help)
+            cat <<'EOF'
+ipc_chain_smoke.sh — cross-service IPC chain smoke (audit D34)
+
+Usage: ipc_chain_smoke.sh [--prometheus-textfile PATH]
+
+Options:
+  --prometheus-textfile PATH   On script exit, atomically write a
+                               Prometheus textfile-collector compatible
+                               file with:
+                                 elle_ipc_chain_smoke{status="pass|fail"} 1
+                                 elle_ipc_chain_smoke_last_run_unixtime <epoch>
+                               Atomic via PATH.tmp + mv.
+
+Environment:
+  ELLE_HTTP_URL    full base URL, default http://127.0.0.1:8000
+  ELLE_SQL_DSN     DSN for sqlcmd to query ElleSystem heartbeats
+  ELLE_ADMIN_KEY   optional admin key for AUTH_ADMIN routes
+  ELLE_CHAT_USER   optional user_id to send (default 'default')
+EOF
+            exit 0
+            ;;
+        *)
+            echo "[ipc-chain] unknown argument: $1" >&2
+            echo "[ipc-chain] see --help" >&2
+            exit 2
+            ;;
+    esac
+done
+
+emit_prometheus_textfile() {
+    local exit_code="$1"
+    local status="fail"
+    if [[ "${exit_code}" == "0" ]]; then
+        status="pass"
+    fi
+    local tmp="${PROM_TEXTFILE}.tmp"
+    {
+        echo "# HELP elle_ipc_chain_smoke 1 if the IPC chain smoke last passed, labelled status=pass|fail."
+        echo "# TYPE elle_ipc_chain_smoke gauge"
+        echo "elle_ipc_chain_smoke{status=\"${status}\"} 1"
+        echo "# HELP elle_ipc_chain_smoke_last_run_unixtime Epoch seconds of the last smoke run."
+        echo "# TYPE elle_ipc_chain_smoke_last_run_unixtime gauge"
+        echo "elle_ipc_chain_smoke_last_run_unixtime $(date +%s)"
+    } > "${tmp}"
+    mv -f "${tmp}" "${PROM_TEXTFILE}"
+}
+
+on_exit() {
+    local code=$?
+    if [[ -n "${PROM_TEXTFILE}" ]]; then
+        emit_prometheus_textfile "${code}" || true
+    fi
+}
+trap on_exit EXIT
+
 # Cross-service IPC chain smoke (audit D34).
 #
 # Exercises the canonical chat pipeline end-to-end:

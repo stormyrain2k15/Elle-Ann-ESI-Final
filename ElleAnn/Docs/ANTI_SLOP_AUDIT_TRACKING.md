@@ -1078,8 +1078,8 @@ Tags: ✅ FIXED · 🟡 IN-PROGRESS · ⏸ DEFERRED · 🟣 NEEDS-DESIGN ·
 
 1. ⏸ **MSVC verification** of the HTTP god-file split (Phase A + B + C) + SQL Fallback Phase 2/3. Follow `Docs/HTTP_GOD_FILE_MSVC_VERIFICATION.md`. Flip Anti-Slop matrix rows 8/15 to ✅.
 2. ⏸ **Apply `SQL/_Shared/01_sql_fallback_poison.sql`** to `ElleCore` before exercising the SQL-fallback reaper.
-3. ⏸ **Run `Tools/ipc_chain_smoke.sh`** on the live mesh — fast end-to-end gate.
-4. ⏸ **Wire `GET /api/admin/shn/versions/{name}`** to the new `ElleShnVersionStore::ListVersions` (cheap follow-up — schema is in place, just needs the route).
+3. ⏸ **Run `Tools/ipc_chain_smoke.sh`** on the live mesh — fast end-to-end gate. Now supports `--prometheus-textfile PATH` for textfile-collector ingestion.
+4. ✅ **Wired `GET /api/admin/shn/versions`** to `ElleShnVersionStore::ListVersions` (pass-16, `HTTPServer_SHNRoutes.cpp`).
 5. ⏸ **`Tools/Android/` Kotlin lint pass** (e.g. `./gradlew lintDebug`) to catch any latent unused-import warnings from the pair-UI scrub. Cannot run in Linux container without Android SDK.
 
 Every item above keeps its tag in this file. When something moves from

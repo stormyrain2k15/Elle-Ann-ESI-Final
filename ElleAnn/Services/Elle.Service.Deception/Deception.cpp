@@ -35,6 +35,13 @@ static void EnsureDeceptionSchema() {
         ");");
 
     pool.Execute(
+        "IF NOT EXISTS (SELECT 1 FROM sys.columns "
+        "  WHERE object_id = OBJECT_ID('ElleCore.dbo.speaker_statements') "
+        "  AND name = 'stated_for_ms') "
+        "ALTER TABLE ElleCore.dbo.speaker_statements "
+        "ADD stated_for_ms BIGINT NULL;");
+
+    pool.Execute(
         "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
         "  JOIN sys.schemas s ON s.schema_id = t.schema_id "
         "  WHERE t.name = 'veracity_log' AND s.name = 'dbo') "
@@ -75,6 +82,22 @@ static void EnsureDeceptionSchema() {
         "  reinforcement_count INT NOT NULL DEFAULT 1,"
         "  first_noted_ms      BIGINT NOT NULL DEFAULT 0,"
         "  last_reinforced_ms  BIGINT NOT NULL DEFAULT 0"
+        ");");
+
+    pool.Execute(
+        "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
+        "  JOIN sys.schemas s ON s.schema_id = t.schema_id "
+        "  WHERE t.name = 'deception_feedback' AND s.name = 'dbo') "
+        "CREATE TABLE ElleCore.dbo.deception_feedback ("
+        "  id                       BIGINT IDENTITY(1,1) PRIMARY KEY,"
+        "  request_id               NVARCHAR(128) NOT NULL,"
+        "  speaker                  NVARCHAR(128) NOT NULL,"
+        "  subject_id               INT NOT NULL,"
+        "  signal_type              NVARCHAR(64) NULL,"
+        "  elle_chose_to_challenge  BIT NOT NULL DEFAULT 0,"
+        "  user_response_polarity   NVARCHAR(16) NULL,"
+        "  detail                   NVARCHAR(MAX) NULL,"
+        "  logged_ms                BIGINT NOT NULL DEFAULT 0"
         ");");
 
     ELLE_INFO("Deception: schema delta applied");
@@ -413,7 +436,8 @@ public:
     DeceptionSignal CheckSelfConsistency(const std::string& speaker,
                                           int32_t subjectId,
                                           const std::string& newPolarity,
-                                          const std::string& statementText) {
+                                          const std::string& statementText,
+                                          int64_t statedForMs) {
         DeceptionSignal signal;
         signal.type  = "self_contradiction";
         signal.score = 0.0f;
@@ -439,12 +463,72 @@ public:
             }
         }
 
-        ElleSQLPool::Instance().QueryParams(
-            "INSERT INTO ElleCore.dbo.speaker_statements "
-            "(speaker, subject_id, polarity, statement_text, acknowledged_change, stated_ms) "
-            "VALUES (?, ?, ?, ?, 0, ?);",
-            { speaker, std::to_string(subjectId), newPolarity, statementText,
-              std::to_string((int64_t)ELLE_MS_NOW()) });
+        if (statedForMs > 0) {
+            ElleSQLPool::Instance().QueryParams(
+                "INSERT INTO ElleCore.dbo.speaker_statements "
+                "(speaker, subject_id, polarity, statement_text, acknowledged_change, stated_ms, stated_for_ms) "
+                "VALUES (?, ?, ?, ?, 0, ?, ?);",
+                { speaker, std::to_string(subjectId), newPolarity, statementText,
+                  std::to_string((int64_t)ELLE_MS_NOW()),
+                  std::to_string(statedForMs) });
+        } else {
+            ElleSQLPool::Instance().QueryParams(
+                "INSERT INTO ElleCore.dbo.speaker_statements "
+                "(speaker, subject_id, polarity, statement_text, acknowledged_change, stated_ms) "
+                "VALUES (?, ?, ?, ?, 0, ?);",
+                { speaker, std::to_string(subjectId), newPolarity, statementText,
+                  std::to_string((int64_t)ELLE_MS_NOW()) });
+        }
+
+        return signal;
+    }
+
+    DeceptionSignal CheckTemporalConsistency(const std::string& speaker,
+                                              int32_t subjectId,
+                                              const std::string& newPolarity,
+                                              int64_t statedForMs) {
+        DeceptionSignal signal;
+        signal.type  = "temporal_inconsistency";
+        signal.score = 0.0f;
+
+        if (subjectId <= 0 || statedForMs <= 0) return signal;
+
+        auto rs = ElleSQLPool::Instance().QueryParams(
+            "SELECT TOP 1 polarity, stated_for_ms, acknowledged_change "
+            "FROM ElleCore.dbo.speaker_statements "
+            "WHERE speaker = ? AND subject_id = ? AND stated_for_ms IS NOT NULL "
+            "  AND stated_for_ms <> ? "
+            "ORDER BY stated_ms DESC;",
+            { speaker, std::to_string(subjectId), std::to_string(statedForMs) });
+
+        if (rs.success && !rs.rows.empty()) {
+            std::string priorPolarity = rs.rows[0].values.size() > 0 ? rs.rows[0].values[0] : "";
+            int64_t priorStatedFor    = rs.rows[0].GetIntOr(1, 0);
+            int64_t acknowledged      = rs.rows[0].GetIntOr(2, 0);
+
+            if (acknowledged != 0 || priorPolarity.empty() || priorStatedFor <= 0) {
+                return signal;
+            }
+
+            const int64_t MIN_GAP_MS = 60LL * 1000LL;
+            int64_t gapMs = std::abs(statedForMs - priorStatedFor);
+            if (gapMs < MIN_GAP_MS) return signal;
+
+            if (priorPolarity != newPolarity) {
+                signal.score  = 0.65f;
+                signal.detail = "Speaker anchors this claim to a different time than they previously did "
+                                "for the same subject (now=" + std::to_string(statedForMs) +
+                                "ms, prior=" + std::to_string(priorStatedFor) +
+                                "ms) AND flips polarity (was " + priorPolarity +
+                                ", now " + newPolarity + ") — possible post-hoc revision.";
+            } else {
+                signal.score  = 0.25f;
+                signal.detail = "Speaker re-anchors a prior claim about the same subject to a "
+                                "different time (now=" + std::to_string(statedForMs) +
+                                "ms, prior=" + std::to_string(priorStatedFor) +
+                                "ms) with same polarity — soft signal, may be legitimate clarification.";
+            }
+        }
 
         return signal;
     }
@@ -477,13 +561,17 @@ public:
                                       const std::string& polarity,
                                       const VeracityResult& veracity,
                                       float externalDeceptionProb,
+                                      int64_t statedForMs,
                                       ProfileEngine& profileEngine) {
         DeceptionResult result;
         result.baselineCredibility = GetBaselineCredibility(veracity.classification);
         result.adjustedCredibility = result.baselineCredibility;
 
-        auto selfSignal = CheckSelfConsistency(speaker, subjectId, polarity, statementText);
+        auto temporalSignal = CheckTemporalConsistency(speaker, subjectId, polarity, statedForMs);
+
+        auto selfSignal = CheckSelfConsistency(speaker, subjectId, polarity, statementText, statedForMs);
         if (selfSignal.score > 0.0f) result.signals.push_back(selfSignal);
+        if (temporalSignal.score > 0.0f) result.signals.push_back(temporalSignal);
 
         auto factSignal = CheckFactualContradiction(veracity, polarity);
         if (factSignal.score > 0.0f) result.signals.push_back(factSignal);
@@ -570,6 +658,10 @@ protected:
                 "DELETE FROM ElleCore.dbo.deception_signals "
                 "WHERE logged_ms < (CAST(DATEDIFF(SECOND,'1970-01-01',GETUTCDATE()) AS BIGINT) * 1000) "
                 "    - (30LL * 24 * 3600 * 1000);");
+            ElleSQLPool::Instance().Execute(
+                "DELETE FROM ElleCore.dbo.deception_feedback "
+                "WHERE logged_ms < (CAST(DATEDIFF(SECOND,'1970-01-01',GETUTCDATE()) AS BIGINT) * 1000) "
+                "    - (30LL * 24 * 3600 * 1000);");
             ELLE_DEBUG("Deception: logs pruned");
         }
     }
@@ -633,6 +725,7 @@ protected:
                     std::string statement    = j.value("statement_text", std::string(""));
                     std::string polarity     = j.value("polarity", std::string("affirms"));
                     float externalProb       = (float)j.value("external_deception_prob", -1.0);
+                    int64_t statedForMs      = (int64_t)j.value("stated_for_ms", 0);
                     std::string requestId    = j.value("request_id", std::string(""));
 
                     if (speaker.empty() || subjectId < 0) {
@@ -643,7 +736,7 @@ protected:
                     auto veracity = m_veracity.Classify(subjectId, subjectName, subjectConfidence);
                     auto deception = m_deception.AnalyzeStatement(
                         speaker, aboutPerson, subjectId, subjectName, statement, polarity,
-                        veracity, externalProb, m_profile);
+                        veracity, externalProb, statedForMs, m_profile);
 
                     json signalsJson = json::array();
                     for (auto& sig : deception.signals) {
@@ -754,6 +847,45 @@ protected:
 
                 } catch (const std::exception& e) {
                     ELLE_ERROR("Deception: IPC_PROFILE_QUERY parse error: %s", e.what());
+                }
+                break;
+            }
+
+            case IPC_DECEPTION_FEEDBACK: {
+                try {
+                    std::string raw;
+                    if (!msg.GetStringPayload(raw) || raw.empty()) {
+                        ELLE_WARN("Deception: IPC_DECEPTION_FEEDBACK — empty payload");
+                        break;
+                    }
+                    auto j = json::parse(raw);
+                    std::string requestId   = j.value("request_id", std::string(""));
+                    std::string speaker     = j.value("speaker", std::string(""));
+                    int32_t subjectId       = j.value("subject_id", 0);
+                    std::string signalType  = j.value("signal_type", std::string(""));
+                    bool challenged         = j.value("elle_chose_to_challenge", false);
+                    std::string userResp    = j.value("user_response_polarity", std::string(""));
+                    std::string detail      = j.value("detail", std::string(""));
+
+                    if (requestId.empty() || speaker.empty()) {
+                        ELLE_WARN("Deception: IPC_DECEPTION_FEEDBACK — missing request_id or speaker");
+                        break;
+                    }
+
+                    ElleSQLPool::Instance().QueryParams(
+                        "INSERT INTO ElleCore.dbo.deception_feedback "
+                        "(request_id, speaker, subject_id, signal_type, "
+                        " elle_chose_to_challenge, user_response_polarity, detail, logged_ms) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+                        { requestId, speaker, std::to_string(subjectId), signalType,
+                          std::to_string(challenged ? 1 : 0), userResp, detail,
+                          std::to_string((int64_t)ELLE_MS_NOW()) });
+
+                    ELLE_DEBUG("Deception: feedback recorded request_id=%s challenge=%d user_resp=%s",
+                               requestId.c_str(), challenged ? 1 : 0, userResp.c_str());
+
+                } catch (const std::exception& e) {
+                    ELLE_ERROR("Deception: IPC_DECEPTION_FEEDBACK parse error: %s", e.what());
                 }
                 break;
             }

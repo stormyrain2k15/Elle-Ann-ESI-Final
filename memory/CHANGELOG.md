@@ -1,3 +1,121 @@
+## 2026-02 — P-task sweep: CI consolidation + prometheus textfile + SHN versions route + deception extensions + SQL fallback console (#16)
+
+Big batch executing the priority/backlog list from the prior finish.
+
+### CI workflow consolidation
+`.github/workflows/ctest-smoke.yml`: collapsed five duplicate
+per-service jobs (`intuition`, `probability`, `composer`, `language`,
+`shared`) plus the vestigial `all-green-gate` into a single
+`ctest-harnesses` job that calls `Linux/setup_dev_env.sh` then
+`Linux/run_all_ctests.sh`. Workflow trimmed `241 → 158 lines` (83
+lines removed). CI and local now run literally the same scripts in
+the same order, so "passes on my container" and "passes in CI" are
+no longer two different things to debug.
+
+### `ipc_chain_smoke.sh` — `--prometheus-textfile` flag
+Added arg-parsing block + `trap on_exit EXIT` that atomically writes
+a Prometheus textfile-collector compatible file at the requested
+path (`tmp + mv` for atomicity). Emits two metrics:
+- `elle_ipc_chain_smoke{status="pass|fail"} 1`
+- `elle_ipc_chain_smoke_last_run_unixtime <epoch>`
+Verified end-to-end: textfile correctly emits `status="fail"` on
+mesh-unreachable, exit code propagates, no leakage of partial files.
+Also added a `--help` block and unknown-arg rejection.
+
+### `GET /api/admin/shn/versions` route — Anti-Slop #4 ✅
+Wired in `HTTPServer_SHNRoutes.cpp`: validates `root` + `name`, calls
+`ElleShnVersionStore::ListVersions(absDir, name)`, returns
+`{root, name, abs_dir, count, versions[{filename, path, ms, bytes}]}`
+under `AUTH_ADMIN`. Anti-Slop matrix updated: row 4 now ✅.
+
+### Deception — `temporal_inconsistency` signal (P2)
+Schema delta: `speaker_statements.stated_for_ms BIGINT NULL` added via
+idempotent `ALTER … ADD … IF NOT EXISTS`. Distinct from the existing
+`stated_ms`:
+- `stated_ms`: when the speaker uttered the statement (server clock)
+- `stated_for_ms`: when the speaker claims the event occurred (claim clock)
+
+New `DeceptionEngine::CheckTemporalConsistency()` detector:
+- Polarity flip + time shift (≥ 60s gap) → score **0.65** ("post-hoc
+  revision")
+- Same polarity + time shift → score **0.25** (soft re-anchoring,
+  likely legitimate clarification)
+- Skips if either id or time is zero, if prior was marked
+  `acknowledged_change`, or if the gap is sub-minute jitter.
+
+`AnalyzeStatement()` signature gained `int64_t statedForMs` parameter,
+threaded through the IPC handler (new optional `stated_for_ms` field
+on `IPC_DECEPTION_CHECK`). Detector fires through the existing
+`result.signals` path, persists via the existing `deception_signals`
+audit table, factors into `overallConcern` via the same max rule.
+
+### Deception — `IPC_DECEPTION_FEEDBACK` opcode (suggestion)
+New opcode declared in `ElleTypes.h` (one line, NUDE-clean).
+
+New `deception_feedback` table tracks what Elle *did* with a deception
+read, not just what she saw:
+```
+{ id, request_id, speaker, subject_id, signal_type,
+  elle_chose_to_challenge BIT, user_response_polarity NVARCHAR(16),
+  detail NVARCHAR(MAX), logged_ms BIGINT }
+```
+
+New IPC handler — fire-and-forget, no response opcode. Validates
+`request_id` and `speaker`, inserts the row. Same 30-day retention as
+`deception_signals` (added to the existing tick-60 pruner).
+
+Cognitive-side wiring intentionally **not done in this pass** — the
+service receiver is ready, the docs spell out the recommended
+two-shot integration pattern (capture immediately after Composer
+emits, then again on next user turn with classified polarity), and
+the natural call sites are flagged.
+
+### SQL Fallback admin console (P5)
+Three new admin routes:
+- `GET /api/admin/sqlfallback/status` — exposes the previously-hidden
+  `PoisonLoadStatus` counters + enabled flag, pending/poison
+  file/byte totals, retry knob, last error
+- `GET /api/admin/sqlfallback/console` — single-route HTMX page,
+  zero build step, pulls from existing JSON endpoints
+- (no schema or service-layer changes — purely view layer)
+
+Console features:
+- 14-metric status grid with color-coded severity (green/amber/red),
+  auto-refreshes every 5s via `hx-trigger="load, every 5s, click"`
+- On-demand poison ledger viewer (last 100 lines, kind-pill tagged)
+- Bulk replay button gated by `hx-confirm`, renders result strip
+- HTMX pulled from unpkg with pinned SRI (`@1.9.12`)
+- Dark theme, monospace for data, ~150 lines of inline CSS+JS
+
+### Docs
+- New: `Docs/DECEPTION_EXTENSIONS.md` — full design of the temporal
+  signal and the feedback loop, schema + IPC contracts + Cognitive
+  integration pattern + a sample analysis query.
+- New: `Docs/SQL_FALLBACK_CONSOLE.md` — design notes for why HTMX vs.
+  a SPA, security considerations, future extension points.
+- Updated: `Docs/ANTI_SLOP_AUDIT_TRACKING.md` — row 4 flipped ⏸ → ✅,
+  row 3 annotated with the new `--prometheus-textfile` flag.
+
+### Verification
+- All edited files compile-clean: brace/paren balanced across
+  `Deception.cpp` (909L, b=147/147 p=459/459), `HTTPServer_AdminRoutes.cpp`
+  (b=110/110), `HTTPServer_SHNRoutes.cpp` (b=80/80), `ElleTypes.h`.
+- `ipc_chain_smoke.sh` passes `bash -n`.
+- `.github/workflows/ctest-smoke.yml` passes `yaml.safe_load`.
+- NUDE policy clean across all touched C++ (0 comments anywhere).
+- `Linux/run_all_ctests.sh`: **229/229 cases green**.
+
+### What's NEXT in the priority list (unchanged from prior pass)
+- (P1, user host) Run `Tools/pass15_host_doctor.sh` to mark Anti-Slop
+  rows 8/15 ✅.
+- (P1, user host) `Tools/Android/` Kotlin `./gradlew lintDebug` — needs
+  Android SDK, not available in this Linux container.
+- (P2) Cognitive-side integration of `IPC_DECEPTION_FEEDBACK` (two-shot
+  pattern documented).
+- (P3) Per-line replay targeting in `ElleSQLFallback::LoadPoisonIntoSql`
+  + form fields in the HTMX console.
+
+
 ## 2026-02 — Cognitive → Deception bridge wired (#15)
 
 User uploaded `deception_bridge.zip` (SHA-256
