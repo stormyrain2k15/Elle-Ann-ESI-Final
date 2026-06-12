@@ -6,5 +6,5 @@ CXX_DEFINES = -DDOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 
 CXX_INCLUDES = -I/app/ElleAnn/Services/_Shared/tests/build/_deps/doctest-src
 
-CXX_FLAGS = -std=gnu++11 -Wall -Wextra -Wpedantic
+CXX_FLAGS = -g -std=gnu++11 -Wall -Wextra -Wpedantic
 

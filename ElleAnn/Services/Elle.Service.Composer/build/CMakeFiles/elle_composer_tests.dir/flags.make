@@ -6,5 +6,5 @@ CXX_DEFINES =
 
 CXX_INCLUDES = -I/app/ElleAnn/Services/Elle.Service.Composer -I/app/ElleAnn/Services/Elle.Service.Composer/build/_deps/doctest-src
 
-CXX_FLAGS = -std=c++17 -Wall -Wextra -Wpedantic -Wshadow
+CXX_FLAGS = -g -std=c++17 -Wall -Wextra -Wpedantic -Wshadow
 

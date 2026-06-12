@@ -6,5 +6,5 @@ CXX_DEFINES = -DDOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 
 CXX_INCLUDES = -I/app/ElleAnn/Services/Elle.Service.Composer/build/_deps/doctest-src
 
-CXX_FLAGS = -std=c++11 -Wall -Wextra -Wpedantic -Wshadow
+CXX_FLAGS = -g -std=c++11 -Wall -Wextra -Wpedantic -Wshadow
 

@@ -1,3 +1,33 @@
+## 2026-02 — Language test rename + Linux/ dev folder (#14)
+
+`Services/Elle.Service.Language/tests/test_debug_trace.cpp` had a local
+`const auto json = ...` shadowing the `nlohmann::json` type inside a
+`CHECK_NOTHROW` macro, breaking the doctest binary compile. Renamed the
+local to `js` (3 references). Underlying root cause that was masked by
+the macro-shadow noise: the container also needed `unixodbc-dev` for
+`<sql.h>` to compile services that include the ODBC connection header.
+
+Created `ElleAnn/Linux/` as the explicit home for Linux dev/test
+scaffolding — flagged in the folder's README as **NOT part of the
+Elle-Ann system, NOT shipped, NOT runtime**. Contains:
+
+- `Linux/README.md` — purpose statement and what does/doesn't belong.
+- `Linux/setup_dev_env.sh` — idempotent root-only apt installer for
+  `cmake`, `build-essential`, `unixodbc-dev`, `shellcheck`, `git`,
+  `curl`. Mirrors what CI installs.
+- `Linux/run_all_ctests.sh` — configures, builds, and runs all five
+  Linux ctest harnesses (`Intuition`, `Probability`, `Composer`,
+  `Language`, `_Shared`) with the right per-harness flags
+  (Language gets `-DELLE_WITH_ODBC=OFF` and runs the doctest binary
+  directly, per CI).
+
+Verification: smoke-ran `Linux/run_all_ctests.sh` on the container —
+**229/229 cases green** (39 + 85 + 17 + 48 + 40). Both shell scripts
+pass `bash -n`. `shellcheck` not installed in this E1 container yet
+(that's what `setup_dev_env.sh` adds), but the scripts are clean
+patterns: `set -euo pipefail`, quoted variables, `nproc` arg expansion.
+
+
 ## 2026-02 — Elle.Service.Deception integrated (#13)
 
 User uploaded `deception_service_v2.zip` (SHA-256
