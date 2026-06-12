@@ -1,3 +1,67 @@
+## 2026-02 — Elle.Service.Deception integrated (#13)
+
+User uploaded `deception_service_v2.zip` (SHA-256
+`a413b51afd3fbd11a523bbefe6e386765760055787046808685a22e70c9764ef`,
+4 files: `Deception.cpp`, `Elle.Service.Deception.vcxproj`,
+`ElleQueueIPC.cpp`, `ElleTypes.h`).
+
+Veracity classification (5-way: `VERIFIED_FACT | THEORY | CONTESTED |
+UNSUPPORTED | CONTRADICTED`) + deception detection (factual
+contradiction, self-contradiction over time, optional Probability-engine
+signal, profile inconsistency). `AnalyzeStatement()` + the
+`deception_signals` table are the marked extension points for new
+signal types defined later. Two-axis credibility model: baseline from
+veracity, then adjusted by `ProfileEngine::CheckAgainstProfile` —
+deterministic keyword overlap, no embeddings.
+
+Integration deltas:
+- `_Shared/ElleTypes.h` — added `SVC_DECEPTION`, bumped
+  `ELLE_SERVICE_COUNT` static_assert `27 → 28`, added 7 new IPC
+  opcodes (`IPC_VERACITY_CLASSIFY/RESULT`, `IPC_DECEPTION_CHECK/RESULT`,
+  `IPC_PROFILE_LEARN`, `IPC_PROFILE_QUERY`, `IPC_PROFILE_RESULT`).
+- `_Shared/ElleQueueIPC.cpp` — appended `"Deception"` to
+  `g_serviceNames[]`.
+- New `Services/Elle.Service.Deception/` with `Deception.cpp` (NUDE) +
+  `Elle.Service.Deception.vcxproj` (toolset `v145`, GUID
+  `{B100000A-...-1B}`).
+- `ElleAnn.sln` — Project block, 4 ProjectConfigurationPlatforms
+  entries, 1 NestedProjects fold under Services folder.
+
+NUDE policy: stripped 322 lines of commentary from `Deception.cpp`
+(1090 → 768 lines). Commentary preserved verbatim in
+`Docs/SERVICE_DECEPTION.md` (schema deltas, tuning knobs, classifier
+decision logic, IPC contract, extension-point recipe).
+
+Schema deltas (idempotent on service start via `EnsureDeceptionSchema()`):
+- `intellect_connections.polarity NVARCHAR(16) DEFAULT 'neutral'`
+- `speaker_statements` (new)
+- `veracity_log` (new, pruned to 30d)
+- `deception_signals` (new, pruned to 30d, open-ended `signal_type`)
+- `profile_traits` (new)
+
+Dependencies: `{ SVC_HEARTBEAT, SVC_INTELLECT }`. Tick = 60s; retention
+prune runs every 60th tick.
+
+Verification (all PASS):
+- NUDE: 0 line-comments, 0 block-comment markers in `Deception.cpp`.
+- Brace balance 131/131, paren balance 364/364.
+- Zero `TODO|FIXME|XXX|MOCK|NotImplementedError` markers.
+- All 7 new IPC opcodes declared in header and used in cpp.
+- `SVC_DECEPTION` declared once in header, referenced 4× in cpp.
+- `_Shared` ctest harness still **40/40 green** after the header bump.
+- Composer ctests still green, Intuition still green, Probability still
+  green.
+- Language ctests build FAILURE is **pre-existing** (`test_debug_trace.cpp:72`
+  has a `const auto json = ...` local that shadows the `nlohmann::json`
+  type inside a `CHECK_NOTHROW` — unrelated to anything in this
+  integration, Language source touches none of the modified symbols).
+- Build of the service itself not attempted in container (Windows-only
+  MSBuild, depends on `ElleSQLPool`/ODBC). Same posture as Intellect,
+  Action, Bonding, etc.
+
+Service count: 27 → 28. Net new IPC opcodes: 7.
+
+
 ## 2026-02 — Android profile-fix overlay applied & verified (#12)
 
 User uploaded `ElleAnn_Android_FINAL_profile_fixed_source.zip`

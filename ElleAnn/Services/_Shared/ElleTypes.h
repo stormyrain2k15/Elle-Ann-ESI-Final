@@ -336,12 +336,13 @@ typedef enum ELLE_SERVICE_ID {
     SVC_COMPOSER,
     SVC_INTUITION,
     SVC_INTELLECT,
+    SVC_DECEPTION,
     ELLE_SERVICE_COUNT
 } ELLE_SERVICE_ID;
 
 #ifdef __cplusplus
 
-static_assert((int)ELLE_SERVICE_COUNT == 27,
+static_assert((int)ELLE_SERVICE_COUNT == 28,
               "ELLE_SERVICE_COUNT changed — update g_serviceNames[], "
               "Heartbeat service state arrays, and GetPipeName() switch "
               "in lockstep before bumping this assert.");
@@ -449,7 +450,17 @@ typedef enum ELLE_IPC_MSG_TYPE {
 
     IPC_INTELLECT_LEARN,
     IPC_INTELLECT_QUERY,
-    IPC_INTELLECT_RESULT
+    IPC_INTELLECT_RESULT,
+
+    IPC_VERACITY_CLASSIFY,
+    IPC_VERACITY_RESULT,
+
+    IPC_DECEPTION_CHECK,
+    IPC_DECEPTION_RESULT,
+
+    IPC_PROFILE_LEARN,
+    IPC_PROFILE_QUERY,
+    IPC_PROFILE_RESULT
 } ELLE_IPC_MSG_TYPE;
 
 #define ELLE_IPC_FLAG_URGENT      0x0001
