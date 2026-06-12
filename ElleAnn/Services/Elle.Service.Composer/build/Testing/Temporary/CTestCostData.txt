@@ -1,18 +1,18 @@
-Chain: probability act + frame library + slot parse all wire deterministically 1 0.00231775
-Chain: recently-used frame is downranked vs equally-weighted fresh frame 1 0.00182871
-Chain: question act routes to question-kind frame, not statement 1 0.00221844
-Chain: wildcard-act frame matches any act for its kind 1 0.00183443
-Chain: no matching frame yields null pick 1 0.00179229
-ParseSlotSpecs returns empty vector for templates without slots 1 0.0021347
-ParseSlotSpecs extracts name and posTag from a simple slot 1 0.0023386
-ParseSlotSpecs marks optional slots with trailing ? 1 0.00216582
-ParseSlotSpecs ignores malformed slot syntax 1 0.00217736
-ParseSlotSpecs is deterministic across repeated calls 1 0.00268506
-ParseSlotSpecs preserves left-to-right slot order 1 0.00238016
-ScoreFrameByRecency returns base weight when frame never used 1 0.0019152
-ScoreFrameByRecency penalises freshly-used frames more than stale ones 1 0.0018712
-ScoreFrameByRecency converges to base weight as elapsed time grows 1 0.00179168
-ScoreFrameByRecency at exactly one half-life applies expected penalty 1 0.0018887
-ScoreFrameByRecency is deterministic 1 0.00179388
-ScoreFrameByRecency: heavier baseWeight beats lighter even after penalty 1 0.00180633
+Chain: probability act + frame library + slot parse all wire deterministically 1 0.00225975
+Chain: recently-used frame is downranked vs equally-weighted fresh frame 1 0.00185701
+Chain: question act routes to question-kind frame, not statement 1 0.00226344
+Chain: wildcard-act frame matches any act for its kind 1 0.00184961
+Chain: no matching frame yields null pick 1 0.00209513
+ParseSlotSpecs returns empty vector for templates without slots 1 0.00229971
+ParseSlotSpecs extracts name and posTag from a simple slot 1 0.00213507
+ParseSlotSpecs marks optional slots with trailing ? 1 0.00222727
+ParseSlotSpecs ignores malformed slot syntax 1 0.0082118
+ParseSlotSpecs is deterministic across repeated calls 1 0.0143263
+ParseSlotSpecs preserves left-to-right slot order 1 0.0176058
+ScoreFrameByRecency returns base weight when frame never used 1 0.00788245
+ScoreFrameByRecency penalises freshly-used frames more than stale ones 1 0.019062
+ScoreFrameByRecency converges to base weight as elapsed time grows 1 0.00749809
+ScoreFrameByRecency at exactly one half-life applies expected penalty 1 0.00254989
+ScoreFrameByRecency is deterministic 1 0.00195241
+ScoreFrameByRecency: heavier baseWeight beats lighter even after penalty 1 0.00182715
 ---

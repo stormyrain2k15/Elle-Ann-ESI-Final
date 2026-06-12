@@ -18,6 +18,7 @@
 #include <functional>
 #include <mutex>
 #include <condition_variable>
+#include <optional>
 #include <deque>
 #include <regex>
 #include <algorithm>
@@ -227,7 +228,6 @@ IntentParser::ParseResult IntentParser::ParseWithLLM(const std::string& text,
         result.urgency = 0.85f;
     }
 
-
     result.type       = INTENT_CHAT;
     result.confidence = 0.58f;
     result.urgency    = 0.4f;
@@ -398,6 +398,45 @@ public:
 private:
     std::mutex m_mutex;
     std::unordered_map<std::string, std::shared_ptr<PendingIntu>> m_map;
+};
+
+struct PendingDecep {
+    std::mutex               m;
+    std::condition_variable  cv;
+    bool                     done = false;
+    nlohmann::json           result;
+};
+
+class DecepCorrelator {
+public:
+    std::shared_ptr<PendingDecep> Register(const std::string& requestId) {
+        auto p = std::make_shared<PendingDecep>();
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m_map[requestId] = p;
+        return p;
+    }
+    void Release(const std::string& requestId) {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m_map.erase(requestId);
+    }
+    void Deliver(const std::string& requestId, nlohmann::json result) {
+        std::shared_ptr<PendingDecep> p;
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            auto it = m_map.find(requestId);
+            if (it == m_map.end()) return;
+            p = it->second;
+        }
+        {
+            std::lock_guard<std::mutex> lk(p->m);
+            p->result = std::move(result);
+            p->done = true;
+        }
+        p->cv.notify_one();
+    }
+private:
+    std::mutex m_mutex;
+    std::unordered_map<std::string, std::shared_ptr<PendingDecep>> m_map;
 };
 
 class ElleCognitiveService : public ElleServiceBase {
@@ -899,6 +938,132 @@ protected:
         return ss.str();
     }
 
+    static std::optional<std::string> DerivePolarityFromAct(const std::string& likelyAct) {
+        if (likelyAct == "ASSERT" || likelyAct == "CONFIRM") return std::string("affirms");
+        if (likelyAct == "DENY")                             return std::string("denies");
+        return std::nullopt;
+    }
+
+    struct ClaimSubject {
+        int32_t     id         = 0;
+        float       confidence = 0.5f;
+        std::string name;
+    };
+
+    ClaimSubject FindSubjectForClaim(const std::string& userText) {
+        ClaimSubject out;
+        if (userText.empty()) return out;
+
+        std::string lowText = ToLower(userText);
+
+        std::vector<ElleDB::LearnedSubject> subjects;
+        if (!ElleDB::ListSubjects(subjects, std::string(), 256)) return out;
+
+        for (const auto& sub : subjects) {
+            std::string lowName = ToLower(sub.subject);
+            if (lowName.empty()) continue;
+            if (lowText.find(lowName) == std::string::npos) continue;
+
+            out.id   = sub.id;
+            out.name = sub.subject;
+
+            out.confidence = 0.5f;
+            return out;
+        }
+        return out;
+    }
+
+    nlohmann::json RequestDeceptionCheck(const std::string& userText,
+                                          const std::string& speakerId,
+                                          const std::string& likelyAct) {
+        auto polarity = DerivePolarityFromAct(likelyAct);
+        if (!polarity.has_value()) return nlohmann::json::object();
+
+        std::string speaker = speakerId.empty() ? std::string("default") : speakerId;
+        ClaimSubject subj = FindSubjectForClaim(userText);
+
+        char rid[64];
+        snprintf(rid, sizeof(rid), "decep-%llu-%u",
+                 (unsigned long long)ELLE_MS_NOW(),
+                 (unsigned)(size_t)std::hash<std::thread::id>{}(std::this_thread::get_id()));
+
+        nlohmann::json req;
+        req["request_id"]          = rid;
+        req["speaker"]              = speaker;
+        req["about_person"]         = speaker;
+        req["subject_id"]           = subj.id;
+        req["subject_name"]         = subj.name;
+        req["subject_confidence"]   = subj.confidence;
+        req["statement_text"]       = userText;
+        req["polarity"]             = *polarity;
+        req["external_deception_prob"] = -1.0f;
+
+        uint32_t timeoutMs = (uint32_t)ElleConfig::Instance().GetInt(
+            "cognitive.deception_timeout_ms", 150);
+
+        auto pending = m_decepCorrelator.Register(rid);
+        auto out = ElleIPCMessage::Create(IPC_DECEPTION_CHECK, SVC_COGNITIVE, SVC_DECEPTION);
+        out.SetStringPayload(req.dump());
+        if (!GetIPCHub().Send(SVC_DECEPTION, out)) {
+            m_decepCorrelator.Release(rid);
+            ELLE_DEBUG("IPC_DECEPTION_CHECK send failed — proceeding without veracity read");
+            return nlohmann::json::object();
+        }
+
+        std::unique_lock<std::mutex> lk(pending->m);
+        bool got = pending->cv.wait_for(lk, std::chrono::milliseconds(timeoutMs),
+                                         [&]{ return pending->done; });
+        nlohmann::json result = got ? std::move(pending->result)
+                                    : nlohmann::json::object();
+        lk.unlock();
+        m_decepCorrelator.Release(rid);
+
+        if (!got) {
+            ELLE_DEBUG("IPC_DECEPTION_CHECK timed out after %ums", timeoutMs);
+            return nlohmann::json::object();
+        }
+        return result;
+    }
+
+    std::string FormatDeceptionContext(const nlohmann::json& decep) {
+        if (decep.is_null() || decep.empty()) return std::string();
+
+        std::string classification = decep.value("classification", std::string("UNSUPPORTED"));
+        float adjustedCred = decep.value("adjusted_credibility", 0.5f);
+        float baselineCred = decep.value("baseline_credibility", 0.5f);
+
+        bool lowCredibility = adjustedCred < 0.35f;
+        bool hasSignals = decep.contains("signals") && decep["signals"].is_array()
+                           && !decep["signals"].empty();
+
+        if (!lowCredibility && !hasSignals) return std::string();
+
+        std::ostringstream ss;
+        ss << "Veracity read on what was just said:\n";
+        ss << "  • Classification: " << classification << "\n";
+        ss << "  • Credibility: " << std::fixed << std::setprecision(2) << adjustedCred;
+        if (std::abs(adjustedCred - baselineCred) > 0.01f) {
+            ss << " (baseline " << baselineCred << ", adjusted by what's known about the speaker)";
+        }
+        ss << "\n";
+
+        if (hasSignals) {
+            for (auto& sig : decep["signals"]) {
+                std::string type = sig.value("type", std::string("?"));
+                std::string detail = sig.value("detail", std::string());
+                ss << "  • " << type;
+                if (!detail.empty()) ss << ": " << detail;
+                ss << "\n";
+            }
+        }
+
+        ss << "  This doesn't mean accuse or call it out — it means hold this "
+              "claim a little more loosely than something you know to be true. "
+              "Believe it the way the credibility number suggests, not fully "
+              "and not as a dismissal.\n\n";
+        return ss.str();
+    }
+
     void SendIntuitionFeedback(const nlohmann::json& intu, bool wasCorrect) {
         if (intu.is_null() || intu.empty()) return;
         std::string recAct = intu.value("recommended_act", std::string());
@@ -1004,8 +1169,6 @@ protected:
                 break;
             }
             case IPC_LLM_REQUEST: {
-
-
 
                 ELLE_WARN("IPC_LLM_REQUEST received from service %d — "
                           "this path is removed. Use IPC_COMPOSE_REQUEST "
@@ -1125,6 +1288,17 @@ protected:
                 }
                 break;
             }
+
+            case IPC_DECEPTION_RESULT: {
+                try {
+                    auto j = nlohmann::json::parse(msg.GetStringPayload());
+                    std::string rid = j.value("request_id", "");
+                    if (!rid.empty()) m_decepCorrelator.Deliver(rid, std::move(j));
+                } catch (const std::exception& e) {
+                    ELLE_DEBUG("IPC_DECEPTION_RESULT malformed JSON: %s", e.what());
+                }
+                break;
+            }
             case IPC_CHAT_REQUEST: {
 
                 uint32_t maxQueue = (uint32_t)ElleConfig::Instance().GetInt(
@@ -1162,7 +1336,7 @@ protected:
 
     std::vector<ELLE_SERVICE_ID> GetDependencies() override {
         return { SVC_HEARTBEAT, SVC_EMOTIONAL, SVC_MEMORY, SVC_ACTION,
-                 SVC_PROBABILITY, SVC_MIND_MANAGER, SVC_INTUITION };
+                 SVC_PROBABILITY, SVC_MIND_MANAGER, SVC_INTUITION, SVC_DECEPTION };
     }
 
 private:
@@ -1172,6 +1346,7 @@ private:
     ProbCorrelator  m_probCorrelator;
     MindCorrelator  m_mindCorrelator;
     IntuCorrelator  m_intuCorrelator;
+    DecepCorrelator m_decepCorrelator;
 
     struct ChatItem {
         std::string      payload;
@@ -1441,6 +1616,9 @@ private:
         std::string intuCtx = FormatIntuitionContext(intuResult);
         std::string knowCtx = FetchLearnedKnowledgeContext(userText);
 
+        nlohmann::json decepResult = RequestDeceptionCheck(userText, userId, detectedIntent);
+        std::string decepCtx = FormatDeceptionContext(decepResult);
+
         MaybeFireIntellectLearn(userText, userId);
 
         std::vector<ELLE_MEMORY_RECORD> memories =
@@ -1575,10 +1753,11 @@ private:
             if (!worldCtx.empty()) ctx << worldCtx;
         }
 
-        if (!probCtx.empty()) ctx << probCtx;
-        if (!mindCtx.empty()) ctx << mindCtx;
-        if (!intuCtx.empty()) ctx << intuCtx;
-        if (!knowCtx.empty()) ctx << knowCtx;
+        if (!probCtx.empty())  ctx << probCtx;
+        if (!mindCtx.empty())  ctx << mindCtx;
+        if (!intuCtx.empty())  ctx << intuCtx;
+        if (!decepCtx.empty()) ctx << decepCtx;
+        if (!knowCtx.empty())  ctx << knowCtx;
 
         {
             char buf[384];
@@ -1722,10 +1901,6 @@ private:
 
         ctx << "\n";
 
-
-
-
-
         json historyJ = json::array();
         for (auto& h : history) {
             historyJ.push_back({
@@ -1739,7 +1914,6 @@ private:
             {"arousal",   m_cachedEmotions.arousal},
             {"dominance", m_cachedEmotions.dominance}
         };
-
 
         json composeEnvelope = {
             {"request_id",   requestId},
@@ -1758,7 +1932,6 @@ private:
                                            & 0xFFFFFFFF;
         composeMsg.SetStringPayload(composeEnvelope.dump());
         GetIPCHub().Send(SVC_COMPOSER, composeMsg);
-
 
         std::string responseText;
         bool composeOk = false;

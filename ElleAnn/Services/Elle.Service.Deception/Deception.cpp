@@ -148,6 +148,13 @@ public:
         result.supportingStrength = 0.0f;
         result.contradictingStrength = 0.0f;
 
+        if (subjectId <= 0) {
+            result.classification = VeracityClass::UNSUPPORTED;
+            result.reasoning = "no fact-graph entry — claim not previously learned, "
+                                "nothing to cross-reference";
+            return result;
+        }
+
         auto rs = ElleSQLPool::Instance().QueryParams(
             "SELECT c.polarity, c.strength, "
             "       CASE WHEN c.subject_id_a = ? THEN c.subject_id_b ELSE c.subject_id_a END AS other_id, "
@@ -411,6 +418,8 @@ public:
         signal.type  = "self_contradiction";
         signal.score = 0.0f;
 
+        if (subjectId <= 0) return signal;
+
         auto rs = ElleSQLPool::Instance().QueryParams(
             "SELECT TOP 1 polarity, acknowledged_change, stated_ms "
             "FROM ElleCore.dbo.speaker_statements "
@@ -581,7 +590,7 @@ protected:
                     float confidence        = (float)j.value("confidence", 0.5);
                     std::string requestId   = j.value("request_id", std::string(""));
 
-                    if (subjectId <= 0) {
+                    if (subjectId < 0) {
                         ELLE_WARN("Deception: IPC_VERACITY_CLASSIFY — invalid subject_id");
                         break;
                     }
@@ -626,8 +635,8 @@ protected:
                     float externalProb       = (float)j.value("external_deception_prob", -1.0);
                     std::string requestId    = j.value("request_id", std::string(""));
 
-                    if (speaker.empty() || subjectId <= 0) {
-                        ELLE_WARN("Deception: IPC_DECEPTION_CHECK — missing speaker or subject_id");
+                    if (speaker.empty() || subjectId < 0) {
+                        ELLE_WARN("Deception: IPC_DECEPTION_CHECK — missing speaker or invalid subject_id");
                         break;
                     }
 

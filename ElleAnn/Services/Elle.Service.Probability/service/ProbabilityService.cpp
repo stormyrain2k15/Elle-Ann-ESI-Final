@@ -144,10 +144,12 @@ private:
         };
         if (outcome.success) {
             rep["result"] = resultToJson(outcome.result);
+
+            rep["likely_intent"]      = rep["result"]["likelyAct"];
+            rep["overall_confidence"] = rep["result"]["overallConfidence"];
+
             if (outcome.meaning) {
-                rep["likely_intent"]      = outcome.meaning->likelyIntent;
-                rep["overall_confidence"] = outcome.meaning->overallConfidence;
-                rep["unresolved_words"]   = outcome.meaning->unresolvedWords;
+                rep["unresolved_words"] = outcome.meaning->unresolvedWords;
             }
         }
         Reply(req, sender, rep);

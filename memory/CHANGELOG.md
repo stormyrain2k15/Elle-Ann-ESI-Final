@@ -1,3 +1,74 @@
+## 2026-02 — Cognitive → Deception bridge wired (#15)
+
+User uploaded `deception_bridge.zip` (SHA-256
+`38d0e0278da1056d277a232d19c611a9bc2593e18c610530e16edffa221b0899`,
+6 files). Two issues the v2 drop overlooked, plus the actual *bridge*
+wiring Deception into the cognitive loop.
+
+### Bug fixes
+1. **`Deception.cpp`** — `VeracityEngine::Classify` and
+   `CheckSelfConsistency` now early-return cleanly when `subject_id == 0`
+   (no learned subject matches the user text yet). The IPC handlers
+   (`IPC_VERACITY_CLASSIFY`, `IPC_DECEPTION_CHECK`) relaxed their guards
+   from `subjectId <= 0` to `subjectId < 0` so `id == 0` flows through
+   as a legitimately-unverifiable claim instead of being rejected at
+   the boundary. NUDE-stripped: 1123 → 777 lines.
+2. **`ProbabilityService.cpp`** — promoted `likely_intent` and
+   `overall_confidence` to top-level of the `/api/probability/analyze`
+   response, unconditional (was nested under `meaning` and only when
+   `meaning` was non-null). This is the field Cognitive reads before
+   deriving polarity for the deception check; the meaning-null edge
+   case was silently skipping deception on valid intent classifications.
+
+### New wiring (`CognitiveEngine.cpp`, +187 NUDE lines)
+- `PendingDecep` + `DecepCorrelator` — async request/response
+  correlator (mutex + condvar + request_id keyed map). Lets
+  Cognitive fire `IPC_DECEPTION_CHECK` and `wait_for(timeoutMs)` on a
+  per-request future without blocking the IPC dispatcher.
+- `DerivePolarityFromAct()` — `ASSERT|CONFIRM → "affirms"`,
+  `DENY → "denies"`, else `nullopt` (skip deception entirely).
+- `FindSubjectForClaim()` — substring match user text against
+  `learned_subjects` (up to 256, lowercased), returns first hit or
+  `subject_id == 0` if nothing matches.
+- `RequestDeceptionCheck()` — fires the IPC, waits up to
+  `cognitive.deception_timeout_ms` (default 150ms), returns the
+  result JSON or empty on send-fail/timeout. Veracity is **advisory,
+  never blocking** — pipeline always proceeds.
+- `FormatDeceptionContext()` — emits a context block only when
+  `adjusted_credibility < 0.35` OR `signals[]` is non-empty.
+  High-credibility, no-signal claims get a blank string and never
+  appear in the composer prompt.
+- New `IPC_DECEPTION_RESULT` handler that delivers responses to the
+  correlator.
+- `SVC_DECEPTION` added to Cognitive's IPC subscription list.
+- Composition site appends `decepCtx` between `intuCtx` and `knowCtx`
+  in the Composer prompt assembly.
+
+### Architecture doc
+`Docs/COGNITIVE_DECEPTION_BRIDGE.md` (new) captures pipeline order,
+the async correlator pattern, subject resolution, prompt context
+formatting rules, the config knob, and the five graceful failure
+modes — all of which got NUDE-stripped from the source per policy.
+
+### Skipped from the drop (intentional)
+- `ElleTypes.h` (+6 lines) — all comments. NUDE policy: skip; the
+  opcodes were already correctly added in #13 and are documented in
+  `Docs/SERVICE_DECEPTION.md`.
+- `Elle.Service.Deception.vcxproj` and `ElleQueueIPC.cpp` —
+  byte-identical to current.
+
+### Verification
+- All three modified files NUDE-clean: 0 line-comments, 0 block markers.
+- Brace balance: Cognitive 429/429, Probability 82/82, Deception 132/132.
+- `SVC_DECEPTION` and all 7 new IPC opcodes resolve across header
+  declaration + service implementation + Cognitive consumer.
+- `Linux/run_all_ctests.sh` re-ran clean: **229/229 cases green**
+  (Intuition 39 + Probability 85 + Composer 17 + Language 48 + _Shared 40).
+- No removed lines from any file represented information loss — every
+  `<` line in the diffs was replaced by an `>` line in the same logical
+  block.
+
+
 ## 2026-02 — Language test rename + Linux/ dev folder (#14)
 
 `Services/Elle.Service.Language/tests/test_debug_trace.cpp` had a local
